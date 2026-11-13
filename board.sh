@@ -14,7 +14,7 @@ case "${1:-read}" in
     gh issue pin "$n"; echo "Message Board is issue #$n" ;;
   read)
     gh issue view "$(num)" --json comments \
-      -q ".comments[-${2:-15}:][] | \"\(.createdAt[5:16]) \(.author.login): \(.body)\"" ;;
+      -q "[.comments[] | select(.authorAssociation==\"OWNER\" or .authorAssociation==\"MEMBER\" or .authorAssociation==\"COLLABORATOR\")][-${2:-15}:][] | \"\(.createdAt[5:16]) \(.author.login): \(.body)\"" ;;  # team posts only: the repo is public
   post)
     [ -n "${AGENT_NAME:-}" ] || { echo 'set AGENT_NAME first, e.g. export AGENT_NAME="Omar agent"' >&2; exit 2; }
     gh issue comment "$(num)" --body "[$AGENT_NAME] ${2:?message text}" >/dev/null && echo posted ;;
