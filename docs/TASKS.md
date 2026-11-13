@@ -4,7 +4,7 @@
 🔒 = blocked on an OPEN decision or a booth answer.
 
 ## Milestone 1: J1 thin slice (first; nothing else until this runs)
-**Done when** the milk example runs live: text request → catalogue → Valio availability + price → decision → order or ask human → audit log, in a web page.
+**Target: Sat midday.** **Done when** the milk example runs **on the deployed Render link**: text request → catalogue → Valio availability + price → decision → order (through our front-door endpoint) or ask human → audit log, in a web page.
 
 | ID | Task | Serves | Size | Depends on |
 |---|---|---|---|---|
@@ -14,8 +14,9 @@
 | T04 | Catalogue loader + search: names (fi/en), category, allergens (CONTAINS / MAY_CONTAIN / FREE_FROM), claims, units, carbon, reliability | J1, J2 | M | T01 |
 | T05 | Quantity resolver: "1,000 L" → sales units via units / comparison unit; flags ambiguity instead of guessing | J2 | M | T04 |
 | T06 | Decision step v0 (plain rules: cut-off, availability, spend threshold) → AUTO / ASK HUMAN / DECLINE + reasons | J3 | S | T02, T03 |
-| T07 | Order record + audit log (append-only; human-readable + JSON; **includes rejected options**) | J3, J5 | M | T02 |
+| T07 | **Order endpoint = Valio's front door** (D2): re-checks every order (cut-off, quantity, mandate) and returns a structured refusal with reasons + alternatives, never crashes. Plus order record + audit log (append-only; human-readable + JSON; **includes rejected options**; JSON files for now, D8) | J3, J4, J5 | M | T02, T06 |
 | T08 | Minimal web UI: request → options → approval card → log | J1 | M | T03–T07 |
+| T25 | **Deploy on Render** (D8): backend web service + frontend, auto-deploy on every push to `main`; env vars for the keys; warm-up note for demos | J1 | S | T01 |
 
 ## Milestone 2: Core features (from decisions D1, D3, D5, D6)
 | ID | Task | Serves | Size | Depends on |
@@ -37,7 +38,7 @@
 ## Milestone 4: Openness, prizes, submission
 | ID | Task | Serves | Size | Depends on |
 |---|---|---|---|---|
-| T18 | 🔒 Publish the standard: JSON Schemas for the contracts + README (assumptions, path to production); REST/OpenAPI vs MCP per D7 | J5 | M | **D7 OPEN** |
+| T18 | Publish the standard (D7): **REST + OpenAPI spec** (e.g. a Python framework that generates it automatically) + JSON Schemas for the contracts + **README**: everything we built, assumptions, next steps, path to production | J5 | M | T02, T07 |
 | T19 | CRACI: CI on GitHub Actions `runs-on: craci` | CRACI prize | S | T01 |
 | T20 | Codex review pass (cherry on top, at the end) | Codex prize | S | late |
 | T21 | Demo script + peer-review Q&A prep (**name the criterion out loud**) | all | S | M2 |
@@ -45,11 +46,7 @@
 | T23 | Pitch deck PDF | submission | M | M2 |
 | T24 | Final submission form (description, public repo, demo link, video) + make repo public | submission | S | all |
 
-## Still OPEN (decide together; these block tasks above)
-- **D2** where guardrails live (affects T06 / T10 and possibly a Valio-side gate task)
-- **D7** standard format (blocks T18)
-- **D8** hosting for the live demo link + storage for profile and audit log
-- **D10** Gemma offline (later)
-- **D12** demo + video format
-- **D11** owners
-- **Timeline:** "tomorrow" in the meeting = Saturday?
+## Still open / parked
+- **Aiven Postgres** instead of JSON files: maybe, later (D8).
+- **Gemma offline:** parked (D10).
+- **Owners:** dynamic by design; claim on the board (D11).

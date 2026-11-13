@@ -6,20 +6,20 @@ Source: our ~19-min recording, transcribed locally. **Quotes are ours.** Where w
 |---|---|---|---|
 | D0 | Draft submission | Not discussed in the meeting | ❓ Was it submitted before 23:55? |
 | D1 | Hero customer | **Lapland restaurant + chef planning a menu**, combined. Reasons: delivery reliability is vital in Lapland; "Finland-focused", like Agronomy was Bangladesh-focused. Reliability and Finnish origin both covered; price "later". Allergens "could still be an option" (dish allergens on the menu). | ✅ Decided |
-| D2 | Where guardrails live | "Autonomy of the human, control of the human." **"We need more info to make a really good decision."** | 🟡 **OPEN** (explainer below) |
+| D2 | Where guardrails live | **Both.** Our agent checks the rules, and **our order endpoint is Valio's front door**: it re-checks every order (cut-off, quantity, mandate) and returns a structured refusal with reasons + alternatives instead of breaking the flow. Rogue orders get blocked at the door. | ✅ Decided (Sat ~02:00) |
 | D3 | Signature features | **Gemini Decisions API calibrated confidence + menu-to-cart.** Others: "look at them later / add later". | ✅ Decided |
 | D4 | Input channels | **Text + voice (voice-to-voice, like Google showed).** Use cases: owner at the office computer says "this is my new menu", or talking while walking around the kitchen. **Photo later.** | ✅ Decided |
 | D5 | Customer history | **Onboarding questions + past orders + remembering what was said.** Rule: **don't over-generalise.** "I don't want wheat flour in this recipe" applies to *today's order*, not forever. | ✅ Decided |
 | D6 | API traps | **Lenient: bring it up to the human, never silently reject.** Explain why, offer alternatives. "Maybe we understood the traps wrong", so ask Valio. | ✅ Decided (+ booth question) |
-| D7 | Open standard | "Not sure yet… maybe explain the standard a bit more." J5 = "tell them how we built it and how we'd make it production-ready". | 🟡 **OPEN** (explainer below) |
-| D8 | Tech stack | **Python + TypeScript, web app frontend.** Frontend must **not look like the copy-paste demo everyone has**; we have design notes. Hosting and storage not discussed. | ✅ Partly (hosting/storage **OPEN**) |
+| D7 | Open standard | **REST API + OpenAPI spec** (agent-agnostic: Gemini, voice, Claude or anything can use it) **+ README** documenting everything: assumptions, next steps, path to production. | ✅ Decided |
+| D8 | Tech stack | **Python + TypeScript, web app.** Distinct frontend (not copy-paste). **Hosting: Render** for backend + frontend, auto-deploys every push to `main` whoever pushes (not Vercel; not laptop-only). Free tier sleeps after 15 min idle, so warm it before demos or upgrade for the weekend (our call). **Storage: JSON files first, Aiven Postgres later** (maybe; extra tech prize). | ✅ Decided |
 | D9 | Extra tech prizes | **Gemini** (both agree: "it's like a football field, open to play"). **CRACI** (already talked to their team: "told her to expect me"). **Codex**: use the credits, e.g. code review via Claude, "cherry on top at the end". | ✅ Decided |
-| D10 | Gemma offline | Discussed; noted the app needs Wi-Fi for prices, stock and cut-offs anyway. No decision. | 🟡 **OPEN** (later) |
-| D11 | Work split | **Not final.** Zoha wants more backend this time. Break tasks so **either person can take them**; both Claudes use the board to avoid overlap. | ✅ Approach decided; owners **OPEN** |
-| D12 | Demo + video | Not discussed. Agreed: **when pitching, explicitly name the criterion we meet** ("this is the end-to-end flow, J1"), and **be ready for peer-review questions** and answer confidently. | 🟡 **OPEN** (format) |
-| ⏱ | Timeline | **Main tasks done by "tomorrow afternoon/evening"**, then polish + stand-out; **"by tomorrow midnight, finalise everything."** | ❓ Recorded after midnight: "tomorrow" = **Saturday**? |
+| D10 | Gemma offline | Doesn't make sense without internet. **Later / focus on main stuff first.** | ⏸ Parked |
+| D11 | Work split | **Keep it dynamic**: no fixed owners, claim tasks on the board. UI: both want to be involved. | ✅ Decided |
+| D12 | Demo + video | **Live demo at peer review** + **submission video made with RAEA.** Story: Lapland chef speaks a new menu → cart with reasons → trap explained ("can't arrive Monday, here are 2 alternatives") → asks the human → audit log → rogue order blocked at Valio's door. | ✅ Decided |
+| ⏱ | Timeline | **Sat midday: end-to-end example working AND deployed.** Sat evening: features on top. If ahead: start pitch, deck, video. | ✅ Decided |
 
-## Explainers for the two big OPEN ones
+## Explainers for D2 and D7 (both now decided, kept for reference)
 
 **D2 · Where the guardrails live.** Two places can say "no":
 - **In our buyer agent:** it checks the mandate before ordering. Simple, and what most teams will do.
