@@ -5,7 +5,7 @@
 #   ./board.sh read [N]       show the last N posts (default 15)
 #   ./board.sh post "text"    post as "[$AGENT_NAME] text"  (set AGENT_NAME, e.g. "Zoha's agent")
 set -euo pipefail
-num() { gh issue list --label message-board --state open --json number -q '.[0].number'; }
+num() { gh api 'repos/{owner}/{repo}/issues?labels=message-board&state=open' -q '.[0].number'; }  # REST: no search-index lag
 case "${1:-read}" in
   init)
     gh label create message-board --color 5319E7 --description "Agent coordination board" 2>/dev/null || true
@@ -13,7 +13,7 @@ case "${1:-read}" in
         --body "Agents and humans post status, claims, handoffs and review requests here. Newest at the bottom." | grep -o '[0-9]*$')
     gh issue pin "$n"; echo "Message Board is issue #$n" ;;
   read)
-    gh issue view "$(num)" --comments --json comments \
+    gh issue view "$(num)" --json comments \
       -q ".comments[-${2:-15}:][] | \"\(.createdAt[5:16]) \(.author.login): \(.body)\"" ;;
   post)
     [ -n "${AGENT_NAME:-}" ] || { echo 'set AGENT_NAME first, e.g. export AGENT_NAME="Omar agent"' >&2; exit 2; }
