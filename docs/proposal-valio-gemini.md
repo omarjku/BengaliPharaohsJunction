@@ -1,4 +1,4 @@
-# Proposal (for discussion, not decided): Valio Aimo × Google Gemini
+# Plan (decided Fri 13 Nov, 22:00): Valio Aimo × Google Gemini
 
 **Entries:** Valio Aimo *Trusted Trade Agents* (main, €4,000) + *Best Use of Gemini API* (tech, €4,000 + $1,000 GCP credits each). Cheap add-on: CRACI (CI runner line).
 
