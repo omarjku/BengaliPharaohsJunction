@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { placeOrder, planMenu } from './api'
-import { STATUS, unitName } from './copy'
+import { headline, STATUS, unitName } from './copy'
 import { errorText, formatCents, formatDay, nextMonday } from './format'
 import { RunResult } from './RunResult'
 import type { Line, MenuRun, OrderResponse } from './types'
@@ -29,6 +29,9 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
   const [ordered, setOrdered] = useState<OrderResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
+  // The decision's reasons about a product in the cart (not the generic 'amounts are estimates' one).
+  const concerns = (l: Line) =>
+    plan?.decision.reasons.filter((r) => r.product_id === l.product.id && r.severity !== 'INFO' && r.code !== 'MENU_ASSUMPTIONS') ?? []
   const n = Number(covers)
   const coversOk = Number.isInteger(n) && n >= 1 && n <= 2000
 
@@ -170,28 +173,6 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
             )}
           </section>
 
-          <section className="instead" aria-labelledby="menu-dishes">
-            <h2 className="title" id="menu-dishes">
-              The menu
-            </h2>
-            {plan.menu.dishes.map((d) => (
-              <div key={d.name}>
-                <h3 className="dish">{d.name}</h3>
-                <ul>
-                  {d.ingredients.map((i, k) => (
-                    <li key={k} className="alt">
-                      <div>
-                        <p>{i.name}</p>
-                        {i.assumption && <p className="quiet small">{i.assumption}</p>}
-                      </div>
-                      <p className="alt-side quiet">{i.per_cover != null ? `${amount(i.per_cover, i.unit)} per cover` : 'Amount unclear'}</p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </section>
-
           <section className="instead" aria-labelledby="menu-cart">
             <h2 className="title" id="menu-cart">
               The cart
@@ -206,7 +187,11 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
                     {amount(ing.amount, ing.unit)} {ing.query}
                   </p>
                   <p className="quiet small">For {and(ing.dishes)}</p>
-                  {chosen.length === 0 && <p className="option-why warn">Nothing on Valio’s list fits this yet.</p>}
+                  {chosen.length === 0 && (
+                    <p className="option-why warn">
+                      {others.length ? 'No confident match, so nothing is in the cart for this. See the options.' : 'Nothing on Valio’s list fits this.'}
+                    </p>
+                  )}
                   {chosen.map((l) => (
                     <div key={l.product.id} className="split-row">
                       <span>{productName(l)}</span>
@@ -214,6 +199,11 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
                         {l.quantity?.quantity != null ? `${l.quantity.quantity.toLocaleString('en-US')} × ${unitName(l.quantity.sales_unit)}` : 'Amount unclear'}
                       </span>
                       <span className="r">{l.line_total_cents !== null ? formatCents(l.line_total_cents) : '—'}</span>
+                      {concerns(l).map((r, k) => (
+                        <span key={k} className="option-why warn concern">
+                          {headline(r)}
+                        </span>
+                      ))}
                     </div>
                   ))}
                   {others.length > 0 && (
@@ -236,6 +226,35 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
               <span>
                 <strong>{formatCents(plan.cart_total_cents)}</strong> <span className="quiet">before VAT</span>
               </span>
+            </div>
+          </section>
+
+          <section className="instead" aria-labelledby="menu-dishes">
+            <h2 className="title" id="menu-dishes">
+              Amounts per cover
+            </h2>
+            <div className="more flush">
+              {plan.menu.dishes.map((d) => (
+                <details key={d.name}>
+                  <summary>
+                    {d.name}
+                    <span className="quiet small summary-count">
+                      {d.ingredients.length} ingredients
+                    </span>
+                  </summary>
+                  <ul className="more-body">
+                    {d.ingredients.map((i, k) => (
+                      <li key={k} className="option">
+                        <div>
+                          <p>{i.name}</p>
+                          {i.assumption && <p className="quiet small">{i.assumption}</p>}
+                        </div>
+                        <p className="option-side quiet">{i.per_cover != null ? `${amount(i.per_cover, i.unit)} per cover` : 'Amount unclear'}</p>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ))}
             </div>
           </section>
         </>

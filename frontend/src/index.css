@@ -220,6 +220,23 @@ details[open]::details-content { block-size: auto; }
 .dish { font-weight: 600; margin-block-start: var(--s4); }
 .cart-group { padding-block-end: var(--s3); }
 .cart-group details { border-block-end: 0; }
+.concern { grid-column: 1 / -1; }
+.more.flush { margin-block-start: 0; }
+.summary-count { margin-inline-start: auto; font-weight: 400; }
+
+/* --- Rules: the rules in force as plain sentences; proposed changes as a quiet list. */
+.rules { margin-block-start: var(--s4); border-block-start: 1px solid var(--line); }
+.rules li { padding-block: var(--s3); border-block-end: 1px solid var(--line); }
+.section-gap { margin-block-start: var(--s7); }
+.rules-field { font-size: 1.0625rem; min-height: 9rem; }
+.changes { border-block-start: 1px solid var(--line); }
+.change { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: var(--s3); padding-block: var(--s3); border-block-end: 1px solid var(--line); }
+.change-word { font: var(--t-small); font-weight: 600; color: var(--ink-2); padding-block-start: 1px; }
+.change-word.looser { color: var(--warn); }
+.questions { display: grid; gap: var(--s4); margin-block-start: var(--s2); }
+.accent-text { color: var(--accent); padding-inline: 0; }
+.confirm { display: grid; gap: var(--s3); padding: var(--s4); border-radius: var(--radius); background: var(--warn-wash); }
+.confirm ul { list-style: disc; padding-inline-start: var(--s5); }
 
 /* --- Messages. */
 .banner { margin-block: 0 var(--s6); }

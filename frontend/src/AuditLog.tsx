@@ -18,9 +18,10 @@ function dayLabel(iso: string, now = new Date()): string {
 
 // One line in plain words: who did what. Status colour comes only with these words.
 function describe(e: AuditEntry): { tone: Tone; what: string } {
-  const human = /^human:(.+?)(?::(approve|reject))?$/.exec(e.actor)
+  const human = /^human:(.+?)(?::(approve|reject|mandate))?$/.exec(e.actor)
   if (human?.[2] === 'approve') return { tone: 'good', what: `${human[1]} approved the order` }
   if (human?.[2] === 'reject') return { tone: 'bad', what: `${human[1]} rejected the order` }
+  if (human?.[2] === 'mandate') return { tone: 'neutral', what: `${human[1]} changed the rules` }
   const o = e.decision.outcome
   const tone: Tone = o === 'AUTO' ? 'good' : o === 'DECLINE' ? 'bad' : 'warn'
   if (e.actor === 'buyer_agent')

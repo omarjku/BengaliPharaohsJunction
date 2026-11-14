@@ -1,4 +1,6 @@
-import type { AgentRun, AuditEntry, Health, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput } from './types'
+import type {
+  AgentRun, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
+} from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
 
@@ -73,6 +75,7 @@ async function errorDetail(res: Response): Promise<string> {
   try {
     const { detail } = await res.json()
     if (typeof detail === 'string') return detail
+    if (typeof detail?.error === 'string') return detail.error // e.g. 409 {error, changes}, 422 {error, open_questions}
     if (Array.isArray(detail)) {
       const msgs = detail.map((d) => d?.msg).filter((m): m is string => typeof m === 'string')
       return msgs.length ? msgs.join('; ') : 'invalid request'
@@ -98,6 +101,16 @@ export const planMenu = (input: MenuInput) =>
   MOCK
     ? mock().then((m) => m.menu(input))
     : api<MenuRun>('/api/agent/menu', { ...post(input), headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')
+
+// Rules: approver key only (the agent key gets 401). Compile never saves; PUT saves after the chef confirms.
+const approver = () => ({ 'X-Approver-Key': getKeys().approverKey })
+export const getMandate = () => (MOCK ? mock().then((m) => m.getMandate()) : api<Mandate | null>('/api/mandate', { headers: approver() }, 'approver'))
+export const compileRules = (text: string) =>
+  MOCK ? mock().then((m) => m.compile(text)) : api<CompileResult>('/api/mandate/compile', { ...post({ text }), headers: approver() }, 'approver')
+export const saveMandate = (mandate: Mandate, confirm_large_change: boolean) =>
+  MOCK
+    ? mock().then((m) => m.saveMandate(mandate))
+    : api<SaveResult>('/api/mandate', { method: 'PUT', body: JSON.stringify({ mandate, confirm_large_change }), headers: approver() }, 'approver')
 
 // The human picked a proposal (e.g. the split order): the agent's key places it, the front door re-checks it.
 export const placeOrder = (input: OrderInput) =>
