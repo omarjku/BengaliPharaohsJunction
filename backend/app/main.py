@@ -491,6 +491,9 @@ async def voice_transcribe(request: Request, who: Agent) -> dict:
     return await voice.transcribe(await request.body(), request.headers.get("content-type", ""))
 
 
+_STREAM_TASKS: set = set()
+
+
 @app.post("/api/agent/ask/stream")
 async def agent_ask_stream(req: AskRequest, who: Agent) -> StreamingResponse:
     """POST /api/agent/ask, streamed as Server-Sent Events so the UI can show progress while it works:
@@ -511,16 +514,17 @@ async def agent_ask_stream(req: AskRequest, who: Agent) -> StreamingResponse:
             queue.put_nowait(("error", {"status": 500, "detail": "Something went wrong; nothing was ordered."}))
 
     async def events():
+        # A disconnect never cancels the work: cancelling mid-order could store an order without its audit entry.
+        # The task finishes on its own (bounded like any /ask); the stream just stops forwarding. It is held in
+        # _STREAM_TASKS until done, so it can't be garbage-collected mid-run.
         task = asyncio.create_task(work())
-        try:
-            while True:
-                item = await queue.get()
-                kind, data = item if isinstance(item, tuple) else ("phase", item)
-                yield f"event: {kind}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
-                if kind != "phase":
-                    return
-        finally:
-            if not task.done():
-                task.cancel()
+        _STREAM_TASKS.add(task)
+        task.add_done_callback(_STREAM_TASKS.discard)
+        while True:
+            item = await queue.get()
+            kind, data = item if isinstance(item, tuple) else ("phase", item)
+            yield f"event: {kind}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+            if kind != "phase":
+                return
     return StreamingResponse(events(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

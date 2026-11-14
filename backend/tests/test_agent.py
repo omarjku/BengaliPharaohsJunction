@@ -584,3 +584,29 @@ def test_match_keeps_real_matches_best_first(decisions):
         assert asyncio.run(agent.match(item, hits)) is None  # caller falls back to search order, flagged
     finally:
         a._decisions = real
+
+
+def test_decisions_budget_turns_extra_calls_into_unverified(monkeypatch):
+    """Security review: a per-run cap on paid Decisions calls; past it the answer is None (unverified → ask)."""
+    sent = []
+
+    class Resp:
+        def raise_for_status(self): pass
+        def json(self): return {"answers": {"q": {"type": "noul", "noul": 0.9}}}
+
+    class Client:
+        is_closed = False
+        def __init__(self, **kw): pass
+        async def post(self, *a, **kw):
+            sent.append(kw["json"]["input"])
+            return Resp()
+    monkeypatch.setattr(agent.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(agent.config, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(agent, "_DECISION_CACHE", {})
+
+    async def go():
+        agent.start_budget(2)
+        q = {"q": {"type": "noul", "instructions": "x", "criteria": {}}}
+        return [await REAL_DECISIONS(f"in {i}", q) for i in range(3)] + [await REAL_DECISIONS("in 0", q)]
+    a, b, c3, cached = asyncio.run(go())
+    assert a and b and c3 is None and cached == a and len(sent) == 2  # 3rd refused; a cached repeat is free

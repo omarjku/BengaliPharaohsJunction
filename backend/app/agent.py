@@ -9,6 +9,7 @@ and come back as an ASK_HUMAN / DECLINE Decision with reasons (D6). The door's o
 come back from the door, which holds the order for sign-off or refuses it.
 """
 import asyncio
+from contextvars import ContextVar
 import json
 import logging
 import math
@@ -133,6 +134,17 @@ async def _gemini(system: str, prompt: str, schema: dict) -> dict | None:
 
 
 _DECISION_CACHE: dict[str, tuple[float, dict]] = {}
+DECISIONS_PER_RUN = 150  # a 10-item request needs ~120 uncached calls at most (match 12 + judge/plausible 3x8 per item)
+_BUDGET: ContextVar[list | None] = ContextVar("decisions_budget", default=None)
+
+
+DECISIONS_PER_MENU = 600  # 20 ingredients x (12 matches + 3 x 8 lines) + 180 assumption checks
+
+
+def start_budget(n: int = DECISIONS_PER_RUN) -> None:
+    """Open a per-run Decisions budget unless one is already open in this request."""
+    if _BUDGET.get() is None:
+        _BUDGET.set([n])
 DECISION_CACHE_TTL_S = 600
 DECISION_CACHE_MAX = 5000
 
@@ -149,6 +161,10 @@ async def _decisions(input_text: str, questions: dict) -> dict | None:
     now = time.monotonic()
     if (hit := _DECISION_CACHE.get(key)) and now - hit[0] < DECISION_CACHE_TTL_S:
         return hit[1]
+    if (left := _BUDGET.get()) is not None:  # per-run cap on paid calls; past it = "unverified" (the mandate's
+        if left[0] <= 0:                     # uncertainty policy then asks), never a silent pass
+            return None
+        left[0] -= 1
     body = {"model": config.GEMINI_DECISION_MODEL, "input": input_text, "questions": questions}
     try:
         async with _slots():
@@ -537,7 +553,8 @@ SYNONYMS = {"kebab bread": ["pita bread", "pitabread", "pitaleipä"], "kebab mea
 
 
 MATCH_MIN = 0.5  # P(this hit IS the item) needed to be a candidate at all; the line threshold still applies later
-MATCH_TOP = 10  # every real match competes on confidence, limits and price; a top-5-by-score cut dropped the
+MATCH_HITS = 12  # search hits judged per item (security review: bounded paid fan-out)
+MATCH_TOP = 8  # every real match competes on confidence, limits and price; a top-5-by-score cut dropped the
                 # cheapest milk behind small packs scoring 0.97 (measured, room3-speed)
 
 
@@ -547,6 +564,7 @@ async def match(item: dict, hits: list[dict]) -> list[str] | None:
     evaluated question the line judge asks: those answers are cached, so judging the chosen lines reuses them.
     The canonical item carries the grounded purpose ('for the rotisserie' → a spit). None if Decisions is down."""
     text = _AMOUNTS.sub(" ", canonical(item))
+    hits = hits[:MATCH_HITS]  # bounded fan-out per item
     res = await asyncio.gather(*(_judge_one(text, p, ["meets"]) for p in hits))
     if all(y is None for y, *_ in res):
         return None
@@ -850,6 +868,7 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
     """`pre`: results the caller already computed in parallel (POST /api/agent/ask runs the parse and the steering and
     date guards alongside its intent check): {"parsed", "steer", "meant"}; anything missing is computed here."""
     pre = pre or {}
+    start_budget()
     run_id, now = str(uuid4()), datetime.now(timezone.utc)
     mandate = mandates.get(buyer_id)
     m = mandate or Mandate(id="none", buyer_id=buyer_id)  # checks still run; nothing is ordered without a mandate

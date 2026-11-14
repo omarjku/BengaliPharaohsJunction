@@ -156,6 +156,7 @@ async def parse_menu(menu_text: str) -> list[dict] | None:
 
 
 async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -> dict:
+    agent.start_budget(agent.DECISIONS_PER_MENU)
     run_id, now = str(uuid4()), datetime.now(timezone.utc)
     mandate = mandates.get(buyer_id)
     m = mandate or Mandate(id="none", buyer_id=buyer_id)
