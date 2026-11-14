@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from test_agent import decisions, shop1  # noqa: F401 - pytest fixtures
 from test_menu import fake_gemini
 
-from app import agent, ask, config, menu, profile
+from app import agent, ask, config, conversation, menu, profile
 from app.main import app
 
 c = TestClient(app, raise_server_exceptions=False)
@@ -45,12 +45,13 @@ def reasons(body):
     return body["decision"]["reasons"]
 
 
-def test_a_product_without_an_amount_asks_how_much_with_options(shop1, monkeypatch):  # noqa: F811
+def test_a_product_without_an_amount_asks_how_much_with_options(shop1, monkeypatch, tmp_path):  # noqa: F811
     """'gluten-free pizza' used to be refused as off-topic; it is an order that asks the amount (and remembers it)."""
     pizza_shop(shop1)
+    monkeypatch.setattr(conversation, "STORE", tmp_path / "conv.json")
     fake(monkeypatch, [{"query": "pizza", "amount": None, "unit": None, "dietary": ["gluten_free"]}])
     body = post("gluten-free pizza for Monday")
-    assert body["intent"] == "order" and body["question"].startswith("How much pizza?")
+    assert body["intent"] == "order" and body["question"].startswith("How many pizzas?")
     assert body["conversation_id"] and body["order"] is None
     assert [ln["product"]["id"] for ln in body["lines"]] == ["201"]  # only the labelled base is an option
     assert "gluten-free pizza" in ask.INTENT_PROMPT and "WITH OR WITHOUT an amount" in ask.INTENT_PROMPT
@@ -215,7 +216,7 @@ def test_gemini_down_a_product_word_still_asks_the_amount(shop1, monkeypatch, tm
         return None
     monkeypatch.setattr(agent, "_gemini", down)
     body = post("lactose-free milk for Monday")
-    assert body["intent"] == "order" and body["question"].startswith("How much milk?") and body["conversation_id"]
+    assert body["intent"] == "order" and body["question"].startswith("How many milks?") and body["conversation_id"]
 
 
 def test_an_unsure_order_asks_which_one_and_the_answer_continues(shop1, monkeypatch, tmp_path):  # noqa: F811
