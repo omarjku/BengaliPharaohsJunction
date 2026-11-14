@@ -36,9 +36,8 @@ The door re-checks every order, from any agent, against the buyer's mandate. Uns
 > product.
 
 ### 4. Demo
-Screens: `3-needs-ok-1280.png` (held for the chef), `4-approved-390.png` (approved on a phone),
-`9-menu-cart-1280.png` (menu → cart).
-**1000 L milk → €1,400, ordered alone. 1500 L → held → chef approves. Menu for 80 → cart.**
+Screens: `3-needs-ok-390.png` (held for the chef), `4-approved-390.png` (approved on a phone).
+**One box, English or Finnish. 1000 L milk → ordered alone. 1500 L → chef approves. Menu → "how many guests?"**
 
 > **Notes:** Live, measured Sun 15 Nov:
 > - 1000 L: Gemini ≈0.9 on the cheapest milk, €1,400, AUTO confirmed.
@@ -72,6 +71,7 @@ One box for kebab shops, cafés and restaurants, typed or spoken. Same door, sam
 - Short stock → split
 - Substitutes: allergen-safe, same category
 - Injection → nothing ordered
+- Urgent in Helsinki → pickup suggested
 
 > **Notes:**
 > - The traps come from Valio's mock data: Terminal cut-offs four days ahead, about 15% of products undeliverable.
@@ -92,15 +92,15 @@ One box for kebab shops, cafés and restaurants, typed or spoken. Same door, sam
 ### 8. Gemini decides when to ask
 | threshold | handled alone | wrong autos |
 |---|---|---|
-| 0.7 | 11 | 0 |
-| **0.8** | **11** | **0** |
-| 0.9 | 8 | 0 |
+| 0.6 | 15 | 0 |
+| **0.7** | **14** | **0** |
+| 0.8 | 12 | 0 |
 
 Sugar sachets for baking: **below 0.5**. Caster sugar: **≈0.9**.
 
 > **Notes:**
 > - Gemini Decisions API: calibrated P(yes) on 30 hand-labelled cases with real Valio products.
-> - The highest-scoring trap reached 0.52.
+> - Every trap scored at most 0.37. We set 0.70 from this: 93% of the right lines go through alone, versus 80% at 0.80.
 > - The evaluation changed the agent: it now asks "is it the product?" and "is the quantity right?" separately.
 > - If Gemini is down, the agent asks the chef: it loses autonomy, not safety.
 
