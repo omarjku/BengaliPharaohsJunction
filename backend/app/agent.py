@@ -165,6 +165,23 @@ async def judge(text: str, items: list[tuple[dict, list[str]]]) -> list[tuple[fl
     return list(await asyncio.gather(*(_judge_one(text, p, kinds) for p, kinds in items)))
 
 
+_AMOUNTS = re.compile(r"\d[\d,. ]*\s*(?:l|dl|cl|ml|kg|g|pcs|kpl|x)?\b", re.I)
+
+
+async def judge_line(text: str, p: dict, qty_explanation: str) -> tuple[float | None, str, str | None]:
+    """A line the agent may order: 'is it the product?' asked WITHOUT amounts, 'is the quantity right?' WITH the
+    resolver's explanation, scored by the weaker answer. Measured (backend/eval): one combined input let a tidy
+    '10 kg = 4 cases' make 500 x 5 g sugar sachets look right for baking (0.23 → 0.81), while dropping the amounts
+    everywhere made a 500 g pack look wrong for '5 kg butter'."""
+    (m, _, _), (q, _, _) = await asyncio.gather(
+        _judge_one(_AMOUNTS.sub(" ", text), p, ["meets"]), _judge_one(text, dict(p, _qty=qty_explanation), ["qty"]))
+    if m is None or q is None:
+        return None, "Gemini Decisions couldn't check this line.", None
+    weakest = "meets" if m <= q else "qty"
+    return min(m, q), (f"Gemini Decisions: {_pct(m)} that {QUESTIONS['meets'][3]}, {_pct(q)} that "
+                       f"{QUESTIONS['qty'][3]} (weakest: {QUESTIONS[weakest][3]})."), weakest
+
+
 async def _judge_one(text: str, p: dict, kinds: list[str]) -> tuple[float | None, str, str | None]:
     questions = {kind: {"type": "noul", "instructions": QUESTIONS[kind][0].format(c="the candidate"),
                         "criteria": {"true_description": QUESTIONS[kind][1], "false_description": QUESTIONS[kind][2]}}
@@ -471,9 +488,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
 
     # One Decisions call for every line we might order: does it really meet the request, is the quantity right?
     viable = [line for *_, scored in per_item for key, line, _ in scored if not key[0]]
-    judged = await asyncio.gather(*(_judge_one(items[ln["item"]].get("context") or text,
-                                               dict(ln["product"], _qty=ln["quantity"]["explanation"]), ["meets", "qty"])
-                                    for ln in viable))
+    judged = await asyncio.gather(*(judge_line(items[ln["item"]].get("context") or text, ln["product"],
+                                               ln["quantity"]["explanation"]) for ln in viable))
     for line, (conf, why, weakest) in zip(viable, judged):
         line["confidence"], line["confidence_reason"], line["_weakest"] = conf, why, weakest
 
