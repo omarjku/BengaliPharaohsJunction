@@ -421,6 +421,11 @@ export const UI = {
     amounts: 'Määrät annosta kohden',
     ingredients: (v: number) => `${v} ${kpl(v, 'ainesosa', 'ainesosaa')}`,
     perCover: (a: string) => `${a} / annos`,
+    step1: 'Menusi',
+    step1Sub: (guests: string | null, day: string) => [guests && `${guests} hengelle`, `toimitus ${day}`].filter(Boolean).join(', ') + '.',
+    step2: 'Annokset ruokalajeittain',
+    step2Sub: 'Arviot reseptistä, annosta kohden ja yhteensä. Tarkista ne ennen tilausta.',
+    step3Sub: (m: string) => `${m} alv 0 %. Vaihda tuotteita tarvittaessa ja tilaa kori.`,
   },
   rules: {
     title: 'Sääntösi',

@@ -401,6 +401,11 @@ export const UI = {
     amounts: 'Amounts per cover',
     ingredients: (n: number) => `${n} ${plural(n, 'ingredient', 'ingredients')}`,
     perCover: (a: string) => `${a} per cover`,
+    step1: 'Your menu',
+    step1Sub: (guests: string | null, day: string) => [guests && `${guests} guests`, `delivery ${day}`].filter(Boolean).join(', ') + '.',
+    step2: 'Portions per dish',
+    step2Sub: 'Estimates from the recipe, per cover and in total. Check them before you order.',
+    step3Sub: (m: string) => `${m} excl. VAT. Swap any product, then order the cart.`,
   },
   rules: {
     title: 'Your rules',
