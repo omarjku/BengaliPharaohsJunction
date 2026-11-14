@@ -87,6 +87,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const micOn = VOICE_READY && voiceSupported()
   const [editing, setEditing] = useState(false) // phone: the composer is collapsed to a summary row after a result
   const [running, setRunning] = useState(false)
+  const [sent, setSent] = useState('') // the words just sent, shown as the chat bubble
   const [error, setError] = useState<string | null>(null)
   const [expired, setExpired] = useState(false) // a follow-up came too late: offer to ask the original again
   const [auditKey, setAuditKey] = useState(0)
@@ -148,6 +149,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
 
   // A new request, or (with `to`) the answer to the question the agent just asked.
   async function ask(words: string, to?: string, when?: string) {
+    setSent(words.trim())
     setRunning(true)
     setAnnounce(u.ask.announce)
     setError(null)
@@ -315,7 +317,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
           )
         ) : (
           <>
-            <section hidden={view !== 'order'} aria-label={u.nav.order}>
+            <section hidden={view !== 'order'} aria-label={u.nav.order} className={empty ? undefined : 'thread'}>
               <h1 className="sr-only">{u.nav.order}</h1>
               {empty && waiting !== null && <p className="greeting">{u.greeting(partOfDay(), approver, waiting)}</p>}
               {collapsed && (
@@ -385,6 +387,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                 )}
               </form>
 
+              {!empty && sent && <p className="bubble mine">{sent}</p>}
               {running && (
                 <div className="working" role="status" aria-label={u.progress.aria}>
                   {/* Re-keyed per phase, so each step fades in; the status region reads each step out politely. */}

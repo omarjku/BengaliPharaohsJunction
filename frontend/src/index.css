@@ -12,8 +12,8 @@
   --disabled: #e3e1dc;
   --line: #e7e9ec; /* hairlines, used sparingly */
   --field-line: #8d949c; /* input outlines: 3:1 on white, as form boundaries need */
-  --accent: #0b5cad;
-  --accent-press: #094c8f;
+  --accent: #00607a;
+  --accent-press: #004b61;
   --good: #1e7a3c;
   --warn: #8a5a00;
   --warn-wash: #fff6e3;
@@ -322,8 +322,8 @@ main.roomy { padding-block-start: 96px; }
   border-color: var(--accent);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.7),
-    0 0 0 3px rgba(11, 92, 173, 0.16),
-    0 10px 28px rgba(11, 92, 173, 0.14);
+    0 0 0 3px rgba(0, 96, 122, 0.16),
+    0 10px 28px rgba(0, 96, 122, 0.14);
 }
 /* The shell shows focus, so the field inside drops its own border and ring (the ring is still clearly there). */
 .ask-box > .ask-field { border: 0; border-radius: calc(var(--radius) - 1px); background: transparent; outline: none; }
@@ -341,7 +341,7 @@ main.roomy { padding-block-start: 96px; }
 /* Listening: solid accent, and a soft ring that grows with the voice level. Nothing else moves. */
 .mic.on {
   background: var(--accent); border-color: var(--accent); color: #fff;
-  box-shadow: 0 0 0 calc(4px + var(--level) * 12px) rgba(11, 92, 173, 0.16);
+  box-shadow: 0 0 0 calc(4px + var(--level) * 12px) rgba(0, 96, 122, 0.16);
 }
 .mic.busy { color: var(--accent); }
 .voice-status { min-height: 1.45em; font: var(--t-small); color: var(--ink-2); }
@@ -353,7 +353,7 @@ main.roomy { padding-block-start: 96px; }
   .ask-field.with-mic { padding-inline-end: 72px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .mic.on { box-shadow: 0 0 0 calc(4px + var(--level) * 12px) rgba(11, 92, 173, 0.16); transition: none; }
+  .mic.on { box-shadow: 0 0 0 calc(4px + var(--level) * 12px) rgba(0, 96, 122, 0.16); transition: none; }
 }
 
 /* Live progress: one line that changes, each step fading up a few pixels. */
@@ -464,7 +464,7 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
 }
 .field-row input:focus, .secret input:focus, .covers input:focus, .guests-input:focus, .rules-field:focus {
   outline: none; border-color: var(--accent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 0 0 3px rgba(11, 92, 173, 0.16), 0 10px 28px rgba(11, 92, 173, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 0 0 3px rgba(0, 96, 122, 0.16), 0 10px 28px rgba(0, 96, 122, 0.14);
 }
 /* Buttons: hover darkens, it never fades. Only on devices that really hover. */
 @media (hover: hover) {
@@ -483,7 +483,6 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
 .chip:disabled { opacity: 0.5; cursor: default; }
 
 /* Landing: dark, dithered swirl, pixel app name */
-@import url('https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@500&display=swap');
 .landing { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 26rem) minmax(0, 1fr); align-items: center; gap: var(--s6); padding: var(--s7) clamp(1rem, 8vw, 8rem); background: #0a0a0a; color: #f2f2f2; }
 .landing-name { margin: 0 0 var(--s5); font: 500 clamp(3.5rem, 9vw, 6.5rem)/0.95 'Pixelify Sans', ui-monospace, monospace; letter-spacing: 0; }
 .landing-text { margin: 0 0 var(--s6); font-size: 1.125rem; line-height: 1.6; color: #c9ccd1; max-width: 26rem; }
@@ -495,3 +494,23 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
   .landing { grid-template-columns: 1fr; padding-block: var(--s6); }
   .landing-art { order: -1; max-width: 18rem; }
 }
+
+/* Valio Aimo palette: deep teal, lime for the one primary action */
+.btn:not(.plain) { background: #c5e11d; color: #0b2f3a; }
+.btn:not(.plain):active, .btn:not(.plain):hover:not(:disabled) { background: #b3cf14; }
+.btn:disabled { background: var(--disabled); color: var(--ink-3); }
+
+/* Chat: your words on the right, the agent's answer on the left, input at the bottom */
+.thread { display: flex; flex-direction: column; gap: var(--s4); }
+.thread > .ask { order: 99; }
+.thread > .composer-summary { order: 98; }
+.bubble { margin: 0; padding: var(--s3) var(--s4); max-width: min(34rem, 85%); border-radius: 18px; line-height: 1.5; overflow-wrap: anywhere; }
+.bubble.mine { align-self: flex-end; background: #00607a; color: #fff; border-bottom-right-radius: 4px; }
+.thread > .answer, .thread > .working, .thread > .problem, .thread > .question { align-self: flex-start; max-width: min(40rem, 100%); border-bottom-left-radius: 4px; }
+
+/* Landing to app: the landing lifts away, the app settles in */
+.landing { transition: opacity 360ms var(--ease-out), transform 360ms var(--ease-out); }
+.landing.leaving { opacity: 0; transform: scale(1.02); }
+.app-in { animation: app-in 420ms var(--ease-out) both; }
+@keyframes app-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .landing, .app-in { transition: none; animation: none; } }
