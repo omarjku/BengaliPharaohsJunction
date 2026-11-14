@@ -261,29 +261,54 @@ def _unit_in(unit: str, clause: str) -> bool:
     return bool(tokens & _UNIT_WORDS.get(unit, set()))
 
 
-def ungrounded(text: str, item: dict) -> str | None:
-    """Deterministic injection / hallucination guard: what in a Gemini-parsed item is NOT in the chef's own text.
-    Product, amount and unit must all be in the SAME clause, so '12 kg butter and 1 L milk' can't become 12 L milk."""
+def grounding(text: str, item: dict) -> tuple[str | None, set[int]]:
+    """Deterministic injection / hallucination guard → (what in a Gemini-parsed item is NOT in the chef's own text,
+    indices of the clauses that ground it). Product, amount and unit must all be in the SAME clause, so
+    '12 kg butter and 1 L milk' can't become 12 L milk."""
     words = re.findall(r"[\wäöå]+", item["query"].lower())
     unit = (item["unit"] or "").lower()
     if unit and unit not in quantity.MEASURES:
-        return f"the unit {item['unit']}"  # catalogue codes like KI multiply quantities; only plain units are parsed
-    clauses = [c for c in re.split(_SPLIT, text) if _words_in(words, c)]
+        return f"the unit {item['unit']}", set()  # catalogue codes like KI multiply quantities; plain units only
+    clauses = {i: c for i, c in enumerate(re.split(_SPLIT, text)) if _words_in(words, c)}
     if not clauses:
-        return f"the product '{item['query']}'"
+        return f"the product '{item['query']}'", set()
     if item["amount"] is not None:
-        clauses = [c for c in clauses if item["amount"] in _numbers(c)]
+        clauses = {i: c for i, c in clauses.items() if item["amount"] in _numbers(c)}
         if not clauses:
-            return f"the amount {gate._qty(item['amount'])} for {item['query']}"
-    if unit and not any(_unit_in(unit, c) for c in clauses):
-        return f"the unit {item['unit']} for {item['query']}"
-    return None
+            return f"the amount {gate._qty(item['amount'])} for {item['query']}", set()
+    if unit:
+        clauses = {i: c for i, c in clauses.items() if _unit_in(unit, c)}
+        if not clauses:
+            return f"the unit {item['unit']} for {item['query']}", set()
+    return None, set(clauses)
+
+
+def ungrounded(text: str, item: dict) -> str | None:
+    return grounding(text, item)[0]
+
+
+def overgrounded(text: str, items: list[dict]) -> list[dict]:
+    """Items left without a clause of their own once each clause grounds at most ONE item: '1 L lactose-free milk'
+    parsed as both 'milk' and 'lactose-free milk' would otherwise order two products from one line.
+    ponytail: greedy, fewest options first; exact matching (Hopcroft-Karp) is overkill for <= MAX_ITEMS items."""
+    options = [(grounding(text, it)[1], n) for n, it in enumerate(items)]
+    used, left = set(), []
+    for opts, n in sorted((o for o in options if o[0]), key=lambda o: len(o[0])):
+        free = sorted(opts - used)
+        if free:
+            used.add(free[0])
+        else:
+            left.append(items[n])
+    return left
 
 
 def unassigned_tags(text: str, items: list[dict]) -> list[str]:
     """Dietary words in the chef's text that no item carries ('20 L milk, lactose-free' splits off the word)."""
+    # A tag counts as assigned only on an item whose own clause states it (or the only item): otherwise a parse
+    # that hangs "lactose-free" on the butter would leave the milk unconstrained and still pass.
     have = {t for t, (claims, allergens) in DIETARY.items() for it in items
-            if set(claims) <= set(it["claims"]) and set(allergens) <= set(it["exclude_allergens"])}
+            if set(claims) <= set(it["claims"]) and set(allergens) <= set(it["exclude_allergens"])
+            and (len(items) == 1 or t in keyword_tags(text, it))}
     return sorted({tag for word, tag in _WORDS.items() if word in text.lower()} - have)
 
 
@@ -372,7 +397,7 @@ def _decided_by(scored: list) -> str:
         if k[0] or k[-2:] >= bk[-2:]:  # blocked, or it loses on price and rank anyway
             continue
         rel = [r.message for r in asks if r.code in (C.LOW_RELIABILITY, C.DATA_MISSING) and "min_reliability" in r.facts]
-        if k[:-4] == bk[:-4] and rel:
+        if k[:-4] == bk[:-4] and k[-4] > bk[-4] and rel:  # it lost on concerns, and one is reliability
             return f" Chosen over {_name(ln['product'])}: {rel[0]}"
         if k[:-3] == bk[:-3] and not bk[-3] and k[-3]:
             return f" Chosen over {_name(ln['product'])} because it is Finnish-origin (your preference), at a similar price."
@@ -408,6 +433,14 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
             reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The parsed item '{it['query']}' doesn't match the request: "
                                    f"{what} isn't in the buyer's text. Nothing was ordered.", None,
                                    "Check the request and the parsed items, then retry with the exact wording."))
+    for it in overgrounded(text, request["items"]) if parsed_by_gemini else []:
+        reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, f"The parsed item '{it['query']}' comes from the same part of the "
+                               "request as another item, so it would be ordered twice. Nothing was ordered.", None,
+                               "Send each product once, with the total amount."))
+    keys = [(i["query"].lower(), i["amount"], (i["unit"] or "").lower()) for i in request["items"]]
+    if len(set(keys)) < len(keys):  # exact duplicates, even where they'd resolve to different products
+        reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, "The same item appears more than once in the request. Nothing "
+                               "was ordered.", None, "Send each product once, with the total amount."))
     if lost := unassigned_tags(text, request["items"]):  # a stated dietary need no parsed item carries
         if len(request["items"]) == 1:
             it = request["items"][0]
@@ -417,10 +450,6 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
             reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The request says {', '.join(t.replace('_', '-') for t in lost)}"
                                    " but it isn't clear which product that applies to. Nothing was ordered.", None,
                                    "Put the dietary word next to its product, e.g. '20 L lactose-free milk'."))
-    keys = [(i["query"].lower(), i["amount"], (i["unit"] or "").lower()) for i in request["items"]]
-    if len(set(keys)) < len(keys):  # the same line twice would silently double the order
-        reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, "The same item appears more than once in the request. Nothing "
-                               "was ordered.", None, "Send each product once, with the total amount."))
     if not request["items"]:
         reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, "No product could be read from the request.", None,
                                "Say what to order and how much, e.g. '1000 L lactose-free milk'."))
@@ -555,18 +584,20 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
         orders._append_audit(entry)
         return entry.id
 
+    pids = [ln["product"]["id"] for ln in chosen]
+    if len(set(pids)) < len(pids):  # judged on what would be ORDERED: never add two items' quantities together
+        reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, "Two items in the request resolve to the same product, so the "
+                               "order would add their amounts together. Nothing was ordered.", None,
+                               "Send each product once, with the total amount."))
     confs = [ln["confidence"] for ln in chosen]
     confidence = min(confs) if confs and None not in confs else None  # Decision.confidence: the weakest chosen line
     decision = _decision(run_id, reasons, alternatives, now, confidence)
     order, audit_id = None, audit(decision)  # the agent's own decision is logged before the door sees anything
     if chosen and decision.outcome == "AUTO" and mandate:
-        qty_by_pid: dict[str, float] = {}
-        for line in chosen:  # two items resolving to one product become one order line
-            pid = line["product"]["id"]
-            qty_by_pid[pid] = qty_by_pid.get(pid, 0) + line["quantity"]["quantity"]
-        try:
-            order = await orders.place(buyer_id, requested, [SimpleNamespace(product_id=p, quantity=q)
-                                                             for p, q in qty_by_pid.items()], mandate)
+        try:  # product ids are unique here (duplicates asked above)
+            order = await orders.place(buyer_id, requested, [SimpleNamespace(product_id=ln["product"]["id"],
+                                                                             quantity=ln["quantity"]["quantity"])
+                                                             for ln in chosen], mandate)
         except HTTPException as e:
             reasons.append(gate._r(C.ENGINE_ERROR, ASK, f"The front door couldn't take the order: {e.detail}", None,
                                    "Retry in a moment."))

@@ -39,6 +39,7 @@ NUMERIC_RULES = (RuleKind.MAX_UNIT_PRICE_CENTS, RuleKind.MIN_DELIVERY_RELIABILIT
 DIETARY_CLAIMS = {"FREE_FROM_LACTOSE", "FREE_FROM_GLUTEN", "VEGAN", "VEGETARIAN", "FREE_FROM_MILK"}
 MAX_ALTERNATIVES = 3
 TIERS = ("best", "better", "good")
+MAX_ORDER_LINES, MAX_LINE_QTY = 50, 100_000  # = the /api/orders route limits (main.py), so a proposal can be re-posted
 
 
 @dataclass
@@ -54,7 +55,8 @@ class GateResult:
     substitutes: list[dict] = field(default_factory=list)
     # When every refused line is only short on stock: the same order with each short line split across the product
     # and its best same-unit substitute. A proposal for the human (never AUTO); re-POST its lines to order it.
-    # {lines: [{product_id, quantity, unit, unit_price_cents, line_total_cents, name, replaces?}], total_cents, summary}
+    # {lines: [{product_id, quantity, unit, unit_price_cents, line_total_cents, name, replaces?}], total_cents, summary,
+    #  order_lines: [{product_id, quantity}] (the body's `lines` to re-POST, verbatim)}
     alternative_order: dict | None = None
 
 
@@ -271,9 +273,18 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
         rs, _ = check_line(c, None, q, requested, m, excluded, now)
         claims = set(cat.get("claims") or [])
         lost = sorted(((set(old["claims"]) & DIETARY_CLAIMS) | need) - claims)
-        if cat and cat.get("category") != old.get("category"):
-            rs.append(_r(C.DATA_MISSING, ASK, f"{cat.get('name_en') or c} is in another category.", c,
+        if not cat.get("category") or cat.get("category") != old.get("category"):  # unknown ≠ same
+            rs.append(_r(C.DATA_MISSING, ASK, f"{cat.get('name_en') or c} is not known to be in the same category.", c,
                          "Not offered as a substitute.", category=cat.get("category")))
+        al = cat.get("allergens") or {}
+        unknown = [a for a in sorted(excluded) if not (al.get("contains") or al.get("may_contain"))
+                   and a not in (al.get("free_from") or [])]
+        if unknown:  # a substitute must be KNOWN safe, whatever the uncertainty policy says about the order itself
+            rs.append(_r(C.ALLERGEN_DATA_MISSING, ASK, f"{cat.get('name_en') or c} has no allergen declaration covering "
+                         f"{', '.join(unknown)}.", c, "Not offered as a substitute.", allergens=", ".join(unknown)))
+        if q and q.get("price") is not None and eur_to_cents(q["price"]) < 1:
+            rs.append(_r(C.PRICE_MISSING, ASK, f"{cat.get('name_en') or c} has no usable price.", c,
+                         "Not offered as a substitute.", unit_price_cents=eur_to_cents(q["price"])))
         if lost:
             rs.append(_r(C.DATA_MISSING, ASK, f"{cat.get('name_en') or c} lacks {', '.join(lost)}.", c,
                          "Not offered as a substitute.", missing_claims=", ".join(lost)))
@@ -318,10 +329,12 @@ def _split(pid: str, qty: float, quotes: dict, subs: list[dict], sub_quotes: dic
     a_rs, a = check_line(pid, float(have), q, requested, m, excluded, now)
     if any(_blocking(r) for r in a_rs):
         return None
-    for s in (s for s in subs if s["replaces"] == pid and s["unit"] == q["sales_unit"]):
+    for s in (s for s in subs if s["replaces"] == pid):
         rest = _lot(Decimal(str(qty)) - have, (catalogue.get(s["product_id"]) or {}).get("lot_size"), ROUND_CEILING)
+        if rest > MAX_LINE_QTY:
+            continue
         b_rs, b = check_line(s["product_id"], float(rest), sub_quotes.get(s["product_id"]), requested, m, excluded, now)
-        if not any(_blocking(r) for r in b_rs):
+        if a["unit"] and a["unit"] == b["unit"] and not any(_blocking(r) for r in b_rs):  # resolved units, known + equal
             return [a, dict(b, replaces=pid, tier=s["tier"])]
     return None
 
@@ -341,9 +354,12 @@ def _alternative_order(lines: list, info: list[dict], rejected: list[str], quote
         out += parts
         splits.append(f"{_qty(parts[0]['quantity'])} {parts[0]['unit']} of {parts[0]['name']} + "
                       f"{_qty(parts[1]['quantity'])} {parts[1]['unit']} of {parts[1]['name']} ({parts[1]['tier']} substitute)")
+    if len(out) > MAX_ORDER_LINES:
+        return None
     keep = ("product_id", "name", "quantity", "unit", "unit_price_cents", "line_total_cents", "replaces")
     total = sum(li["line_total_cents"] or 0 for li in out)
     return {"lines": [{k: li[k] for k in keep if k in li} for li in out], "total_cents": total,
+            "order_lines": [{"product_id": li["product_id"], "quantity": li["quantity"]} for li in out],  # POST as is
             "summary": "Split across products: " + "; ".join(splits) + f". New total {eur(total)} net; "
                        "needs your approval, then order these lines."}
 
