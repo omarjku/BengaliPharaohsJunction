@@ -22,3 +22,6 @@ APPROVER_KEYS = os.getenv("APPROVER_KEYS", "")
 VALIO_ADMIN_KEYS = os.getenv("VALIO_ADMIN_KEYS", "")
 # Base64 of a 32-byte Ed25519 private key; signs every order response (signing.py). Unset → ephemeral dev key.
 FRONT_DOOR_SIGNING_KEY = os.getenv("FRONT_DOOR_SIGNING_KEY", "")
+# Where the front door keeps its state (orders, audit trail, idempotency keys; stored mandates once they leave the
+# code). Default: the repo's data/. Point it at a mounted persistent disk (e.g. Render's /var/data) to keep state.
+DATA_DIR = Path(os.getenv("DATA_DIR") or Path(__file__).resolve().parents[2] / "data")
