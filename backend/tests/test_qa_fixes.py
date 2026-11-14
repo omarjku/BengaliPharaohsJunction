@@ -147,9 +147,9 @@ def test_audit_lines_carry_action_and_status(shop):
     oid2 = post([("463335", 1000)]).json()["order_id"]
     c.post(f"/api/orders/{oid2}/reject", headers=AP)
     fd = [e["front_door"] for e in c.get("/api/audit", headers=AP).json()]
-    assert fd[0] == {"action": "order", "status": "pending_approval", "signed_off_by": None}
-    assert fd[1] == {"action": "approved", "status": "confirmed", "signed_off_by": "Chef Aino"}
-    assert fd[3] == {"action": "rejected", "status": "rejected", "signed_off_by": "Chef Aino"}
+    assert fd[0] == {"action": "order", "status": "pending_approval", "signed_off_by": None, "mandate_version": "m1"}
+    assert fd[1] == {"action": "approved", "status": "confirmed", "signed_off_by": "Chef Aino", "mandate_version": "m1"}
+    assert fd[3] == {"action": "rejected", "status": "rejected", "signed_off_by": "Chef Aino", "mandate_version": "m1"}
 
 
 def test_agent_entries_are_marked_as_the_agents_own_view(shop):

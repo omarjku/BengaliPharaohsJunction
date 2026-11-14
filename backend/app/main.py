@@ -432,15 +432,26 @@ async def compile_mandate_route(req: CompileRequest, who: Approver) -> dict:
     return await rules.compile_rules(req.text, who)
 
 
+def _if_match(value: str | None) -> str | None:
+    return value.removeprefix("W/").strip().strip('"') if value else None
+
+
 @app.get("/api/mandate")
-def get_mandate(who: Approver) -> dict | None:
-    """The mandate in force for the approver's buyer (saved, else the seeded default). Needs X-Approver-Key."""
+def get_mandate(who: Approver, response: Response) -> dict | None:
+    """The mandate in force for the approver's buyer (saved, else the seeded default); its version is the ETag
+    header (send it back as If-Match when saving). Needs X-Approver-Key."""
     m = mandates.get(who.buyer_id)
+    if m:
+        response.headers["ETag"] = f'"{mandates.version(m)}"'
     return m.model_dump(mode="json") if m else None
 
 
 @app.put("/api/mandate")
-def save_mandate(req: SaveMandateRequest, who: Approver) -> dict:
-    """Save the confirmed mandate for the approver's buyer → {mandate, changes, audit_id}. 422 while open questions
-    remain; 409 for big loosenings unless confirm_large_change=true. Audited. Needs X-Approver-Key."""
-    return rules.save(req.mandate, req.confirm_large_change, who)
+def save_mandate(req: SaveMandateRequest, who: Approver, response: Response,
+                 if_match: Annotated[str | None, Header(max_length=200)] = None) -> dict:
+    """Save the confirmed mandate for the approver's buyer → {mandate, changes, audit_id, version}. With If-Match
+    (the ETag from GET), a save over rules someone else changed meanwhile is 412, never a silent overwrite. 422 while
+    open questions remain; 409 for big loosenings unless confirm_large_change=true. Audited. Needs X-Approver-Key."""
+    out = rules.save(req.mandate, req.confirm_large_change, who, _if_match(if_match))
+    response.headers["ETag"] = f'"{out["version"]}"'
+    return out

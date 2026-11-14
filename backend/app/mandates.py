@@ -83,11 +83,34 @@ def _write(data: dict) -> None:
     os.replace(tmp, STORE)  # atomic
 
 
-def put(m: Mandate) -> dict | None:
-    """Store the approver-confirmed mandate for m.buyer_id; returns the previous stored entry (for restore)."""
+def version(m: Mandate | None) -> str | None:
+    """A mandate's version = its id: every save mints a new one (rules.save), the seeded mandate has a fixed one.
+    It is the ETag of GET/PUT /api/mandate and is recorded with every order, approval and signed statement."""
+    return m.id if m else None
+
+
+def _version_conflict(current: str | None) -> HTTPException:
+    return HTTPException(412, detail={"error": "The rules changed since you loaded them; reload, review and save again.",
+                                      "current_version": current})
+
+
+def check_version(buyer_id: str, if_version: str | None) -> None:
+    if if_version is not None and (current := version(get(buyer_id))) != if_version:
+        raise _version_conflict(current)
+
+
+def put(m: Mandate, if_version: str | None = None) -> dict | None:
+    """Store the approver-confirmed mandate for m.buyer_id; returns the previous stored entry (for restore).
+    if_version (from If-Match): compare-and-write under the lock, so of two concurrent saves of the same version
+    exactly one wins and the other gets 412."""
     with _lock:
         data = _read()
         previous = data.get(m.buyer_id)
+        if if_version is not None:
+            seeded = _MANDATES.get(m.buyer_id)
+            current = (previous or {}).get("id") or version(seeded)
+            if current != if_version:
+                raise _version_conflict(current)
         data[m.buyer_id] = m.model_dump(mode="json")
         _write(data)
         return previous
