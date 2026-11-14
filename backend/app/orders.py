@@ -323,9 +323,10 @@ async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | N
                 "created_at": now.isoformat(), "updated_at": now.isoformat()}
             entry, fd = _entry(FRONT_DOOR, oid, buyer_id, requested_date.isoformat(), res.lines, mandate, res,
                                now=now, status=res.status)
-            audit_id = await _commit((lambda: _store().__setitem__(oid, record)) if record else None,
-                                     lambda: _store().pop(oid, None), entry, fd)
-        return _response(oid if res.status != "refused" else None, res.status, _view(res), audit_id)
+            out = _signed(fd, _response(oid if res.status != "refused" else None, res.status, _view(res), entry.id))
+            await _commit((lambda: _store().__setitem__(oid, record)) if record else None,
+                          lambda: _store().pop(oid, None), entry, fd)
+        return out
     raise _busy()
 
 
@@ -403,8 +404,9 @@ async def approve(order_id: str, who: Principal, seen_decided_at: datetime | Non
         entry, fd = _entry(f"human:{who.name}:approve", order_id, o["buyer_id"], o["requested_date"],
                            res.lines, mandate, res, now=now, status=status,
                            action="approved" if status == "confirmed" else "approval_blocked")
-        audit_id = await _commit(*_changing(o, changes), entry, fd)
-    out = _response(order_id, status, {**_view(res), "signed_off_by": o["signed_off_by"]}, audit_id)
+        out = _signed(fd, _response(order_id, status, {**_view(res), "signed_off_by": changes["signed_off_by"]},
+                                    entry.id))
+        await _commit(*_changing(o, changes), entry, fd)
     if status != "confirmed":  # QA round 2 N3: an approve that didn't approve is never a 200
         raise final_error(409, {
             "error": "Not approved: the re-check changed the decision (new price, stock, rules or budget). Review the "
@@ -424,12 +426,20 @@ async def reject(order_id: str, who: Principal) -> dict:
         entry, fd = _entry(f"human:{who.name}:reject", order_id, o["buyer_id"], o["requested_date"], o["lines"],
                            Mandate.model_validate(o["mandate"]), None, decision=decision, now=now,
                            action="rejected", status="rejected")
-        audit_id = await _commit(*_changing(o, dict(status="rejected", signed_off_by=who.name,
-                                                    updated_at=now.isoformat())), entry, fd)
-    return _response(order_id, "rejected", {"total_cents": o["total_cents"], "lines": o["lines"],
-                                            "decision": o["decision"], "rejected_options": [],
-                                            "mandate_version": o.get("mandate_version"),
-                                            "signed_off_by": who.name}, audit_id)
+        out = _signed(fd, _response(order_id, "rejected", {"total_cents": o["total_cents"], "lines": o["lines"],
+                                                           "decision": o["decision"], "rejected_options": [],
+                                                           "mandate_version": o.get("mandate_version"),
+                                                           "signed_off_by": who.name}, entry.id))
+        await _commit(*_changing(o, dict(status="rejected", signed_off_by=who.name,
+                                         updated_at=now.isoformat())), entry, fd)
+    return out
+
+
+def _signed(fd: dict, out: dict) -> dict:
+    """Keep the response's signed statement + signature in its audit line (front_door annotation), so the audit
+    views can show "signed by the front door" and anyone can POST it to /api/verify. Returns `out` unchanged."""
+    fd.update(signed_statement=out["signed_statement"], signature=out["signature"])
+    return out
 
 
 def _changing(o: dict, changes: dict):
