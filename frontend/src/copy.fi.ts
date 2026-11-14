@@ -393,6 +393,7 @@ export const UI = {
     also: (v: number) => `Hyvä tietää (${v})`,
     other: (v: number) => `Muut vaihtoehdot (${v})`,
     understood: 'Mitä agentti ymmärsi',
+    changed: (from: string, to: string) => `Vaihdettiin: ${from} → ${to}.`,
     split: (have: string, rest: string, extra: string) => `Valiolla on ${have}. Lisätäänkö ${rest}: ${extra}?`,
     splitFallback: 'Valio voi korvata puuttuvan toisella tuotteella.',
     splitAria: 'Jaettu tilaus',
@@ -447,8 +448,8 @@ export const UI = {
     youHave: (matched: string, thisOrder: boolean) => `Sinulla on tätä (${matched}${thisOrder ? ', vain tälle tilaukselle' : ''}), joten se on jätetty pois.`,
     addAnyway: 'Lisää silti',
     addAnywayOn: 'Lisätään: päivitä ostoskori',
-    coverage: (total: string, inCart: number, all: number, check: number, checkTotal: string, have: number) =>
-      [`${total}, ${inCart}/${all} aineosaa`, have > 0 && `${have} sinulla jo on`, check > 0 && `${check} vaatii tarkistuksesi, noin ${checkTotal}`].filter(Boolean).join('; ') + '.',
+    coverage: (total: string, inCart: number, all: number, check: number, checkTotal: string, have: number, notFound: string[] = []) =>
+      [`${total}, ${inCart}/${all} aineosaa`, have > 0 && `${have} sinulla jo on`, check > 0 && `${check} vaatii tarkistuksesi, noin ${checkTotal}`, notFound.length > 0 && `${notFound.length} ei löytynyt`].filter(Boolean).join('; ') + '.',
     update: (n: number) => `Päivitä ostoskori (${n} ${n === 1 ? 'muutos' : 'muutosta'})`,
     spareLine: (needed: string, pct: string) => `Tarve ${needed}, lisäksi ${pct} % varaa`,
     spareCost: (m: string) => `(${m} yli reseptin tarpeen)`,

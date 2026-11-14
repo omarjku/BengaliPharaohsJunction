@@ -196,6 +196,12 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
             <h2 ref={heading} tabIndex={-1} className="answer-text">
               {t.cart(forWhom, c.money(total))}
             </h2>
+            {plan.understood?.interpretation && <p className="quiet small">{plan.understood.interpretation}</p>}
+            {plan.changes?.map((change) => (
+              <p key={`${change.item}-${change.from}-${change.to}`} className="quiet small">
+                {c.UI.result.changed(change.from, change.to)}
+              </p>
+            ))}
             <p className="answer-sub">
               {t.sub(c.day(planFor.date))}
             </p>
@@ -269,9 +275,9 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
 
           <section className="instead mt-step" aria-labelledby="menu-cart">
             <StepHead n={3} id="menu-cart" title={t.theCart} sub={t.step3Sub(c.money(total))} />
-            {plan.cart_coverage && (plan.cart_coverage.to_check > 0 || plan.cart_coverage.not_found.length > 0 || plan.cart_coverage.have > 0) && (
+            {plan.cart_coverage && (
               <p className="mt-coverage small">
-                {t.coverage(c.money(plan.cart_total_cents), plan.cart_coverage.in_cart, plan.cart_coverage.ingredients, plan.cart_coverage.to_check, c.money(plan.cart_coverage.check_total_cents), plan.cart_coverage.have)}
+                {t.coverage(c.money(plan.cart_total_cents), plan.cart_coverage.in_cart, plan.cart_coverage.ingredients, plan.cart_coverage.to_check, c.money(plan.cart_coverage.check_total_cents), plan.cart_coverage.have, plan.cart_coverage.not_found)}
               </p>
             )}
             {sparePct > 0 && <p className="mt-spare-total small">{t.spareTotal(c.count(Math.round(sparePct)), c.money(spareCost), c.count(Math.round(spareRounding)))}</p>}
@@ -357,6 +363,7 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
                         {l.quantity?.quantity != null ? c.amountOf(l.quantity.quantity, l.quantity.sales_unit) : t.amountUnclear}
                       </span>
                       <span className="r">{l.line_total_cents !== null ? c.money(l.line_total_cents) : '—'}</span>
+                      {(l.usual || l.why) && <span className="quiet small concern">{l.usual ? c.UI.result.usual : c.humanize(l.why)}</span>}
                       {concerns(l).map((r, k) => (
                         <span key={k} className="option-why warn concern">
                           {c.headline({ ...r, message: c.humanize(r.message) })}

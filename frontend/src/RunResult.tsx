@@ -196,14 +196,16 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   const ruleKey = decision.outcome === 'AUTO' ? 'AUTO' : decision.primary_reason?.code
   const ruleWords = ruleKey ? t.ruleWords[ruleKey] : undefined
 
+  const reasonFor = (line: Line | undefined) => line ? (line.usual ? t.usual : line.why ? c.humanize(line.why) : null) : null
+
   // The lines as a table: the front door's (what was ordered or held) or the agent's pick.
   const rows = order
     ? order.lines.map((l) => ({
-        key: l.product_id, name: tidyName(l.name), qty: l.quantity != null ? c.amountOf(l.quantity, l.unit) : '—',
+        key: l.product_id, name: tidyName(l.name), reason: reasonFor(run.lines.find((line) => line.product.id === l.product_id)), qty: l.quantity != null ? c.amountOf(l.quantity, l.unit) : '—',
         price: l.unit_price_cents != null ? c.money(l.unit_price_cents) : '—', total: l.line_total_cents != null ? c.money(l.line_total_cents) : '—',
       }))
     : chosen.map((l) => ({
-        key: l.product.id, name: productName(l), qty: l.quantity?.quantity != null ? c.amountOf(l.quantity.quantity, l.quantity.sales_unit) : '—',
+        key: l.product.id, name: productName(l), reason: reasonFor(l), qty: l.quantity?.quantity != null ? c.amountOf(l.quantity.quantity, l.quantity.sales_unit) : '—',
         price: l.quote?.price != null ? c.price(l.quote.price) : '—', total: l.line_total_cents != null ? c.money(l.line_total_cents) : '—',
       }))
 
@@ -299,6 +301,12 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
           <h2 ref={heading} tabIndex={-1} className="answer-text num">
             {head}
           </h2>
+          {run.understood?.interpretation && <p className="quiet small">{run.understood.interpretation}</p>}
+          {run.changes?.map((change) => (
+            <p key={`${change.item}-${change.from}-${change.to}`} className="quiet small">
+              {t.changed(change.from, change.to)}
+            </p>
+          ))}
           {ruleWords && <p className="dc-rule">{t.decidedBy(ruleWords)}</p>}
           {signOff && <p className="signoff">{signOff}</p>}
           <p className="answer-sub" ref={reasonsRef}>
@@ -335,7 +343,10 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.key}>
-                    <th scope="row">{r.name}</th>
+                    <th scope="row">
+                      {r.name}
+                      {r.reason && <span className="quiet small">{r.reason}</span>}
+                    </th>
                     <td data-label={t.colAmount}>{r.qty}</td>
                     <td data-label={t.colPrice}>{r.price}</td>
                     <td data-label={t.colTotal}>{r.total}</td>
