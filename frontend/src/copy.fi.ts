@@ -516,6 +516,7 @@ export const UI = {
     read: 'Luettu',
     unreadable: (what: string) => `Ei saatu luettua: ${what}`,
     nothing: 'Kuvasta ei saatu luettua sanoja. Kokeile tarkempaa kuvaa tai kirjoita.',
+    close: 'Sulje',
   },
   valio: {
     nav: 'Valio',

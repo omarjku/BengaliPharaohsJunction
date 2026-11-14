@@ -56,6 +56,10 @@ export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (
     setMessage(null)
     setMode(forAnswer ? 'answer' : asToggle ? 'toggle' : 'hold')
     stopWhenReady.current = false
+    // The level meter's AudioContext is made and resumed here, still inside the tap: iOS starts a context created
+    // after the await (outside the gesture) suspended, so the ring never moved and the mic looked dead.
+    const ctx = new AudioContext()
+    void ctx.resume()
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const recorder = new MediaRecorder(stream)
@@ -79,7 +83,7 @@ export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (
         }
       }
       // A quiet level meter: RMS of the signal, written straight to a CSS variable (no re-renders).
-      const ctx = new AudioContext()
+      if (ctx.state === 'suspended') await ctx.resume().catch(() => {})
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 512
       ctx.createMediaStreamSource(stream).connect(analyser)
@@ -103,6 +107,7 @@ export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (
       }
     } catch (err) {
       cleanup()
+      if (ctx.state !== 'closed') void ctx.close()
       const denied = err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'SecurityError')
       setMessage(null) // the state ('denied' / 'error') says it; VoiceStatus words it in the chef's language
       setState(denied ? 'denied' : 'error')
