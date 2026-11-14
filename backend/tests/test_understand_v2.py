@@ -59,6 +59,72 @@ def test_understand_sends_context_and_zero_thinking(monkeypatch):
     assert result["source"] == "gemini" and result["actions"][0]["slots"]["items"][0]["amount"] == 25
 
 
+def test_understand_sends_pending_question_context_and_returns_answer_action(monkeypatch):
+    seen = {}
+
+    async def fake(system, prompt, schema, thinking=None):
+        seen.update(system=system, prompt=prompt, schema=schema, thinking=thinking)
+        return {"actions": [{
+            "intent": "answer",
+            "slots": {"items": [], "dishes": [], "guests": None, "date": None,
+                      "diets": [], "exclusions": [], "language": "en"},
+            "answer": {"slot": "amount", "value": "20 pcs"},
+        }]}
+
+    monkeypatch.setattr(agent, "_gemini", fake)
+    result = run(understand.understand(
+        "12, no 20",
+        "chef",
+        [],
+        None,
+        TODAY,
+        pending={"kind": "amount", "question": "Use 12 pcs, or reply with a different amount?",
+                 "item": 0, "line": {"query": "pasta", "amount": 12, "unit": "pcs"},
+                 "assumed": {"amount": 12, "unit": "pcs"},
+                 "choices": [{"label": "12 pcs", "amount": 12, "unit": "pcs"}]},
+    ))
+
+    assert result["source"] == "gemini"
+    assert result["actions"][0]["intent"] == "answer"
+    assert result["actions"][0]["answer"] == {"slot": "amount", "value": "20 pcs"}
+    assert all(value in seen["prompt"] for value in ("Use 12 pcs", "pasta", "amount", "12"))
+
+
+def test_usual_order_without_weekday_uses_the_only_standing_order(monkeypatch):
+    monkeypatch.setattr(profile, "standing_orders", lambda _buyer: [{"weekday": "friday", "lines": [
+        {"text": "20 L milk", "quantity": 20, "unit": "L"}], "source": "you told me"}])
+    action = understand._fallback_action("my usual order", TODAY, None)
+    expanded = understand._expand_standing_order(action, "my usual order", "chef", today=TODAY)
+    assert expanded["slots"]["items"][0]["name"] == "milk"
+    assert expanded["slots"]["items"][0]["amount"] == 20
+    assert expanded["slots"]["items"][0]["_standing_order"] is True
+    assert expanded["slots"]["date"] == "2026-11-20"
+
+
+def test_usual_order_without_weekday_asks_when_standing_days_are_ambiguous(monkeypatch):
+    monkeypatch.setattr(profile, "standing_orders", lambda _buyer: [
+        {"weekday": "monday", "lines": [{"text": "20 L milk"}]},
+        {"weekday": "friday", "lines": [{"text": "10 kg butter"}]},
+    ])
+    action = understand._fallback_action("my usual order", TODAY, None)
+    expanded = understand._expand_standing_order(action, "my usual order", "chef", today=TODAY)
+    assert expanded["question"] == "Which delivery day?"
+    assert [choice["label"] for choice in expanded["choices"]] == ["Monday", "Friday"]
+    assert expanded["slots"]["items"] == []
+
+
+def test_usual_order_without_standing_order_offers_history_with_source(monkeypatch):
+    monkeypatch.setattr(profile, "standing_orders", lambda _buyer: [])
+    monkeypatch.setattr(profile, "context", lambda _buyer: {
+        "usual_products": [{"text": "Valio butter", "source_detail": "from your orders"}],
+        "usual_product_ids": [],
+    })
+    action = understand._fallback_action("my usual order", TODAY, None)
+    expanded = understand._expand_standing_order(action, "my usual order", "chef", today=TODAY)
+    assert expanded["question"].startswith("I found these usual products")
+    assert "Valio butter (from your orders)" in expanded["question"]
+
+
 def test_understand_validates_closed_slots_and_date_window(monkeypatch):
     async def fake(*_args, **_kwargs):
         return {"actions": [{

@@ -34,6 +34,17 @@ from . import catalogue, config, conversation, diet, expand, gate, mandates, ord
 RULES_VERSION = "m1-buyer-agent-0.1"
 ACTOR = "buyer_agent"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+
+
+def _api_schema(schema):
+    """Gemini's responseSchema is an OpenAPI subset: it rejects JSON-Schema keys such as additionalProperties with
+    HTTP 400, which silently sent every caller to its fallback. Strip them here, once, for every structured call;
+    the code still validates every field it reads."""
+    if isinstance(schema, dict):
+        return {k: _api_schema(v) for k, v in schema.items() if k not in ("additionalProperties", "$schema", "title")}
+    if isinstance(schema, list):
+        return [_api_schema(v) for v in schema]
+    return schema
 DECISIONS_URL = "https://generativelanguage.googleapis.com/v1beta/decisions"
 GEMINI_TIMEOUT_S = 15
 SEARCH_LIMIT = 36  # catalogue hits the matcher may judge (in batches of 12)
@@ -138,7 +149,8 @@ async def _gemini(system: str, prompt: str, schema: dict, thinking: dict | None 
         return copy.deepcopy(hit[1])
     body = {"systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"responseMimeType": "application/json", "responseSchema": schema, "temperature": 0}
+            "generationConfig": {"responseMimeType": "application/json", "responseSchema": _api_schema(schema),
+                                 "temperature": 0}
             | ({"thinkingConfig": thinking} if thinking else {})}
     try:
         r = await _http().post(f"{GEMINI_URL}/{config.GEMINI_MODEL}:generateContent",

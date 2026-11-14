@@ -193,6 +193,15 @@ def take(cid: str, buyer_id: str) -> dict:
     return entry
 
 
+def peek(cid: str, buyer_id: str) -> dict:
+    """Read an open question without consuming it; unrelated new requests keep the question answerable."""
+    with _lock:
+        entry = _read().get(cid)
+    if entry is None or entry["buyer_id"] != buyer_id or entry["expires"] <= time.time():
+        raise HTTPException(404, detail="That question has expired or isn't yours. Please say the whole order again.")
+    return json.loads(json.dumps(entry, ensure_ascii=False))
+
+
 # The v2 reading context is deliberately separate from the open follow-up store above.  Follow-up ids are short-lived
 # workflow state; these buyer-scoped files are only the small amount of recent conversation context needed to understand
 # the next message.

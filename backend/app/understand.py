@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from . import agent, catalogue, kitchen, profile
 
 INTENTS = ("order_items", "plan_meal", "plan_period", "urgent", "change_cart", "ask_about_cart", "ask_kitchen",
-           "tell_kitchen", "greeting", "unclear", "out_of_scope", "unrealistic")
+           "tell_kitchen", "greeting", "unclear", "out_of_scope", "unrealistic", "confirm", "answer", "reject", "cancel")
 _UNITS = {"l": "L", "litre": "L", "litres": "L", "liter": "L", "liters": "L", "dl": "dl", "cl": "cl",
           "ml": "ml", "kg": "kg", "kilo": "kg", "kilos": "kg", "kilogram": "kg", "kilograms": "kg",
           "g": "g", "gram": "g", "grams": "g", "pcs": "pcs", "pc": "pcs", "piece": "pcs",
@@ -72,6 +72,9 @@ def _slots_schema() -> dict:
               "properties": {"intent": {"type": "string", "enum": list(INTENTS)}, "slots": slots,
                              "question": {"type": "string", "nullable": True},
                              "choices": {"type": "array", "items": choice},
+                             "answer": {"type": "object", "nullable": True, "required": ["slot", "value"],
+                                        "properties": {"slot": {"type": "string", "enum": ["date", "amount", "product", "choice"]},
+                                                       "value": {"type": "string", "nullable": True}}},
                              "reply": {"type": "string", "nullable": True},
                              "topic": {"type": "string", "nullable": True},
                              "interpretation": {"type": "string", "nullable": True}}}
@@ -95,6 +98,11 @@ right unit. For cart questions, use only the supplied compact last card. Kitchen
 learn silently. A plan_meal is a cart proposal, not an order. When the chef asks for the usual, regular, normal, or
 same-as-every-weekday order, use the matching standing order in the supplied profile; any remembered quantity is an
 assumption that code will hold for chef confirmation. This applies in the chef's language.
+When pending_question is present, first interpret the new message as its answer in that context. Return confirm when
+the chef accepts the proposal, including sentences that begin with "no" but then approve it ("No, that amount is
+good"). Return answer with one of date, amount, product, or choice and the final value when the chef supplies it, or
+reject when the chef declines/cancels. If the message is an unrelated food request, return its normal order/change
+action instead and leave the pending question available.
 """
 
 
@@ -270,14 +278,36 @@ def compact_card(card: dict | None) -> dict | None:
             "ingredients": ingredients[:20], "held_lines": [x for x in lines if not x["chosen"]][:20]}
 
 
-def _payload(message: str, turns: list[dict], last_card: dict | None, buyer_id: str, today: date) -> dict:
+def _compact_pending(pending: dict | None) -> dict | None:
+    if not isinstance(pending, dict):
+        return None
+    raw_choices = pending.get("choices") or pending.get("options") or []
+    if not isinstance(raw_choices, list):
+        raw_choices = []
+    choices = (_sanitize_choices(raw_choices) if any(isinstance(value, dict) for value in raw_choices)
+               else [_clean_text(value, 120) for value in raw_choices if isinstance(value, str)])
+    out = {"kind": _clean_text(pending.get("kind"), 30),
+           "question": _clean_text(pending.get("question"), 300),
+           "item": pending.get("item") if isinstance(pending.get("item"), int) else None,
+           "choices": choices[:3]}
+    for key in ("line", "assumed"):
+        value = pending.get(key)
+        if isinstance(value, dict):
+            out[key] = {name: value.get(name) for name in ("query", "name", "amount", "unit", "source")
+                        if value.get(name) is not None}
+    return out
+
+
+def _payload(message: str, turns: list[dict], last_card: dict | None, buyer_id: str, today: date,
+             pending: dict | None = None) -> dict:
     safe_turns = []
     for turn in (turns or [])[-10:]:
         if isinstance(turn, dict):
             safe_turns.append({"role": _clean_text(turn.get("role"), 20), "text": _clean_text(turn.get("text"), 500),
                                "time": _clean_text(turn.get("time"), 40)})
     return {"message": _clean_text(message, _MAX_TEXT), "turns": safe_turns, "last_card": compact_card(last_card),
-            "profile": _compact_profile(buyer_id), "kitchen_context": _compact_kitchen(buyer_id),
+            "pending_question": _compact_pending(pending), "profile": _compact_profile(buyer_id),
+            "kitchen_context": _compact_kitchen(buyer_id),
             "today": today.isoformat(), "weekday": today.strftime("%A")}
 
 
@@ -396,6 +426,24 @@ def _sanitize_action(raw, message: str, today: date) -> dict | None:
     action = {"intent": intent, "slots": clean, "question": _clean_text(raw.get("question"), 240) or None,
               "choices": _sanitize_choices(raw.get("choices")), "reply": _clean_text(raw.get("reply"), 500) or None,
               "topic": _clean_topic(raw.get("topic")), "interpretation": interpretation}
+    if intent == "answer":
+        answer = raw.get("answer")
+        if not isinstance(answer, dict) or answer.get("slot") not in ("date", "amount", "product", "choice"):
+            return None
+        value = answer.get("value")
+        if isinstance(value, dict) and answer["slot"] == "amount":
+            amount = _number(value.get("amount"))
+            unit = _unit(value.get("unit"))
+            if amount is None:
+                return None
+            value = {"amount": amount, "unit": unit}
+        elif isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            value = _clean_text(str(value), 160)
+        else:
+            return None
+        if value in (None, ""):
+            return None
+        action["answer"] = {"slot": answer["slot"], "value": value}
     if isinstance(raw.get("proposed_fact"), dict):
         action["proposed_fact"] = raw["proposed_fact"]
     if intent == "out_of_scope" and not _NON_FOOD.search(message) and not clean["items"]:
@@ -480,15 +528,57 @@ def _same_standing_item(candidate: dict, standing: dict, *, name_only: bool = Fa
             and (_unit(candidate.get("unit")) or candidate.get("unit")) == (_unit(standing.get("unit")) or standing.get("unit")))
 
 
-def _expand_standing_order(action: dict, message: str, buyer_id: str) -> dict:
+def _expand_standing_order(action: dict, message: str, buyer_id: str, requested: date | None = None,
+                           today: date | None = None) -> dict:
     day, marker = _standing_day(message)
+    standing = profile.standing_orders(buyer_id) if _STANDING_TRIGGER.search(message) else []
+    if not day and _STANDING_TRIGGER.search(message):
+        if requested is not None:
+            day = profile.WEEKDAYS[requested.weekday()]
+        elif len(standing) == 1:
+            day = standing[0].get("weekday")
+        elif len(standing) > 1:
+            slots = dict(action.get("slots") or _default_slots(message))
+            slots["items"] = []
+            choices = [{"label": str(order.get("weekday", "")).capitalize(), "amount": None, "unit": None}
+                       for order in standing if order.get("weekday")][:3]
+            return dict(action, intent="order_items", slots=slots, question="Which delivery day?", choices=choices)
+        else:
+            facts = []
+            try:
+                context = profile.context(buyer_id) or {}
+            except Exception:
+                context = {}
+            for product in context.get("usual_products") or []:
+                if isinstance(product, dict) and product.get("text"):
+                    source = product.get("source_detail") or product.get("source") or "from your orders"
+                    facts.append(f"{product['text']} ({source})")
+            for product_id in context.get("usual_product_ids") or []:
+                product = catalogue.get(str(product_id)) or {}
+                name = product.get("name_en") or product.get("name_fi") or str(product_id)
+                facts.append(f"{name} (from your orders)")
+            if facts:
+                slots = dict(action.get("slots") or _default_slots(message))
+                slots["items"] = []
+                labels = list(dict.fromkeys(facts))[:3]
+                return dict(action, intent="order_items", slots=slots,
+                            question="I found these usual products from your history: " + ", ".join(labels) + ".",
+                            choices=[{"label": label, "amount": None, "unit": None} for label in labels])
+            slots = dict(action.get("slots") or _default_slots(message))
+            slots["items"] = []
+            return dict(action, intent="order_items", slots=slots,
+                        question="I don't have a standing order saved yet. Which delivery day should I use?", choices=[])
     if not day:
         return action
-    saved = next((order for order in profile.standing_orders(buyer_id) if order.get("weekday") == day), None)
+    saved = next((order for order in standing if order.get("weekday") == day), None)
     if saved:
         standing_items = [item for line in saved.get("lines") or [] if isinstance(line, dict)
                           if (item := _standing_item(line))]
         slots = dict(action.get("slots") or _default_slots(message))
+        if not slots.get("date") and requested is None:
+            reference = today or date.today()
+            target = profile.WEEKDAYS.index(day)
+            slots["date"] = (reference + timedelta(days=(target - reference.weekday() - 1) % 7 + 1)).isoformat()
         current = [item for item in slots.get("items") or [] if isinstance(item, dict) and item.get("name")]
         current = [item for item in current if not re.search(r"\b(?:usual|regular|normal|order|tilaus|tavallinen)\b", item["name"], re.I)]
         fallback_extras = _fallback_items(_standing_remainder(message, marker))
@@ -541,8 +631,9 @@ def _expand_standing_order(action: dict, message: str, buyer_id: str) -> dict:
     return action
 
 
-def _apply_standing_expansion(actions: list[dict], message: str, buyer_id: str) -> list[dict]:
-    return [_expand_standing_order(action, message, buyer_id) for action in actions]
+def _apply_standing_expansion(actions: list[dict], message: str, buyer_id: str, requested: date | None = None,
+                              today: date | None = None) -> list[dict]:
+    return [_expand_standing_order(action, message, buyer_id, requested, today) for action in actions]
 
 
 def _topic(message: str) -> str | None:
@@ -599,14 +690,17 @@ def _fallback_action(message: str, today: date, last_card: dict | None) -> dict:
     return action
 
 
-def _fallback_result(message: str, buyer_id: str, turns: list[dict], last_card: dict | None, today: date) -> dict:
-    action = _expand_standing_order(_fallback_action(message, today, last_card), message, buyer_id)
+def _fallback_result(message: str, buyer_id: str, turns: list[dict], last_card: dict | None, today: date,
+                     requested: date | None = None) -> dict:
+    action = _expand_standing_order(_fallback_action(message, today, last_card), message, buyer_id,
+                                    requested=requested, today=today)
     return {"actions": [action], "source": "fallback"}
 
 
-async def understand_fallback(message: str, buyer_id: str, turns: list[dict], last_card: dict | None, today: date) -> dict:
+async def understand_fallback(message: str, buyer_id: str, turns: list[dict], last_card: dict | None, today: date,
+                              requested: date | None = None) -> dict:
     """Deterministic path used when the structured understand call is unavailable."""
-    return _fallback_result(message, buyer_id, turns, last_card, today)
+    return _fallback_result(message, buyer_id, turns, last_card, today, requested)
 
 
 def _legacy_action(raw: dict, message: str, today: date) -> dict | None:
@@ -655,9 +749,10 @@ def _normalise(raw: dict, message: str, today: date) -> list[dict] | None:
     return actions
 
 
-async def understand(message: str, buyer_id: str, turns: list[dict], last_card: dict | None, today: date) -> dict:
+async def understand(message: str, buyer_id: str, turns: list[dict], last_card: dict | None, today: date,
+                     pending: dict | None = None, requested: date | None = None) -> dict:
     """Read one message once with Gemini, validate its actions, or use the deterministic fallback."""
-    payload = _payload(message, turns, last_card, buyer_id, today)
+    payload = _payload(message, turns, last_card, buyer_id, today, pending)
     prompt = agent._wrap(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
     try:
         try:
@@ -668,7 +763,7 @@ async def understand(message: str, buyer_id: str, turns: list[dict], last_card: 
         raw = None
     actions = _normalise(raw, message, today) if raw is not None else None
     if actions is None:
-        return _fallback_result(message, buyer_id, turns, last_card, today)
-    actions = _apply_standing_expansion(actions, message, buyer_id)
+        return _fallback_result(message, buyer_id, turns, last_card, today, requested)
+    actions = _apply_standing_expansion(actions, message, buyer_id, requested, today)
     return {"actions": actions, "source": "gemini"}
 

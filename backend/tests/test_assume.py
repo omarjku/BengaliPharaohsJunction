@@ -123,6 +123,28 @@ def test_amountless_product_becomes_held_proposal(shop1, monkeypatch):  # noqa: 
     assert out["request"]["items"][0]["amount"] == 12.0 and "assumptions" not in out
 
 
+def test_gemini_confirmation_keeps_assumed_amount_for_approval(shop1, monkeypatch):  # noqa: F811
+    pizza_shop(shop1)
+    item = {"query": "pizza base", "amount": None, "unit": None, "dietary": []}
+    _fake_order_gemini(monkeypatch, item, {"amount": 10, "unit": "pcs", "assumption": "One base per batch."})
+    real_understand = ask.understand.understand
+
+    async def fake_understand(message, buyer_id, turns, last_card, today, pending=None, requested=None):
+        if pending:
+            return {"source": "gemini", "actions": [{"intent": "confirm", "slots": {}}]}
+        return await real_understand(message, buyer_id, turns, last_card, today, pending=pending, requested=requested)
+
+    monkeypatch.setattr(ask.understand, "understand", fake_understand)
+    first = _post("pizza base for Monday")
+    assert first["conversation_id"]
+    response = c.post("/api/agent/ask", headers={"X-Agent-Key": "agent-lk"},
+                      json={"follow_up": {"to": first["conversation_id"], "answer": "yes"}})
+    assert response.status_code == 200, response.text
+    out = response.json()
+    assert out["order"]["status"] == "pending_approval"
+    assert any(r["code"] == "ASSUMPTION_CONFIRM" for r in _reasons(out))
+
+
 def test_assumed_amount_answer_replaces_the_product_and_never_keeps_cow_milk(shop1, monkeypatch):  # noqa: F811
     """The amount answer may also name a replacement product; the original catalogue choice must not survive."""
     item = {"query": "milk", "amount": None, "unit": None, "dietary": [], "source": "milk"}

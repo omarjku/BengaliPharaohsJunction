@@ -54,6 +54,11 @@ def date_from_text(text: str, today: date) -> date | None:
     low = text.lower()
     if _COMPOUND_DATE.search(low):  # "the Monday after next": never guess which Monday (Codex #4)
         return None
+    if re.search(r"\b(?:end of (?:the )?week|weekend|ende der woche|slutet av veckan|viikon loppu)\b", low):
+        friday = today + timedelta(days=4 - today.weekday())
+        return friday if friday >= today else friday + timedelta(days=7)
+    if re.search(r"\b(?:next week|ensi viikolla|ensi viikko)\b", low):
+        return today + timedelta(days=7 - today.weekday())
     if m := re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", low):
         try:
             return date(int(m[1]), int(m[2]), int(m[3]))
@@ -178,8 +183,29 @@ async def ask(text: str, requested: date | None, buyer_id: str, follow_up: dict 
     menu.HAVE.set(have)  # what the kitchen has (this request only): a menu cart leaves it out; orders ignore it
     agent.start_budget()  # order-sized, before the preflight calls (Codex #17); menu.propose raises it to menu size
     if follow_up:
-        entry = conversation.take(follow_up["to"], buyer_id)
-        out, text, requested = await _answer(entry, follow_up["answer"], buyer_id)
+        answer = follow_up["answer"]
+        entry = conversation.peek(follow_up["to"], buyer_id)
+        today = datetime.now(TZ).date()
+        try:
+            reading = await understand.understand(answer, buyer_id, conversation.turns(buyer_id),
+                                                  conversation.last_card(buyer_id), today,
+                                                  pending=_pending_context(entry))
+        except Exception:
+            log.exception("pending understanding failed; using offline answer fallback")
+            reading = None
+        actions = reading.get("actions") if isinstance(reading, dict) else None
+        if isinstance(reading, dict) and reading.get("source") == "gemini" and actions:
+            follow_up_actions = {"confirm", "answer", "reject", "cancel"}
+            if all(action.get("intent") in follow_up_actions for action in actions):
+                entry = conversation.take(follow_up["to"], buyer_id)
+                out, text, requested = await _primary_follow_up(entry, actions[0], answer, buyer_id)
+            else:
+                # A new request must not consume the question it interrupted.
+                out = await _flow(answer, requested, buyer_id, reading=reading)
+                text = answer
+        else:
+            entry = conversation.take(follow_up["to"], buyer_id)
+            out, text, requested = await _answer(entry, answer, buyer_id)
     else:
         out = await _flow(text, requested, buyer_id)
     result = _finish(out, text, requested, buyer_id)
@@ -226,6 +252,7 @@ def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict
         elif again:
             kind = "confirm"
             out["question"] = again["message"].split(". Nothing")[0]
+            state = {"request": out.get("request"), "line_only": False} if out.get("request") else {}
         elif not out.get("order") and (out.get("decision") or {}).get("outcome") == "ASK_HUMAN":
             # Never a dead end (black-box #8): an unsure order with nothing placed asks which product was meant, and
             # the answer continues the same request (every check re-runs).
@@ -236,7 +263,9 @@ def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict
     out["conversation_id"] = None
     when = out.get("requested_date") or (requested and requested.isoformat())
     if kind and out.get("question"):
-        out["conversation_id"] = conversation.save(buyer_id, kind, {"text": text, "requested": when, **state})
+        out["conversation_id"] = conversation.save(buyer_id, kind,
+                                                     {"text": text, "requested": when, **state,
+                                                      "question": out["question"]})
     if out.get("request") and out.get("held_items") is not None:
         out["next_steps"] = _next_steps(out, text, when, buyer_id)
         if not out.get("question") and out["next_steps"]:  # a multi-line order: the first held line's question leads
@@ -283,7 +312,7 @@ def _next_steps(out: dict, text: str, when: str | None, buyer_id: str) -> list[d
         else:
             kind, question, step_options = "clarify", f"Valio doesn't seem to stock '{it['query']}'. What should I look for instead?", names
         cid = conversation.save(buyer_id, kind, {"text": text, "requested": when, "request": out["request"], "item": n,
-                                                 "options": step_options, "line_only": True,
+                                                 "options": step_options, "line_only": True, "question": question,
                                                  "amount_question": question if kind == "amount" else None,
                                                  "unit": unit if kind == "amount" else None})
         why = [r["message"] for r in (out.get("decision") or {}).get("reasons", [])
@@ -348,6 +377,193 @@ def _product_words(answer: str) -> str | None:
             "käytä", "tee", "siitä"}
     words = [word for word in words if word.lower() not in stop]
     return " ".join(words)[:120].strip() or None
+
+
+def _pending_context(entry: dict) -> dict:
+    request = entry.get("request") if isinstance(entry.get("request"), dict) else {}
+    items = request.get("items") or []
+    item_number = entry.get("item") if isinstance(entry.get("item"), int) else None
+    item = items[item_number] if item_number is not None and item_number < len(items) and isinstance(items[item_number], dict) else {}
+    line = {key: item.get(key) for key in ("query", "name", "amount", "unit", "source") if item.get(key) is not None}
+    assumed = {key: item.get(key) for key in ("amount", "unit") if item.get(key) is not None}
+    return {"kind": entry.get("kind"), "question": entry.get("question") or entry.get("amount_question"),
+            "item": item_number, "line": line, "assumed": assumed,
+            "choices": entry.get("choices") or entry.get("options") or []}
+
+
+def _copy_request(entry: dict) -> dict | None:
+    request = entry.get("request")
+    if not isinstance(request, dict):
+        return None
+    out = dict(request)
+    out["items"] = [dict(item) for item in request.get("items") or [] if isinstance(item, dict)]
+    return out
+
+
+def _follow_up_date(entry: dict) -> date | None:
+    try:
+        return date.fromisoformat(entry["requested"]) if entry.get("requested") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _follow_up_again(entry: dict, requested: date | None, question: str | None = None) -> dict:
+    question = question or entry.get("question") or entry.get("amount_question") or "Please answer the pending question."
+    out = _ask("order", entry.get("covers"), requested, None, question, C.QTY_AMBIGUOUS,
+                "Answer the pending question, or start a new request.", kind=entry.get("kind"))
+    out["_state"] = {key: entry[key] for key in ("request", "item", "options", "choices", "line_only", "amount_question", "unit")
+                      if key in entry}
+    return out
+
+
+def _choose_pending_value(entry: dict, value):
+    options = entry.get("options") or entry.get("choices") or []
+    index = None
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and int(value) == value:
+        index = int(value)
+    elif isinstance(value, str) and re.fullmatch(r"\s*[1-9]\s*", value):
+        index = int(value)
+    if index is not None and 1 <= index <= len(options):
+        return options[index - 1]
+    if isinstance(value, str):
+        for option in options:
+            label = option.get("label") if isinstance(option, dict) else option
+            if isinstance(label, str) and label.strip().lower() == value.strip().lower():
+                return option
+    return value
+
+
+def _request_item_clause(item: dict) -> str:
+    amount = f"{item['amount']:g} {item['unit']} " if item.get("amount") is not None and item.get("unit") else ""
+    return f"{amount}{item.get('query') or item.get('name') or 'product'}"
+
+
+def _request_with_amount(entry: dict, got: tuple[float, str]) -> dict | None:
+    request = _copy_request(entry)
+    number = entry.get("item")
+    if request is None or not isinstance(number, int) or number >= len(request["items"]):
+        return None
+    item = request["items"][number]
+    prior_amount_assumed = item.get("amount_assumed")
+    prior_amount_assumption = item.get("amount_assumption")
+    prior_product_assumed = item.get("product_assumed")
+    approval = dict(item.get("approval_required") or {})
+    item["amount"], item["unit"] = got
+    if prior_amount_assumed or prior_product_assumed:
+        approval.update(amount_assumed=bool(prior_amount_assumed), amount=item.get("amount"), unit=item.get("unit"),
+                        assumption=prior_amount_assumption, product_assumed=bool(prior_product_assumed))
+    if approval:
+        item["approval_required"] = approval
+    item.pop("amount_assumed", None)
+    item.pop("amount_assumption", None)
+    item.pop("amount_options", None)
+    return request
+
+
+def _request_with_product(entry: dict, value: str) -> dict | None:
+    request = _copy_request(entry)
+    number = entry.get("item")
+    if request is None or not isinstance(number, int) or number >= len(request["items"]):
+        return None
+    item = request["items"][number]
+    old_query = item.get("query") or ""
+    value = value.strip()[:120]
+    if not value:
+        return None
+    approval = dict(item.get("approval_required") or {})
+    if value.lower() != old_query.lower():
+        item["query"], item["source"] = value, value
+        approval.update(product_changed=True, product_from=old_query, product_to=value)
+    if item.get("product_assumed"):
+        approval.update(product_assumed=True)
+    if approval:
+        item["approval_required"] = approval
+    return request
+
+
+def _retain_proposal_approval(request: dict) -> dict:
+    for item in request.get("items") or []:
+        if not isinstance(item, dict) or not item.get("amount_assumed") or item.get("approval_required"):
+            continue
+        item["approval_required"] = {"amount_assumed": True, "amount": item.get("amount"),
+                                      "unit": item.get("unit"), "assumption": item.get("amount_assumption")}
+    return request
+
+
+def _line_request(entry: dict, request: dict) -> tuple[dict, str]:
+    if not entry.get("line_only"):
+        return request, f"{entry['text']}. " + ", ".join(_request_item_clause(item) for item in request["items"])
+    number = entry.get("item")
+    item = request["items"][number] if isinstance(number, int) and number < len(request["items"]) else None
+    if not item:
+        return request, entry["text"]
+    return {**request, "items": [item]}, _request_item_clause(item)
+
+
+def _rejected_card(entry: dict, requested: date | None) -> dict:
+    now = datetime.now(timezone.utc)
+    decision = agent._decision(str(uuid4()), [gate._r(C.QTY_AMBIGUOUS, gate.INFO,
+                                                       "Not ordered, as you said.", None, None)], [], now)
+    return {"intent": "order", "question": None, "requested_date": entry.get("requested"), "order": None,
+            "decision": decision.model_dump(mode="json")}
+
+
+async def _primary_follow_up(entry: dict, action: dict, answer: str, buyer_id: str) -> tuple[dict, str, date | None]:
+    requested = _follow_up_date(entry)
+    intent = action.get("intent")
+    if intent in ("reject", "cancel"):
+        return _rejected_card(entry, requested), entry["text"], requested
+    if intent == "confirm":
+        request = _copy_request(entry)
+        if request is None:
+            return await _flow(entry["text"] + " (again)", requested, buyer_id), entry["text"], requested
+        request = _retain_proposal_approval(request)
+        request, text = _line_request(entry, request)
+        return await _flow(text, requested, buyer_id, parsed=(request, True)), text, requested
+    if intent != "answer" or not isinstance(action.get("answer"), dict):
+        return _follow_up_again(entry, requested), entry["text"], requested
+
+    slot = action["answer"].get("slot")
+    value = _choose_pending_value(entry, action["answer"].get("value"))
+    if slot == "choice":
+        if isinstance(value, dict) and value.get("amount") is not None:
+            slot, value = "amount", f"{value['amount']:g} {value.get('unit') or entry.get('unit') or ''}".strip()
+        else:
+            value = value.get("label") if isinstance(value, dict) else str(value)
+            slot = "date" if entry.get("kind") == "date" else "product" if entry.get("kind") == "clarify" else slot
+    if slot == "date":
+        today = datetime.now(TZ).date()
+        when = conversation.date_answer(str(value), today, date_from_text)
+        if when is None or when < today or (when - today).days > 60:
+            return _follow_up_again(entry, requested), entry["text"], requested
+        request = _copy_request(entry)
+        if request is None:
+            return await _flow(entry["text"], when, buyer_id), entry["text"], when
+        request, text = _line_request(entry, request)
+        return await _flow(text, when, buyer_id, parsed=(request, True)), text, when
+    if slot == "amount":
+        number = entry.get("item")
+        request = entry.get("request") or {}
+        items = request.get("items") or []
+        item = items[number] if isinstance(number, int) and number < len(items) else {}
+        unit = entry.get("unit") or item.get("unit") or agent.natural_unit(item)[0]
+        if isinstance(value, dict):
+            value = f"{value.get('amount')} {value.get('unit') or unit}"
+        got = conversation.amount_in(str(value), unit)
+        if got is None:
+            return _follow_up_again(entry, requested), entry["text"], requested
+        request = _request_with_amount(entry, got)
+        if request is None:
+            return _follow_up_again(entry, requested), entry["text"], requested
+        request, text = _line_request(entry, request)
+        return await _flow(text, requested, buyer_id, parsed=(request, True)), text, requested
+    if slot == "product":
+        request = _request_with_product(entry, str(value))
+        if request is None:
+            return _follow_up_again(entry, requested), entry["text"], requested
+        request, text = _line_request(entry, request)
+        return await _flow(text, requested, buyer_id, parsed=(request, True)), text, requested
+    return _follow_up_again(entry, requested), entry["text"], requested
 
 
 async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, date | None]:
@@ -646,8 +862,12 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
                     f"Which delivery day: {stated:%A %d %B} (as written) or {requested:%A %d %B} (as selected)?",
                     C.LOW_CONFIDENCE, "Pick one delivery date.")
     if intent in ("order_items", "urgent") and when is None:
-        return _ask("order", None, None, None, "For which delivery day?", C.DATA_MISSING,
+        card = _ask("order", None, None, None, "For which delivery day?", C.DATA_MISSING,
                     "Say the day, e.g. 'for Monday' or 'tomorrow'.", kind="date")
+        parsed, _ = _parsed_action(action, source, text)
+        if parsed["items"]:
+            card["_state"] = {"request": parsed, "item": 0, "line_only": False}
+        return card
     if when is not None and when < today:
         return _ask(_legacy_intent(intent), slots.get("guests"), when, date_source,
                     f"{when:%A %d %B %Y} is in the past. Which delivery day?",
@@ -713,7 +933,7 @@ def _public_card(card: dict) -> dict:
 
 
 async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | None = None,
-                parsed: tuple[dict, bool] | None = None) -> dict:
+                parsed: tuple[dict, bool] | None = None, reading: dict | None = None) -> dict:
     today = datetime.now(TZ).date()
     t0 = time.monotonic()
     progress.phase("understanding")
@@ -742,9 +962,11 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
                 action["slots"]["items"].append(row)
         source = "fallback"
         actions = [action]
+    elif reading is not None:
+        actions, source = reading.get("actions") or [], reading.get("source", "fallback")
     else:
         reading = await understand.understand(text, buyer_id, conversation.turns(buyer_id),
-                                               conversation.last_card(buyer_id), today)
+                                               conversation.last_card(buyer_id), today, None, requested)
         actions, source = reading.get("actions") or [], reading.get("source", "fallback")
     if len(actions) > 5:
         actions = actions[:5]

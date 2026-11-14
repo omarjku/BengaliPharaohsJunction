@@ -763,3 +763,13 @@ def test_deliverable_on_the_day_wins_near_ties_only(shop1, monkeypatch):
     assert best["product"]["id"] == "476240" and "can't be delivered by" in best["why"]  # in the 0.10 band
     scores["476240"] = 0.40  # outside the band: confidence still leads, even though it arrives late
     assert [ln for ln in run(MILK + " again")["lines"] if ln["chosen"]][0]["product"]["id"] == "462775"
+
+
+def test_api_schema_strips_keys_gemini_rejects():
+    """Regression: additionalProperties made every understand/diet/expand call fail with HTTP 400 (silent fallback)."""
+    from app import agent, understand
+    cleaned = agent._api_schema(understand.SCHEMA if hasattr(understand, "SCHEMA") else
+                                {"type": "object", "additionalProperties": False,
+                                 "properties": {"a": {"type": "array", "items": {"type": "object",
+                                                                                 "additionalProperties": False}}}})
+    assert "additionalProperties" not in str(cleaned)
