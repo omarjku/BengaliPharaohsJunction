@@ -494,7 +494,8 @@ def test_qu06_absurd_quantity_is_asked_not_ordered(shop1, monkeypatch):
     shop1.quotes["463335"] = quote("463335", amount=9999999999.0)  # live Valio reports effectively unlimited stock
     gemini(monkeypatch, [dict(ITEM[0], amount=1000000)], ranked=["463335"])
     body = run("1000000 L lactose-free milk")
-    assert body["order"] is None and "QTY_SUSPICIOUS" in codes(body)
+    # the gate's 100,000 per-line cap (Room 2) or the agent's own check (QTY_SUSPICIOUS) may catch it first
+    assert body["order"] is None and {"QTY_SUSPICIOUS", "LINE_OVER_CAP"} & set(codes(body))
 
 
 def test_pi02_authority_claims_flagged_and_no_clause_silently_dropped(shop1, monkeypatch):
