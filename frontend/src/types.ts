@@ -250,6 +250,29 @@ export type AuditEntry = {
   rejected_options: { product_id: string; reasons: Reason[] }[]
 }
 
+// GET /api/admin/audit (Valio's side): every buyer's entries with the front door's note, plus refused-access events.
+export type FrontDoorNote = {
+  action?: string
+  status?: string | null
+  signed_off_by?: string | null
+  signed_statement?: Record<string, unknown>
+  signature?: Record<string, unknown>
+}
+export type SecurityEvent = {
+  kind: 'security_event'
+  id: string
+  timestamp: string
+  event: string // invalid_key | key_used_outside_its_role | cross_buyer_attempt | client_sent_mandate | bad_request_signature
+  route: string
+  buyer_id: string | null
+  caller_buyer_id?: string
+  key_role?: string | null
+  header?: string
+  suppressed_before?: number
+}
+export type AdminRow = (AuditEntry & { kind?: undefined; front_door?: FrontDoorNote }) | SecurityEvent
+export type AdminFilter = { buyer_id?: string; outcome?: 'AUTO' | 'ASK_HUMAN' | 'DECLINE'; status?: 'confirmed' | 'pending_approval' | 'refused' | 'rejected' }
+
 export type Health = {
   status: string
   valio_key_configured: boolean

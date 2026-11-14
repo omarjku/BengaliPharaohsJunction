@@ -18,7 +18,10 @@ const ASKS = {
 }
 
 async function open(page, lang) {
-  await page.addInitScript((l) => localStorage.setItem('valio-aimo-lang', l), lang)
+  await page.addInitScript((l) => {
+    localStorage.setItem('valio-aimo-lang', l)
+    localStorage.setItem('valio-aimo-admin-key', 'mock')
+  }, lang)
   await page.goto(BASE)
   await page.waitForSelector('#text')
 }
@@ -36,6 +39,11 @@ async function state(page, name) {
   if (nav) {
     await page.locator('nav button').nth(nav).click()
     await page.waitForTimeout(800)
+  }
+  if (name === 'valio') {
+    await page.getByRole('button', { name: 'Valio', exact: true }).click()
+    await page.waitForSelector('.kitchen, .security', { timeout: 10000 })
+    await page.locator('details.event summary').first().click().catch(() => {})
   }
   if (name === 'keys') {
     await page.locator('nav button').nth(3).click()
@@ -70,7 +78,7 @@ const measure = () => {
 const browser = await chromium.launch({ channel: 'chrome' })
 const report = []
 for (const lang of ['en', 'fi']) {
-  for (const name of ['empty', 'milk', 'butter', 'split', 'cream', 'drink', 'doner', 'menu', 'urgent', 'history', 'rules', 'keys']) {
+  for (const name of ['empty', 'milk', 'butter', 'split', 'cream', 'drink', 'doner', 'menu', 'urgent', 'history', 'rules', 'keys', 'valio']) {
     for (const width of WIDTHS) {
       const ctx = await browser.newContext({ viewport: { width, height: width < 800 ? 800 : 900 }, hasTouch: width < 800, reducedMotion: 'reduce' })
       const page = await ctx.newPage()

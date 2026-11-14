@@ -92,6 +92,12 @@ A kebab shop ordering döner meat shouldn't be asked "for how many guests". So t
 - Questions that can't be answered inline (off-topic, a date in the past) are said plainly, in Finnish too, and leave the box open.
 - `CONFIDENCE_OK` is the calm "Matched by Gemini · 84%" line, never a warning. `FRONT_DOOR` is one quiet line under it, "Sent to Valio's front door: confirmed", with a link to History. Both stay out of "Also worth knowing".
 
+## Valio view (Valio Aimo's operations team)
+- Read-only, behind `X-Valio-Admin-Key` (stored apart from the kitchen's keys). Reached by a small "Valio view" link under the key forms; "Valio" only joins the nav once an admin key is set, so a chef never sees it.
+- Refused attempts come first, set apart in red: a key that isn't valid, a real key used outside its role, a cross-kitchen attempt, a client-sent mandate, a bad request signature. They're described in words and never show a key value. Then comes one section per kitchen, grouped and worded like the chef's History, with filters for kitchen and for what to show (ordered, held, refused, rejected, agent asked, not ordered, security).
+- Order steps get "Check the signature" (POST /api/verify → "Signed by the front door ✓") when the audit line carries the front door's signed statement.
+- History grouping follows the agent's `FRONT_DOOR` link (`door_audit_id`), since the agent's line is now written after the door's.
+
 ## Known gaps
 - Product names come straight from Valio's catalogue ("Valio Eila® 3 % milk drink 1 l lactose free"). Cleaning them up would need a naming pass in the data.
 - History can't tell "Valio held for your OK" apart from "Valio refused" when the front door's outcome was an ask, because the audit entry doesn't store the order status. The opening screen's waiting count avoids this by checking each order's real status.
