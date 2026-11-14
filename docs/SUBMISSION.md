@@ -84,11 +84,61 @@ Python 3, FastAPI, Pydantic, httpx, `cryptography` (Ed25519), React 19, TypeScri
 - Omar Kassem
 - Fathia Fairuz Zoha
 
+## Judge access to the live demo (proposal: Omar decides before any key is made)
+
+**Recommended:** a separate seeded buyer, `judge-kitchen`, with its own keys and a small budget. Judges never touch
+`lapland-kitchen` (our demo) or the real keys.
+
+**Why this is the safest option:**
+- Every key is bound to one buyer. A judge key can only order, approve and read the audit for `judge-kitchen`
+  (`auth.py`). Their orders can never show up in our demo kitchen.
+- The keys live only in Render's Environment tab, so removing them from there and redeploying kills them.
+- Rate limits already cap a key at 30 agent requests per minute.
+- Orders are records at our door. The Valio mock has no order endpoint, so nothing real is bought.
+
+**Steps:**
+1. **Seed the buyer** (a code change in `backend/app/mandates.py`, which belongs to Room 3 / Omar). Next to the
+   `smoke-kitchen` copy, add a judge kitchen with the same rules but smaller limits:
+
+   ```python
+   _MANDATES["judge-kitchen"] = _MANDATES["lapland-kitchen"].model_copy(update={
+       "id": "judge-kitchen-2026-11", "buyer_id": "judge-kitchen", "weekly_budget_cents": 300000})
+   ```
+
+   With EUR 3,000 a week, a judge sees "1000 L milk → ordered" once or twice, then the budget hold. That shows a
+   rule working, not a broken demo.
+2. **Make two keys** on Omar's laptop: `openssl rand -hex 24`, twice. Never put them in the repo, the board, a
+   commit, a URL or a screenshot.
+3. **Env changes on Render** (backend service → Environment). Append, comma-separated, to the existing values:
+   - `AGENT_KEYS`: `,<judge-agent-key>=judge-kitchen:Judge agent`
+   - `APPROVER_KEYS`: `,<judge-approver-key>=judge-kitchen:Judge`
+
+   Then save; Render redeploys. Nothing else changes. `DATA_DIR`, `VALIO_ADMIN_KEYS` and `DEMO_RESET_ENABLED` stay
+   as they are.
+4. **Share the keys** only in the submission form's private field, or in person at peer review on a printed card.
+   Judges paste them into the site's **Keys** tab. The UI keeps them in that browser only.
+5. **After judging:** remove both entries from `AGENT_KEYS` and `APPROVER_KEYS` and save. The keys stop working
+   after the redeploy.
+6. **Clean-up:** `POST /api/admin/demo/reset` (admin key, `DEMO_RESET_ENABLED=1`) archives orders, the audit trail
+   and idempotency keys to `DATA_DIR/archive/<timestamp>/` and starts empty. Note that it resets **all** buyers at
+   once, `lapland-kitchen` too, so run it after peer review, not between demos. Pass `restore_mandate: true` if a
+   judge changed the judge kitchen's rules.
+
+**What judges can and can't do with these keys:**
+- They can order, approve, edit `judge-kitchen`'s rules (`PUT /api/mandate`), and read its audit.
+- They can't see or touch `lapland-kitchen`, the Valio key, the Gemini key, or the admin routes.
+- A judge loosening their own kitchen's rules is fine: it's their sandbox, and the reset's `restore_mandate`
+  undoes it.
+
+**Lighter alternative:** if seeding a buyer is too late, show the demo on our own laptop at the table. There are no
+keys to share, but judges can't try it themselves.
+
 ## Final checklist before Sun 10:00
 - [ ] Video is **public**, **≤ 2:00** (target 1:55), and opens in a private window; `.srt` captions uploaded
 - [ ] Deck PDF uploaded (`docs/deck/FrontDoor-pitch.pdf`; re-export with `docs/deck/export.mjs` after the new screenshots land)
 - [x] Repository public, MIT licence in `LICENSE`
 - [ ] Render warmed up (`/api/health`), and the demo agent and approver keys work on the live site
+- [ ] If judges get access: `judge-kitchen` seeded, its keys added on Render, shared only privately, and the removal planned for after judging
 - [ ] Links above checked in a private window
 - [ ] Challenges ticked (CRACI only if CI really runs there)
 - [ ] Draft switched to **FINAL** before **Sun 10:00**
