@@ -339,6 +339,21 @@ async def _check_assumptions(args: dict, buyer_id: str, **_kwargs) -> dict:
     return [{"id": ident, "p_yes": agent._yes((answers or {}).get(ident))} for ident in ids]
 
 
+from contextvars import ContextVar
+
+# The chef's raw words for this turn, checked ONCE by the engine's own guards (security review): the steering/injection
+# score and the auto-approval stripping. Tools pass these real values into the engine; never constant "safe" scores.
+_TURN: ContextVar[dict | None] = ContextVar("chat_turn_guard", default=None)
+
+
+async def _turn_guard(fallback_text: str) -> dict:
+    turn = _TURN.get()
+    if turn is not None:
+        return turn
+    _, note = agent.strip_auto_approval(fallback_text)
+    return {"steer": await agent.steering(fallback_text), "note": note}
+
+
 async def _propose_order(args: dict, buyer_id: str, requested_date: date | None, follow_up: bool = False,
                          have: list[str] | None = None) -> dict:
     delivery = _parse_date(args.get("delivery_date"), requested_date)
@@ -350,9 +365,11 @@ async def _propose_order(args: dict, buyer_id: str, requested_date: date | None,
                 "question": "Which delivery date should I use?"}
     token = ask._DUPLICATE_GUARD_BYPASS.set(follow_up)
     try:
+        guard = await _turn_guard(text)
         body = await agent.run(ask._duplicate_safe_text(text), delivery, buyer_id,
-                               pre={"parsed": (parsed, True), "steer": 0.0, "steer_checked": True,
-                                    "meant": 1.0, "meant_checked": True})
+                               pre={"parsed": (parsed, True), "steer": guard.get("steer"), "steer_checked": True,
+                                    "meant": 1.0, "meant_checked": True,
+                                    "request_note": guard.get("note"), "request_hold": bool(guard.get("note"))})
     finally:
         ask._DUPLICATE_GUARD_BYPASS.reset(token)
     body.update(intent="order", requested_date=delivery.isoformat(), question=None)
@@ -392,8 +409,9 @@ async def _change_order(args: dict, buyer_id: str, requested_date: date | None, 
     last_card = {"order_id": order_id, "requested_date": old.get("requested_date"), "order": old}
     token = ask._DUPLICATE_GUARD_BYPASS.set(follow_up)
     try:
-        body = await ask._execute_action(action, text, when, buyer_id, datetime.now(HELSINKI).date(), "gemini", 0.0,
-                                          last_card, 1.0)
+        guard = await _turn_guard(text)
+        body = await ask._execute_action(action, text, when, buyer_id, datetime.now(HELSINKI).date(), "gemini",
+                                          guard.get("steer"), last_card, 1.0, request_note=guard.get("note"))
     finally:
         ask._DUPLICATE_GUARD_BYPASS.reset(token)
     if body.get("intent") != "order" or "lines" not in body:
@@ -536,6 +554,8 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
                have: list[str] | None = None) -> dict:
     """Run one bounded text turn. Any Gemini/loop failure is intentionally routed through the old /ask path."""
     text = str(follow_up.get("answer") if follow_up else text).strip()
+    _, _note = agent.strip_auto_approval(text)
+    _TURN.set({"steer": await agent.steering(text), "note": _note})
     if APPROVAL_REQUEST.search(text):
         reply = "I can't approve orders for you; please approve the order on screen."
         conversation.record_turn(buyer_id, "user", text)

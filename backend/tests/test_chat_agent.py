@@ -235,3 +235,24 @@ def test_reply_is_plain_text_without_markdown_emphasis():
     out = chat_agent._plain("The **Valio butter** is *EUR 6.60/kg*.\n## Note\n1. **Option** one")
     assert "**" not in out and "*" not in out and "##" not in out
     assert "Valio butter" in out and "1. Option one" in out
+
+
+def test_order_tools_pass_the_real_steering_score_and_injection_hold(monkeypatch):
+    """Security review: the chat agent must not feed constant 'safe' guard scores into the engine."""
+    import asyncio
+    from datetime import date
+    from app import agent, chat_agent
+    seen = {}
+
+    async def fake_run(text, delivery, buyer_id, pre=None, **kw):
+        seen.update(pre or {})
+        return {"lines": [], "decision": {"reasons": []}}
+
+    async def fake_steer(text):
+        return 0.93
+    monkeypatch.setattr(agent, "run", fake_run)
+    monkeypatch.setattr(agent, "steering", fake_steer)
+    chat_agent._TURN.set({"steer": 0.93, "note": agent.INJECTION_NOTE})
+    asyncio.run(chat_agent._propose_order({"items": [{"text": "15 kg reindeer roast"}], "delivery_date": "2026-11-20"},
+                                          "smoke-kitchen", date(2026, 11, 20)))
+    assert seen["steer"] == 0.93 and seen["request_hold"] is True and seen["request_note"] == agent.INJECTION_NOTE

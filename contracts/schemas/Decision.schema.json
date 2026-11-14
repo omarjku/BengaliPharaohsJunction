@@ -139,6 +139,7 @@
         "LOW_CONFIDENCE",
         "ENGINE_ERROR",
         "MENU_ASSUMPTIONS",
+        "COVERAGE_LOW",
         "CONFIDENCE_OK",
         "FRONT_DOOR",
         "PROFILE_DEFAULT"
