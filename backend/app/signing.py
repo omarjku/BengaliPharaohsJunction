@@ -91,6 +91,7 @@ def build_provenance() -> dict:
     live = craci_evidence.fetch_live_evidence(
         os.getenv("RENDER_GIT_COMMIT") or None,
         os.getenv("CRACI_API_TOKEN", ""),
+        wait=False,  # public pages never wait on GitHub or CRACI; a background refresh fills the cache
     )
     return live if live.get("status") == "ok" else (_read_build_provenance() or live)
 

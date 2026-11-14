@@ -43,8 +43,8 @@ used as a fallback when live evidence is unavailable.
   "sbom_sha256": "<digest>",
   "component_counts": {"pip": 37, "npm": 214},
   "direct_dependencies": [{"ecosystem": "pip", "name": "httpx", "version": "..."}],
-  "vulnerabilities": [],
-  "blocking_vulnerabilities": [],
+  "vulnerability_counts": {"high": 0, "critical": 0},
+  "blocking_vulnerability_count": 0,
   "network_destinations": ["api.github.com", "pypi.org"],
   "fetched_at": "2026-11-14T12:34:56Z",
   "source": "craci-api-live",
@@ -52,8 +52,7 @@ used as a fallback when live evidence is unavailable.
 }
 ```
 
-`direct_dependencies` is limited to the first 30. `vulnerabilities` contains
-known HIGH/CRITICAL findings; `blocking_vulnerabilities` excludes IDs in
+`direct_dependencies` is limited to the first 30. `vulnerability_counts` counts known HIGH/CRITICAL findings and `blocking_vulnerability_count` excludes IDs in
 `scripts/craci_allowlist.json`. When unavailable, `status` is
 `"unavailable"` and `reason` is one of `no_token`, `no_ci_run`, `craci_403`,
 `craci_error`, `github_error`, or `timeout`. The signing-keys document keeps
@@ -78,3 +77,8 @@ assert digest.hexdigest() == build["sbom_sha256"]
 Inspect the network trace destinations and vulnerability lists separately;
 the digest covers SBOM bytes only. A missing or failed fetch is reported as
 unavailable, never silently presented as verified.
+
+
+## Security notes
+- The public endpoint publishes integrity data and vulnerability **counts** only, never vulnerability details.
+- Public pages never wait on GitHub or CRACI: a cache miss starts one background refresh and the page returns the cached result or `status: unavailable, reason: refreshing` at once. The cache lock is never held during network calls.

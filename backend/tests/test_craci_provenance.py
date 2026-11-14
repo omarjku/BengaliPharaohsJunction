@@ -18,7 +18,7 @@ def test_build_provenance_has_safe_fallback(monkeypatch):
         "blocking_vulnerabilities": [], "network_destinations": [], "fetched_at": "now",
         "source": "craci-api-live", "status": "unavailable", "reason": "no_token",
     }
-    monkeypatch.setattr(signing.craci_evidence, "fetch_live_evidence", lambda commit, token: unavailable)
+    monkeypatch.setattr(signing.craci_evidence, "fetch_live_evidence", lambda commit, token, **_: unavailable)
 
     response = c.get("/.well-known/front-door-build.json")
 
@@ -39,7 +39,7 @@ def test_build_provenance_reads_configured_json_file(monkeypatch, tmp_path):
     path.write_text(json.dumps(provenance), encoding="utf-8")
     monkeypatch.setenv("BUILD_PROVENANCE_PATH", str(path))
     monkeypatch.setattr(signing.craci_evidence, "fetch_live_evidence",
-                        lambda commit, token: {"status": "unavailable", "reason": "no_token"})
+                        lambda commit, token, **_: {"status": "unavailable", "reason": "no_token"})
 
     assert c.get("/.well-known/front-door-build.json").json() == provenance
     assert signing.jwks()["keys"][0]["build"] == provenance
@@ -51,7 +51,7 @@ def test_invalid_build_provenance_uses_fallback(monkeypatch, tmp_path):
     monkeypatch.setenv("BUILD_PROVENANCE_PATH", str(path))
     monkeypatch.setenv("RENDER_GIT_COMMIT", "fallback-commit")
     unavailable = {"commit": "fallback-commit", "status": "unavailable", "reason": "no_token"}
-    monkeypatch.setattr(signing.craci_evidence, "fetch_live_evidence", lambda commit, token: unavailable)
+    monkeypatch.setattr(signing.craci_evidence, "fetch_live_evidence", lambda commit, token, **_: unavailable)
 
     assert c.get("/.well-known/front-door-build.json").json() == unavailable
     assert signing.jwks()["keys"][0]["build"] == unavailable
@@ -68,7 +68,7 @@ def test_live_build_provenance_is_published_and_linked(monkeypatch):
         "network_destinations": [], "fetched_at": "now", "source": "craci-api-live", "status": "ok",
     }
     monkeypatch.setattr(signing.craci_evidence, "fetch_live_evidence",
-                        lambda commit, token: live if token == "secret-token" else {"status": "unavailable"})
+                        lambda commit, token, **_: live if token == "secret-token" else {"status": "unavailable"})
 
     assert c.get("/.well-known/front-door-build.json").json() == live
     assert signing.jwks()["keys"][0]["build"] == live

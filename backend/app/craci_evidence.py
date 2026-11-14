@@ -12,6 +12,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+import threading
 from threading import Lock
 from typing import Iterable
 
@@ -267,6 +268,7 @@ _CACHE_LOCK = Lock()
 def clear_cache() -> None:
     with _CACHE_LOCK:
         _CACHE.clear()
+        _REFRESHING.clear()
 
 
 def _github_headers(token: str) -> dict[str, str]:
@@ -423,8 +425,10 @@ def _fetch_uncached(commit: str | None, token: str, repository: str) -> dict:
         "sbom_sha256": summary["sbom_sha256"],
         "component_counts": summary["component_counts"],
         "direct_dependencies": summary["direct_dependencies"][:30],
-        "vulnerabilities": summary["vulnerabilities"],
-        "blocking_vulnerabilities": summary["blocking_vulnerabilities"],
+        # Public endpoint: counts only, never vulnerability details (security review).
+        "vulnerability_counts": {sev.lower(): sum(1 for v in summary["vulnerabilities"] if v.get("severity") == sev)
+                                 for sev in ("HIGH", "CRITICAL")},
+        "blocking_vulnerability_count": len(summary["blocking_vulnerabilities"]),
         "network_destinations": destinations,
         "fetched_at": _now(),
         "source": "craci-api-live",
@@ -432,14 +436,42 @@ def _fetch_uncached(commit: str | None, token: str, repository: str) -> dict:
     }
 
 
-def fetch_live_evidence(commit: str | None, token: str, repository: str = DEFAULT_REPOSITORY) -> dict:
+_REFRESHING: set[tuple[str, str | None]] = set()
+
+
+def _store(key: tuple[str, str | None], result: dict) -> None:
+    ttl = SUCCESS_CACHE_SECONDS if result["status"] == "ok" else FAILURE_CACHE_SECONDS
+    with _CACHE_LOCK:
+        _CACHE[key] = (time.monotonic() + ttl, result)
+        _REFRESHING.discard(key)
+
+
+def _refresh(key: tuple[str, str | None], commit: str | None, token: str, repository: str) -> dict:
+    try:
+        result = _fetch_uncached(commit, token, repository)
+    except Exception:  # noqa: BLE001 - never let a background refresh die silently with the flag set
+        result = _unavailable(commit, "craci_error")
+    _store(key, result)
+    return result
+
+
+def fetch_live_evidence(commit: str | None, token: str, repository: str = DEFAULT_REPOSITORY,
+                        wait: bool = True) -> dict:
+    """Cached live evidence. The lock is never held during network I/O (security review). With wait=False (public
+    pages), a miss starts ONE background refresh and returns the stale result or `refreshing` at once."""
     key = (repository, commit)
     now = time.monotonic()
     with _CACHE_LOCK:
         cached = _CACHE.get(key)
         if cached and cached[0] > now:
             return copy.deepcopy(cached[1])
-        result = _fetch_uncached(commit, token, repository)
-        ttl = SUCCESS_CACHE_SECONDS if result["status"] == "ok" else FAILURE_CACHE_SECONDS
-        _CACHE[key] = (time.monotonic() + ttl, result)
-        return copy.deepcopy(result)
+        stale = copy.deepcopy(cached[1]) if cached else None
+        start = key not in _REFRESHING
+        if start:
+            _REFRESHING.add(key)
+    if wait:
+        return copy.deepcopy(_refresh(key, commit, token, repository) if start
+                             else _fetch_uncached(commit, token, repository))
+    if start:
+        threading.Thread(target=_refresh, args=(key, commit, token, repository), daemon=True).start()
+    return stale or _unavailable(commit, "refreshing")

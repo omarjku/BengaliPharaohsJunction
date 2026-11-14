@@ -138,3 +138,36 @@ def test_success_is_cached(monkeypatch):
 
     assert second == first
     assert len(calls) == 6
+
+
+def test_public_path_never_waits_and_starts_one_refresh(monkeypatch):
+    import threading
+    craci_evidence.clear_cache()
+    gate = threading.Event()
+    started = []
+
+    def slow(commit, token, repository):
+        started.append(commit)
+        gate.wait(5)
+        return {"status": "ok", "commit": commit}
+
+    monkeypatch.setattr(craci_evidence, "_fetch_uncached", slow)
+    first = craci_evidence.fetch_live_evidence("commit-9", TOKEN, REPOSITORY, wait=False)
+    second = craci_evidence.fetch_live_evidence("commit-9", TOKEN, REPOSITORY, wait=False)
+    assert first["status"] == "unavailable" and first["reason"] == "refreshing"
+    assert second["reason"] == "refreshing"
+    gate.set()
+    for _ in range(50):
+        if craci_evidence._CACHE.get((REPOSITORY, "commit-9")):
+            break
+        threading.Event().wait(0.02)
+    assert started == ["commit-9"]  # one background refresh, not one per request
+    assert craci_evidence.fetch_live_evidence("commit-9", TOKEN, REPOSITORY, wait=False)["status"] == "ok"
+
+
+def test_public_output_has_vulnerability_counts_not_details(monkeypatch):
+    _mock_success(monkeypatch, calls=[])
+    result = craci_evidence.fetch_live_evidence("commit-1", TOKEN, REPOSITORY)
+    assert "vulnerabilities" not in result and "blocking_vulnerabilities" not in result
+    assert set(result["vulnerability_counts"]) == {"high", "critical"}
+    assert isinstance(result["blocking_vulnerability_count"], int)
