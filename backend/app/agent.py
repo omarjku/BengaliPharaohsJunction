@@ -1236,4 +1236,4 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
     for ln in lines:
         ln.pop("_weakest", None)  # internal: the weakest question is in confidence_reason and the audit facts
     return {"request": request, "lines": lines, "decision": decision.model_dump(mode="json"), "order": order,
-            "audit_id": audit_id}
+            "audit_id": audit_id, "held_items": sorted(res["failed_items"])}  # lines held back: each gets a next step
