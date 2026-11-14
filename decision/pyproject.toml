@@ -1,0 +1,28 @@
+[project]
+name = "trade-decision"
+version = "0.1.0"
+description = "T06 decision step: pure rules that turn quotes + mandate into AUTO / ASK_HUMAN / DECLINE."
+requires-python = ">=3.11"
+# trade-contracts lives in ../contracts: install it first with `pip install -e ../contracts`
+dependencies = ["trade-contracts", "pyyaml", "tzdata"]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["trade_decision*"]
+
+[tool.setuptools.package-data]
+trade_decision = ["*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

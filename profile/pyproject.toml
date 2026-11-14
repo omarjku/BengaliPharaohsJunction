@@ -1,0 +1,25 @@
+[project]
+name = "trade-profile"
+version = "0.1.0"
+description = "T13 buyer profile: scoped memories (this order / always) as guidance, never as hard rules."
+requires-python = ">=3.11"
+# trade-contracts lives in ../contracts: install it first with `pip install -e ../contracts`
+dependencies = ["trade-contracts", "pydantic>=2.7"]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["trade_profile*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

@@ -1,0 +1,25 @@
+[project]
+name = "trade-compiler"
+version = "0.1.0"
+description = "T09 mandate compiler: a buyer's plain-language rules -> a proposed Mandate, via Gemini structured output."
+requires-python = ">=3.11"
+# trade-contracts lives in ../contracts: install it first with `pip install -e ../contracts`
+dependencies = ["trade-contracts", "pydantic>=2.7", "google-genai>=3.3,<4"]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["trade_compiler*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
