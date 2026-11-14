@@ -214,7 +214,7 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
 
 
 def _blocking(r: Reason) -> bool:
-    return r.severity is DECLINE or r.code in NOT_APPROVABLE or "hard_rule" in r.facts
+    return r.severity is DECLINE or r.code in NOT_APPROVABLE or "hard_rule" in r.facts or bool(r.facts.get("not_approvable"))
 
 
 def _sorted(rs: list[Reason]) -> list[Reason]:
@@ -383,6 +383,9 @@ async def check(lines: list, requested: date, m: Mandate | None, request_id: str
         if not codes:
             order_rs.append(_r(C.MANDATE_INVALID, ASK, f"Can't map the excluded allergen '{v}' to Valio's allergen data.",
                                None, "Restate it as a GS1 allergen code (e.g. AP = peanuts).", rule_value=str(v)))
+    if requested < now.date():  # routes reject this too; the gate must hold whoever calls it
+        order_rs.append(_r(C.DATE_NOT_HONOURED, ASK, f"The delivery date {requested} is in the past.", None,
+                           "Pick a delivery date from today on.", requested_date=requested.isoformat(), not_approvable=True))
     if m.expires_at and m.expires_at <= now:
         order_rs.append(_r(C.MANDATE_EXPIRED, ASK, f"Your mandate expired at {m.expires_at.isoformat()}.", None,
                            "Approve this order by hand, or renew the mandate.", expires_at=m.expires_at.isoformat()))

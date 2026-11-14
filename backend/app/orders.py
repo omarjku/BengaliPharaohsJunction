@@ -157,30 +157,40 @@ def _approval_status(o: dict, res: gate.GateResult) -> str:
     return "pending_approval" if got - shown or res.total_cents != o["total_cents"] else "confirmed"
 
 
-async def approve(order_id: str, who: Principal) -> dict:
+def _stale(o: dict, seen_decided_at: datetime | None) -> HTTPException | None:
+    if seen_decided_at and datetime.fromisoformat(o["decision"]["decided_at"]) != seen_decided_at:
+        return HTTPException(409, detail="The order changed since you looked at it; review the new decision and approve again.")
+    return None
+
+
+async def approve(order_id: str, who: Principal, seen_decided_at: datetime | None = None) -> dict:
     """Human sign-off. The gate runs again with fresh quotes: a passed cut-off or vanished stock refuses the order;
-    anything the human wasn't shown (e.g. PRICE_CHANGED) sends it back to them instead of confirming."""
-    for _ in range(MAX_RETRIES):
-        o = _pending(order_id, who.buyer_id)
-        seen, now = o["updated_at"], datetime.now(timezone.utc)
-        mandate = mandates.get(o["buyer_id"])  # the buyer's CURRENT rules, not the snapshot taken at order time
-        lines = [SimpleNamespace(product_id=li["product_id"], quantity=li["quantity"]) for li in o["lines"]]
-        spent = _spent_7d(o["buyer_id"], now, skip=order_id)
-        res = await _gate(lines, date.fromisoformat(o["requested_date"]), mandate, order_id, spent_7d_cents=spent,
-                          approved_prices={li["product_id"]: li["unit_price_cents"] for li in o["lines"]}, now=now)
-        async with _order_lock:
-            o = _pending(order_id, who.buyer_id)  # 409 if someone else approved / rejected it meanwhile
-            if o["updated_at"] != seen or _spent_7d(o["buyer_id"], now, skip=order_id) != spent:
-                continue
-            status = _approval_status(o, res)
-            o.update(status=status, lines=res.lines, total_cents=res.total_cents, updated_at=now.isoformat(),
-                     decision=res.decision.model_dump(mode="json"),
-                     signed_off_by=who.name if status == "confirmed" else None)
-            await asyncio.to_thread(_save)
-            audit_id = await _audit(f"human:{who.name}:approve", order_id, o["buyer_id"], o["requested_date"],
-                                    res.lines, mandate, res, now=now)
-        return _response(order_id, status, _view(res), audit_id)
-    raise _busy()
+    anything the human wasn't shown (e.g. PRICE_CHANGED) sends it back to them instead of confirming.
+    seen_decided_at (the decision.decided_at the human was shown) binds the click to that decision: if the order was
+    re-decided since (another approver, a re-check), 409. Without it, a change DURING this call is still a 409, never
+    a silent retry that would sign off on terms nobody saw."""
+    o = _pending(order_id, who.buyer_id)
+    if err := _stale(o, seen_decided_at):
+        raise err
+    seen, now = o["updated_at"], datetime.now(timezone.utc)
+    mandate = mandates.get(o["buyer_id"])  # the buyer's CURRENT rules, not the snapshot taken at order time
+    lines = [SimpleNamespace(product_id=li["product_id"], quantity=li["quantity"]) for li in o["lines"]]
+    spent = _spent_7d(o["buyer_id"], now, skip=order_id)
+    res = await _gate(lines, date.fromisoformat(o["requested_date"]), mandate, order_id, spent_7d_cents=spent,
+                      approved_prices={li["product_id"]: li["unit_price_cents"] for li in o["lines"]}, now=now)
+    async with _order_lock:
+        o = _pending(order_id, who.buyer_id)  # 409 if someone else approved / rejected it meanwhile
+        if o["updated_at"] != seen or _spent_7d(o["buyer_id"], now, skip=order_id) != spent:
+            raise HTTPException(409, detail="The order or the buyer's spend changed while it was being re-checked; "
+                                            "review it and approve again.")
+        status = _approval_status(o, res)
+        o.update(status=status, lines=res.lines, total_cents=res.total_cents, updated_at=now.isoformat(),
+                 decision=res.decision.model_dump(mode="json"),
+                 signed_off_by=who.name if status == "confirmed" else None)
+        await asyncio.to_thread(_save)
+        audit_id = await _audit(f"human:{who.name}:approve", order_id, o["buyer_id"], o["requested_date"],
+                                res.lines, mandate, res, now=now)
+    return _response(order_id, status, _view(res), audit_id)
 
 
 async def reject(order_id: str, who: Principal) -> dict:
