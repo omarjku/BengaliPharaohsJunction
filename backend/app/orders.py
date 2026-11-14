@@ -309,7 +309,46 @@ async def reject(order_id: str, who: Principal) -> dict:
 
 
 def _buyer(r: dict) -> str | None:
-    return r.get("buyer_id") if r.get("kind") == "security_event" else r["input"]["request"]["buyer_id"]
+    return r.get("buyer_id") if r.get("kind") else r["input"]["request"]["buyer_id"]  # kind: security / admin event
+
+
+def budgets(now: datetime | None = None) -> dict[str, dict]:
+    """Weekly budget use for every buyer with a mandate (seeded or saved): what the demo checklist shows."""
+    now = now or datetime.now(timezone.utc)
+    out = {}
+    for b in sorted(set(mandates._MANDATES) | set(mandates._stored())):
+        m, spent = mandates.get(b), _spent_7d(b, now)
+        cap = m.weekly_budget_cents if m else None
+        out[b] = {"weekly_budget_cents": cap, "spent_7d_cents": spent,
+                  "remaining_cents": None if cap is None else max(0, cap - spent),
+                  "confidence_threshold": mandates.confidence_threshold(b)}
+    return out
+
+
+async def demo_reset(admin: str, restore_mandate: bool) -> dict:
+    """Start the demo from a clean slate WITHOUT deleting anything: orders, audit trail and idempotency keys move
+    to DATA_DIR/archive/<UTC timestamp>/; saved mandates stay unless restore_mandate (then they move too and every
+    buyer is back on its seeded mandate). The fresh audit trail starts with who reset it."""
+    global _orders, _idem
+    async with _order_lock:
+        now = datetime.now(timezone.utc)
+        folder = config.DATA_DIR / "archive" / now.strftime("%Y%m%dT%H%M%S%fZ")
+        moved = [p for p in (ORDERS_FILE, AUDIT_FILE, IDEM_FILE) + ((mandates.STORE,) if restore_mandate else ())
+                 if p.exists()]
+
+        def archive():
+            folder.mkdir(parents=True, exist_ok=False)
+            with _file_lock:
+                for p in moved:
+                    os.replace(p, folder / p.name)
+        await asyncio.to_thread(archive)
+        _orders, _idem = {}, {}
+        rel = str(folder.relative_to(config.DATA_DIR))
+        await asyncio.to_thread(_write_line, {
+            "kind": "admin_event", "id": str(uuid4()), "timestamp": now.isoformat(), "actor": f"valio_admin:{admin}",
+            "event": "demo_reset", "message": f"demo reset by {admin}", "archived_to": rel,
+            "archived_files": [p.name for p in moved], "restore_mandate": restore_mandate, "buyer_id": None})
+    return {"archived_to": rel, "archived_files": [p.name for p in moved], "restore_mandate": restore_mandate}
 
 
 def audit_log(buyer_id: str | None, limit: int, outcome: str | None = None, status: str | None = None) -> list[dict]:

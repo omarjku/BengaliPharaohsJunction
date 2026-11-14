@@ -35,6 +35,10 @@ _MANDATES = {m.buyer_id: m for m in [
         weekly_budget_cents=600000,
     ),
 ]}
+# Smoke-test buyer: the same rules as the demo kitchen, so scripts/smoke.py exercises the real paths without
+# spending lapland-kitchen's weekly budget before a live demo.
+_MANDATES["smoke-kitchen"] = _MANDATES["lapland-kitchen"].model_copy(update={"id": "smoke-kitchen-2026-11",
+                                                                            "buyer_id": "smoke-kitchen"})
 
 
 STORE = config.DATA_DIR / "mandates.json"  # all front-door state lives under DATA_DIR
@@ -103,7 +107,7 @@ def restore(buyer_id: str, previous: dict | None) -> None:
 # Gemini Decisions confidence below this → ask the chef. Kept beside the mandate because the v0.2 Mandate contract
 # has no field for it (extra fields are forbidden); add `min_confidence` to the contract in the next version.
 DEFAULT_CONFIDENCE_THRESHOLD = 0.8
-_CONFIDENCE_THRESHOLDS = {"lapland-kitchen": 0.8}
+_CONFIDENCE_THRESHOLDS = {"lapland-kitchen": 0.8, "smoke-kitchen": 0.8}
 
 
 def confidence_threshold(buyer_id: str) -> float:

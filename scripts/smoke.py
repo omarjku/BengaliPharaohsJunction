@@ -23,12 +23,27 @@ MILK = "1000 L lactose-free milk for Monday"
 results: list[bool] = []
 
 
-def env_key(name: str) -> str:
+SMOKE_BUYER = "smoke-kitchen"  # seeded with the demo rules; smoke runs spend its budget, not the demo buyer's
+
+
+def env_entries(name: str) -> list[tuple[str, str]]:
+    """[(key, buyer)] from a `key=buyer[:name],…` line in .env."""
     for line in ENV.read_text().splitlines() if ENV.exists() else []:
         if line.startswith(name + "="):
-            first = line.split("=", 1)[1].strip().strip('"').split(",")[0]
-            return first.split("=", 1)[0]  # key=buyer[:name] → key
-    return ""
+            items = [x.strip() for x in line.split("=", 1)[1].strip().strip('"').split(",") if "=" in x]
+            return [(k, who.split(":")[0]) for k, who in (x.split("=", 1) for x in items)]
+    return []
+
+
+def env_key(name: str, buyer: str | None = None) -> str:
+    """The key for `buyer` in that list, else the first entry's."""
+    entries = env_entries(name)
+    return next((k for k, b in entries if b == buyer), entries[0][0] if entries else "")
+
+
+def smoke_buyer() -> str | None:
+    have = lambda n: any(b == SMOKE_BUYER for _, b in env_entries(n))  # noqa: E731
+    return SMOKE_BUYER if have("AGENT_KEYS") and have("APPROVER_KEYS") else None
 
 
 def call(method: str, path: str, body=None, headers=None, timeout=90, with_headers=False):
@@ -60,7 +75,13 @@ def next_monday() -> date:
 
 def main() -> int:
     print(f"Front-door smoke test against {BASE}")
-    agent_key, approver_key, admin_key = env_key("AGENT_KEYS"), env_key("APPROVER_KEYS"), env_key("VALIO_ADMIN_KEYS")
+    buyer = smoke_buyer()
+    agent_key, approver_key = env_key("AGENT_KEYS", buyer), env_key("APPROVER_KEYS", buyer)
+    admin_key = env_key("VALIO_ADMIN_KEYS")
+    buyer = buyer or next((b for k, b in env_entries("AGENT_KEYS") if k == agent_key), "?")
+    if buyer != SMOKE_BUYER:
+        print(f"WARN  no {SMOKE_BUYER} keys in .env: this run spends {buyer}'s weekly budget (the demo buyer?)")
+    print(f"Buyer under test: {buyer}")
     check("keys found in .env (values not shown)", bool(agent_key and approver_key and admin_key), str(ENV))
 
     for _ in range(12):  # a cold Render instance builds the catalogue first
@@ -112,7 +133,7 @@ def main() -> int:
     ids = {e.get("id") for e in trail} if isinstance(trail, list) else set()
     check("audit trail has the run", status == 200 and order.get("audit_id") in ids, f"HTTP {status}, {len(ids)} entries")
 
-    status, rows = call("GET", "/api/admin/audit?buyer_id=lapland-kitchen&limit=50", headers={"X-Valio-Admin-Key": admin_key})
+    status, rows = call("GET", f"/api/admin/audit?buyer_id={buyer}&limit=50", headers={"X-Valio-Admin-Key": admin_key})
     check("Valio admin audit has the run", status == 200 and isinstance(rows, list)
           and order.get("audit_id") in {e.get("id") for e in rows}, f"HTTP {status}")
     status, _ = call("GET", "/api/admin/audit", headers={"X-Valio-Admin-Key": approver_key})
