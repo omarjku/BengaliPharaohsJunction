@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timedelta
 
 import httpx
-from trade_contracts import CutOff, QuantityInfo, Quote
+from trade_contracts import CutOff, QuantityInfo, Quote, eur_to_cents
 from trade_contracts.common import Availability, QuoteSource
 
 from . import config
@@ -133,7 +133,7 @@ def to_contract_quote(q: dict) -> "Quote | None":
     cut = datetime.fromisoformat(q["order_cutoff"]) if q["order_cutoff"] else None
     return Quote(
         product_id=q["product_id"],
-        unit_price_eur=q["price"],
+        unit_price_cents=eur_to_cents(q["price"]),  # catalogPrice is net of VAT, as the contract requires
         unit=q["sales_unit"] or "unit",
         availability=availability,
         quantity=QuantityInfo(known=q["quantity_known"], value=int(q["available_amount"]) if q["quantity_known"] else None),
