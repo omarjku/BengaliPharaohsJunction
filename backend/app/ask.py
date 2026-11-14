@@ -346,6 +346,7 @@ def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict
         out["choices"] = v2.get("choices") or out.get("choices") or []
     if timings:
         out["timings_ms"] = timings
+    out["confidence_threshold"] = mandates.confidence_threshold(buyer_id)
     return out
 
 

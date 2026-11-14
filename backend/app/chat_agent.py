@@ -42,9 +42,9 @@ def _decl(name: str, description: str, properties: dict | None = None, required:
 
 
 TOOLS = [{"functionDeclarations": [
-    _decl("search_products", "Search Valio's catalogue and live price/availability. This never orders.", {
+    _decl("search_products", "Read-only product/price/availability lookup. Use only when the chef asks what exists or asks to compare; for any request with an amount or order intent, call propose_order instead. This never orders.", {
         "query": {"type": "STRING"}, "limit": {"type": "INTEGER"}}, ["query"]),
-    _decl("propose_order", "Run the existing order engine for these items. It may place or hold an order; it never approves one.", {
+    _decl("propose_order", "Use immediately for an order request, even when the product needs matching. Run the existing order engine for these items. It may place or hold an order; it never approves one.", {
         "items": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
             "text": {"type": "STRING"}, "product_id": {"type": "STRING"}, "amount": {"type": "NUMBER"},
             "unit": {"type": "STRING"}}}}, "delivery_date": {"type": "STRING"}}, ["items"]),
@@ -355,7 +355,7 @@ async def _turn_guard(fallback_text: str) -> dict:
 
 
 async def _propose_order(args: dict, buyer_id: str, requested_date: date | None, follow_up: bool = False,
-                         have: list[str] | None = None) -> dict:
+                         have: list[str] | None = None, via: str | None = None) -> dict:
     delivery = _parse_date(args.get("delivery_date"), requested_date)
     text, parsed = _tool_items(args.get("items") or [])
     if not text:
@@ -366,10 +366,11 @@ async def _propose_order(args: dict, buyer_id: str, requested_date: date | None,
     token = ask._DUPLICATE_GUARD_BYPASS.set(follow_up)
     try:
         guard = await _turn_guard(text)
+        request_note = guard.get("note") or ("Voice orders require the chef's on-screen approval." if via == "voice" else None)
         body = await agent.run(ask._duplicate_safe_text(text), delivery, buyer_id,
                                pre={"parsed": (parsed, True), "steer": guard.get("steer"), "steer_checked": True,
                                     "meant": 1.0, "meant_checked": True,
-                                    "request_note": guard.get("note"), "request_hold": bool(guard.get("note"))})
+                                    "request_note": request_note, "request_hold": bool(request_note)})
     finally:
         ask._DUPLICATE_GUARD_BYPASS.reset(token)
     body.update(intent="order", requested_date=delivery.isoformat(), question=None)
@@ -455,7 +456,7 @@ async def _plan_menu(args: dict, buyer_id: str, requested_date: date | None, hav
 
 
 async def _dispatch_tool(name: str, args: dict, buyer_id: str, requested_date: date | None,
-                         follow_up: bool = False, have: list[str] | None = None) -> dict:
+                         follow_up: bool = False, have: list[str] | None = None, via: str | None = None) -> dict:
     def typed(result):
         if isinstance(result, dict) and result.get("status") == "needs_info":
             result = dict(result, awaiting_user=True)
@@ -476,11 +477,14 @@ async def _dispatch_tool(name: str, args: dict, buyer_id: str, requested_date: d
         return {"context": kitchen.kitchen_context(buyer_id)}
     if name not in functions:
         raise RuntimeError(f"Gemini requested an unavailable tool: {name}")
+    kwargs = {"follow_up": follow_up, "have": have}
+    if via is not None:
+        kwargs["via"] = via
     if name == "cancel_order":
-        return typed(await functions[name](args, buyer_id, follow_up=follow_up, have=have))
+        return typed(await functions[name](args, buyer_id, **kwargs))
     if name == "check_assumptions":
-        return await functions[name](args, buyer_id, follow_up=follow_up, have=have)
-    return typed(await functions[name](args, buyer_id, requested_date, follow_up=follow_up, have=have))
+        return await functions[name](args, buyer_id, **kwargs)
+    return typed(await functions[name](args, buyer_id, requested_date, **kwargs))
 
 
 async def _current_order(buyer_id: str) -> dict:

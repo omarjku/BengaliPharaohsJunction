@@ -798,6 +798,15 @@ class ChatRequest(AskRequest):
     """A text turn for the Gemini tool-calling chat agent; its follow-up shape matches /ask."""
 
 
+def _with_confidence_threshold(body: dict, buyer_id: str) -> dict:
+    threshold = mandates.confidence_threshold(buyer_id)
+    cards = body.get("cards")
+    if isinstance(cards, list):
+        body = {**body, "cards": [dict(card, confidence_threshold=threshold) if isinstance(card, dict) else card
+                                   for card in cards]}
+    return {**body, "confidence_threshold": threshold}
+
+
 @app.post("/api/agent/ask")
 async def agent_ask(req: AskRequest, who: Agent) -> dict:
     """Free text → {intent: order|menu|unclear, covers, requested_date, date_source: request|text|null,
@@ -805,16 +814,18 @@ async def agent_ask(req: AskRequest, who: Agent) -> dict:
     asked (no date, menu without guests, unclear, conflicting dates), only `decision` (ASK_HUMAN) follows and nothing
     runs. Needs X-Agent-Key."""
     _catalogue_ready()
-    return await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump(),
+    body = await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump(),
                          req.have)
+    return _with_confidence_threshold(body, who.buyer_id)
 
 
 @app.post("/api/agent/chat")
 async def agent_chat(req: ChatRequest, who: Agent) -> dict:
     """Gemini text chat with grounded function calls; provider protocol failures are surfaced as provider_call_ok=false."""
     _catalogue_ready()
-    return await chat_agent.chat(req.text, who.buyer_id, req.requested_date,
+    body = await chat_agent.chat(req.text, who.buyer_id, req.requested_date,
                                  req.follow_up and req.follow_up.model_dump(), req.have)
+    return _with_confidence_threshold(body, who.buyer_id)
 
 
 # --- Talk: a spoken conversation over Gemini Live (live.py). Auth is the first message: browsers can't set headers.

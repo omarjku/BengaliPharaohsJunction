@@ -140,6 +140,7 @@ def test_chat_endpoint_uses_agent_auth_and_returns_chat_envelope(shop, monkeypat
     response = client.post("/api/agent/chat", json={"text": "milk"}, headers={"X-Agent-Key": "agent-chef"})
     assert response.status_code == 200
     assert response.json()["reply"] == "Checked milk for chef."
+    assert response.json()["confidence_threshold"] == 0.8
 
 
 def test_cancel_dispatch_accepts_the_common_tool_context(monkeypatch):
@@ -256,3 +257,22 @@ def test_order_tools_pass_the_real_steering_score_and_injection_hold(monkeypatch
     asyncio.run(chat_agent._propose_order({"items": [{"text": "15 kg reindeer roast"}], "delivery_date": "2026-11-20"},
                                           "smoke-kitchen", date(2026, 11, 20)))
     assert seen["steer"] == 0.93 and seen["request_hold"] is True and seen["request_note"] == agent.INJECTION_NOTE
+
+
+def test_voice_dispatch_marks_every_order_as_an_assumption_hold(monkeypatch):
+    seen = {}
+
+    async def fake_guard(_text):
+        return {"steer": 0.12, "note": None}
+
+    async def fake_run(_text, _delivery, _buyer_id, pre=None):
+        seen.update(pre or {})
+        return {"lines": [], "decision": {"outcome": "ASK_HUMAN", "reasons": []}}
+
+    monkeypatch.setattr(chat_agent, "_turn_guard", fake_guard)
+    monkeypatch.setattr(chat_agent.agent, "run", fake_run)
+    asyncio.run(chat_agent._dispatch_tool(
+        "propose_order", {"items": [{"text": "butter", "amount": 25, "unit": "kg"}],
+                           "delivery_date": "2026-11-16"}, "chef", date(2026, 11, 16), via="voice"))
+    assert seen["request_hold"] is True
+    assert seen["request_note"] == "Voice orders require the chef's on-screen approval."

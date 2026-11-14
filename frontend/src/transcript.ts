@@ -6,10 +6,10 @@
 // text of an open line is kept and cleaned as a whole, never fragment by fragment.
 
 export type TranscriptRole = 'user' | 'agent'
-export type TranscriptEvent = { role: TranscriptRole; text: string; final: boolean }
+export type TranscriptEvent = { role: TranscriptRole; text: string; final: boolean; turn_id?: number; cumulative?: boolean }
 
 /** A spoken line in the thread. `partial` marks the line still being formed; `raw` is its uncleaned text so far. */
-export type TranscriptLine = { id: number; kind: TranscriptRole; text: string; partial?: boolean; raw?: string }
+export type TranscriptLine = { id: number; kind: TranscriptRole; text: string; partial?: boolean; raw?: string; turn_id?: number }
 
 const CLOSED_ANGLE = /<[A-Za-z][A-Za-z _-]{0,40}>/g // <no speech>, <noise>; not "5 < 10" or "a > b"
 const CLOSED_CURLY = /\{[^{}\n]{0,40}\}/g // {pause}, {laughs}
@@ -39,7 +39,8 @@ export function mergeTranscript<T extends { kind: string }>(thread: T[], ev: Tra
   let at = -1
   for (let i = thread.length - 1; i >= 0; i--) {
     const it = thread[i]
-    if (isLine(it) && it.kind === ev.role && it.partial === true) {
+    if (isLine(it) && it.kind === ev.role && it.partial === true &&
+        (ev.turn_id === undefined || it.turn_id === ev.turn_id)) {
       at = i
       break
     }
@@ -50,7 +51,7 @@ export function mergeTranscript<T extends { kind: string }>(thread: T[], ev: Tra
     const text = cleanText(ev.text)
     if (open) {
       if (!text) return thread.filter((_, i) => i !== at)
-      const closed: TranscriptLine = { id: open.id, kind: open.kind, text, partial: false }
+      const closed: TranscriptLine = { id: open.id, kind: open.kind, text, partial: false, turn_id: ev.turn_id ?? open.turn_id }
       return thread.map((it, i) => (i === at ? (closed as unknown as T) : it))
     }
     if (!text) return thread
@@ -58,12 +59,13 @@ export function mergeTranscript<T extends { kind: string }>(thread: T[], ev: Tra
   }
 
   const base = open?.raw ?? ''
-  const raw = base && ev.text.startsWith(base) ? ev.text : base + ev.text
+  const raw = ev.cumulative ? ev.text : base && ev.text.startsWith(base) ? ev.text : base + ev.text
   const text = showing(raw)
+  if (!text) return open ? thread.filter((_, i) => i !== at) : thread
   if (open) {
-    const next: TranscriptLine = { id: open.id, kind: open.kind, text, partial: true, raw }
+    const next: TranscriptLine = { id: open.id, kind: open.kind, text, partial: true, raw, turn_id: ev.turn_id ?? open.turn_id }
     return thread.map((it, i) => (i === at ? (next as unknown as T) : it))
   }
   if (!raw.trim()) return thread
-  return [...thread, { id: nextId(), kind: ev.role, text, partial: true, raw } as unknown as T]
+  return [...thread, { id: nextId(), kind: ev.role, text, partial: true, raw, turn_id: ev.turn_id } as unknown as T]
 }

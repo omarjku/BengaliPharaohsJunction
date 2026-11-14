@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { cleanText, mergeTranscript, type TranscriptEvent } from '../src/transcript.ts'
 
-type Item = { id: number; kind: string; text?: string; partial?: boolean; raw?: string }
+type Item = { id: number; kind: string; text?: string; partial?: boolean; raw?: string; turn_id?: number }
 
 function run(events: TranscriptEvent[], start: Item[] = []): Item[] {
   let id = 100
@@ -87,6 +87,14 @@ test('cumulative text from the server does not duplicate (guard)', () => {
   assert.deepEqual(lines(t), ['agent:Hello there friend*'])
   assert.deepEqual(lines(run([frag('agent', 'Hello'), frag('agent', 'Hello there'), fin('agent', 'Hello there.')])), ['agent:Hello there.'])
 })
+
+test('cumulative transcript events replace text and match the same role and turn', () => {
+  const start: Item[] = [{ id: 1, kind: 'agent', text: 'stale', partial: true, raw: 'stale', turn_id: 1 }]
+  const next = mergeTranscript(start, { role: 'agent', text: 'hello', final: false, turn_id: 2, cumulative: true }, () => 9)
+  const done = mergeTranscript(next, { role: 'agent', text: 'hello there', final: true, turn_id: 2, cumulative: true }, () => 10)
+  assert.deepEqual(lines(done), ['agent:stale*', 'agent:hello there'])
+})
+
 
 test('never mutates its input and returns a new array', () => {
   const start: Item[] = [{ id: 1, kind: 'user', text: 'Hi', partial: true, raw: 'Hi' }, { id: 2, kind: 'res' }]
