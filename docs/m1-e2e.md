@@ -72,7 +72,7 @@ the decision is always `ASK_HUMAN` with `MENU_ASSUMPTIONS`. The chef orders by p
 to the front door, which re-checks them.
 
 The live run (reindeer and lingonberry cheesecake for 80 covers, EUR 908.21 cart, with doubted lines flagged by
-their confidence) is in [`docs/GEMINI.md`](GEMINI.md#showcase-2-menu-to-cart-post-apiagentmenu-t15).
+their confidence) is in [`docs/GEMINI.md`](GEMINI-evidence.md#showcase-2-menu-to-cart-post-apiagentmenu-t15).
 
 ## C. Prompt injection: asked, nothing ordered
 

@@ -5,7 +5,7 @@ import json
 
 import httpx
 import pytest
-from conftest import REQ, quote, store_mandate
+from conftest import REQ, quote, store_mandate, outcome
 from fastapi.testclient import TestClient
 
 from app import agent, mandates, orders, valio
@@ -125,7 +125,7 @@ def test_valio_failure_on_approve_leaves_the_order_pending_and_audited(shop, mon
     last = orders.audit_log("chef", 10)[-1]
     assert last["front_door"]["action"] == "approval_failed" and last["front_door"]["status"] == "pending_approval"
     monkeypatch.setattr(valio, "get_quotes", shop.get_quotes)  # Valio back: the approval goes through
-    assert c.post(f"/api/orders/{oid}/approve", headers=AP).json()["status"] == "confirmed"
+    assert outcome(c.post(f"/api/orders/{oid}/approve", headers=AP))["status"] == "confirmed"
 
 
 @pytest.fixture
@@ -230,7 +230,7 @@ def test_higher_price_at_approval_goes_back_to_pending_with_the_new_total(shop):
     held = post(1000).json()
     assert held["status"] == "pending_approval" and held["total_cents"] == 140000
     shop.quotes["463335"] = quote("463335", price=1.6)
-    r = c.post(f"/api/orders/{held['order_id']}/approve", headers=AP).json()
+    r = outcome(c.post(f"/api/orders/{held['order_id']}/approve", headers=AP))
     assert r["status"] == "pending_approval" and r["total_cents"] == 160000
     changed = next(x for x in r["decision"]["reasons"] if x["code"] == "PRICE_CHANGED")
     assert changed["facts"] == {"old_unit_price_cents": 140, "unit_price_cents": 160}
@@ -240,9 +240,96 @@ def test_higher_price_at_approval_goes_back_to_pending_with_the_new_total(shop):
 def test_stock_dropping_below_the_quantity_refuses_with_a_split(shop):
     held = post(1000).json()
     shop.quotes["463335"] = quote("463335", amount=400.0)  # sold out to 400 while the chef decided
-    r = c.post(f"/api/orders/{held['order_id']}/approve", headers=AP).json()
+    r = outcome(c.post(f"/api/orders/{held['order_id']}/approve", headers=AP))
     assert r["status"] == "refused" and "STOCK_PARTIAL" in [x["code"] for x in r["decision"]["reasons"]]
     split = r["alternative_order"]
     assert split["order_lines"][0] == {"product_id": "463335", "quantity": 400.0}
     assert sum(x["quantity"] for x in split["order_lines"]) >= 1000
     assert orders._store()[held["order_id"]]["status"] == "refused"
+
+
+# --- Codex whole-backend audit (#7): rules saved while an order / approval is being re-checked
+def test_rules_saved_mid_check_are_applied_before_commit(shop, monkeypatch):
+    store_mandate(MANDATE)
+    fast, swapped = shop.get_quotes, []
+
+    async def rules_change_meanwhile(*a, **k):
+        if not swapped:  # the approver blocklists the product while the first quote is in flight
+            swapped.append(1)
+            store_mandate(dict(MANDATE, id="m2", blocklist=["463335"]))
+        return await fast(*a, **k)
+    monkeypatch.setattr(valio, "get_quotes", rules_change_meanwhile)
+    body_ = c.post("/api/orders", headers=AG, json=body(10)).json()
+    assert body_["status"] == "refused" and body_["mandate_version"] == "m2"  # re-decided under the new rules
+    assert "BLOCKLISTED" in [r["code"] for r in body_["decision"]["reasons"]] and orders._store() == {}
+
+
+def test_rules_saved_mid_approval_make_it_a_409(shop, monkeypatch):
+    oid = post(1000).json()["order_id"]
+    fast = shop.get_quotes
+
+    async def rules_change_meanwhile(*a, **k):
+        store_mandate(dict(MANDATE, id="m2", blocklist=["463335"]))
+        return await fast(*a, **k)
+    monkeypatch.setattr(valio, "get_quotes", rules_change_meanwhile)
+    r = c.post(f"/api/orders/{oid}/approve", headers=AP)
+    assert r.status_code == 409 and "rules changed" in r.json()["detail"]
+    assert orders._store()[oid]["status"] == "pending_approval"
+
+
+# --- Codex #11 (Room 3's review): an order never exists without its audit line
+def failing_audit(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(orders, "_append_audit", boom)
+
+
+def test_audit_failure_on_place_rolls_the_order_back(shop, monkeypatch):
+    store_mandate(MANDATE)
+    failing_audit(monkeypatch)
+    r = c.post("/api/orders", headers=AG, json=body(1000))  # would be stored as pending
+    assert r.status_code == 503 and "nothing was changed" in r.json()["detail"]
+    assert orders._store() == {}
+    monkeypatch.setattr(orders, "_orders", None)
+    assert orders._store() == {}  # not on disk either
+
+
+def test_audit_failure_on_approve_or_reject_leaves_the_order_as_it_was(shop, monkeypatch):
+    held = post(1000).json()
+    before = json.loads(json.dumps(orders._store()[held["order_id"]]))
+    failing_audit(monkeypatch)
+    for action in ("approve", "reject"):
+        r = c.post(f"/api/orders/{held['order_id']}/{action}", headers=AP)
+        assert r.status_code == 503, action
+        assert orders._store()[held["order_id"]] == before
+        monkeypatch.setattr(orders, "_orders", None)
+        assert orders._store()[held["order_id"]] == before  # the file was rolled back too
+
+
+def test_cancelled_request_still_commits_order_and_audit_together(shop, monkeypatch):
+    store_mandate(MANDATE)
+    real, done = orders._save, []
+
+    def slow_save(*a, **k):  # the order file is being written when the client goes away: before the fix the
+        import time as _t    # coroutine was cancelled here and the audit line after it never written
+        _t.sleep(0.2)
+        real(*a, **k)
+        done.append(1)
+    monkeypatch.setattr(orders, "_save", slow_save)
+    orders._order_lock = asyncio.Lock()
+
+    async def go():
+        from types import SimpleNamespace as L
+        task = asyncio.create_task(orders.place("chef", REQ, [L(product_id="463335", quantity=1000)],
+                                                mandates.get("chef")))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The task only ends once the commit is done, so the order lock is never free before the store is updated
+        # (automated security review: else another order could check the budget against stale state).
+        assert done and not orders._order_lock.locked()
+    asyncio.run(go())
+    assert done and len(orders._store()) == 1
+    [entry] = orders.audit_log("chef", 10)
+    assert entry["input"]["request"]["id"] == next(iter(orders._store()))  # the order and its audit line, together

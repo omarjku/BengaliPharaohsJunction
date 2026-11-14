@@ -18,7 +18,7 @@ import av
 import websockets
 from fastapi import HTTPException
 
-from . import config
+from . import config, conversation
 
 LIVE_URL = ("wss://generativelanguage.googleapis.com/ws/"
             "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent")
@@ -66,10 +66,10 @@ def to_pcm16(data: bytes, kind: str = "audio/webm") -> tuple[bytes, float]:
                 out += bytes(f.planes[0])[: f.samples * 2]
             if len(out) > cap:
                 raise ValueError(f"longer than {MAX_SECONDS} s")
+    except (av.error.FFmpegError, StopIteration, OSError) as e:  # first: PyAV errors are ValueErrors too, and their
+        raise ValueError("not a readable audio recording") from e  # messages (errno, decoder detail) stay server-side
     except ValueError:
         raise
-    except (av.error.FFmpegError, StopIteration, OSError) as e:
-        raise ValueError("not a readable audio recording") from e
     return bytes(out), len(out) / (RATE * 2)
 
 
@@ -89,7 +89,7 @@ async def live_transcribe(pcm: bytes) -> str:
                        "inputAudioTranscription": {},
                        "realtimeInputConfig": {"automaticActivityDetection": {"disabled": True}},
                        "systemInstruction": {"parts": [{"text": "Only listen. Reply with the single word OK."}]}}}
-    async with connect(LIVE_URL, additional_headers={"x-goog-api-key": config.GEMINI_API_KEY}, max_size=None) as ws:
+    async with connect(LIVE_URL, additional_headers={"x-goog-api-key": config.GEMINI_API_KEY}, max_size=2**20) as ws:  # bounded frames
         await ws.send(json.dumps(setup))
         if "setupComplete" not in json.loads(await asyncio.wait_for(ws.recv(), TIMEOUT_S)):
             raise RuntimeError("Live setup failed")
@@ -103,6 +103,8 @@ async def live_transcribe(pcm: bytes) -> str:
             msg = json.loads(await asyncio.wait_for(ws.recv(), TIMEOUT_S))
             content = msg.get("serverContent", {})
             text += content.get("inputTranscription", {}).get("text", "")  # final text (interim* ones are ignored)
+            if len(text) > 4000:  # a 30 s clip is a few hundred characters (Codex #12)
+                raise RuntimeError("transcript too long")
             # The transcribe model ends with generationComplete / ACTIVITY_END and never sends turnComplete
             # (measured); gemini-3.8-live ends its reply with turnComplete.
             ended = msg.get("voiceActivity", {}).get("type") == "ACTIVITY_END"
@@ -137,4 +139,6 @@ async def transcribe(data: bytes, content_type: str) -> dict:
         raise HTTPException(503, detail="Voice is unavailable right now; type the order instead.") from None
     if not text:
         raise HTTPException(422, detail="No words were heard. Try again, closer to the microphone.")
-    return {"text": text, "seconds": round(seconds, 1), "model": config.GEMINI_LISTEN_MODEL}
+    # "Sata litraa" → "100 litraa": the chef sees digits, and raw_text keeps exactly what was heard
+    return {"text": conversation.spoken_to_digits(text), "raw_text": text, "seconds": round(seconds, 1),
+            "model": config.GEMINI_LISTEN_MODEL}

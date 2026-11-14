@@ -12,6 +12,7 @@ type Props = {
   onBusy: (busy: boolean) => void
   onAnnounce: (headline: string) => void
   onRetry?: () => void // "Not this one": back to the request field
+  onHistory?: () => void // "See it in History", from the front-door line
   after?: ReactNode // shown right under the answer (e.g. "Need it sooner?"), before the details
 }
 type Busy = 'approve' | 'reject' | 'place' | null
@@ -43,7 +44,7 @@ function useSeen<T extends Element>(): [RefObject<T | null>, boolean] {
 const orderable = (l: Line) => l.quote != null && l.quote.orderable && l.quantity?.quantity != null && l.line_total_cents != null
 const lineOrder = (l: Line) => ({ product_id: l.product.id, quantity: l.quantity!.quantity! })
 
-export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, onRetry, after }: Props) {
+export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, onRetry, onHistory, after }: Props) {
   const [busy, setBusy] = useState<Busy>(null)
   const [result, setResult] = useState<OrderResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -94,6 +95,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
           : lead
             ? c.headline(lead)
             : status
+  const [head, more] = splitLong(text, c)
 
   const total = order?.total_cents || chosen.reduce((a, l) => a + (l.line_total_cents ?? 0), 0)
   const what = split
@@ -110,9 +112,9 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   const canDecide = MOCK || Boolean(getKeys().approverKey)
 
   useEffect(() => {
-    onAnnounce(`${status}. ${text}`)
+    onAnnounce(`${status}. ${head}`)
     heading.current?.focus() // also brings the answer into view on a phone
-  }, [status, text, result, onAnnounce])
+  }, [status, head, result, onAnnounce])
 
   async function run_(kind: Busy, go: () => Promise<OrderResponse>) {
     setBusy(kind)
@@ -140,7 +142,9 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   const decide = (action: 'approve' | 'reject') => run_(action, () => decideOrder(order!.order_id!, action))
   const place = (lines: OrderInput['lines']) => run_('place', () => placeOrder({ requested_date: requestedDate, lines }))
 
-  const otherReasons = decision.reasons.slice(1)
+  // Calm notes stay out of "Also worth knowing": the Gemini line says the confidence, the front-door line the hand-off.
+  const otherReasons = decision.reasons.slice(1).filter((r) => r.code !== 'CONFIDENCE_OK' && r.code !== 'FRONT_DOOR')
+  const sentToDoor = run.decision.reasons.some((r) => r.code === 'FRONT_DOOR') && order ? order.status : null
   const query = run.request.items.length === 1 ? run.request.items[0].query : null
 
   return (
@@ -148,10 +152,11 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
       <section className="answer" aria-label={t.aria}>
         <p className={`status ${tone}`}>{status}</p>
         <h2 ref={heading} tabIndex={-1} className="answer-text num">
-          {text}
+          {head}
         </h2>
         {signOff && <p className="signoff">{signOff}</p>}
         <p className="answer-sub" ref={reasonsRef}>
+          {more && <>{more} </>}
           {what && <>{what}. </>}
           {total > 0 && (
             <>
@@ -168,6 +173,16 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
           <p className={`sure num${confidence < CONFIDENT_AT ? ' unsure' : ''}`}>
             {c.matched(confidence)}
             {confidence < CONFIDENT_AT && chosen[0]?.confidence_reason && <span className="quiet">. {chosen[0].confidence_reason}</span>}
+          </p>
+        )}
+        {sentToDoor && (
+          <p className="quiet small">
+            {t.frontDoor(sentToDoor)}{' '}
+            {onHistory && (
+              <button type="button" className="link accent inline" onClick={onHistory}>
+                {t.seeHistory}
+              </button>
+            )}
           </p>
         )}
 
@@ -410,4 +425,11 @@ function SplitRows({ alt }: { alt: AlternativeOrder }) {
       </div>
     </section>
   )
+}
+
+// A backend sentence can run long ("…doesn't seem to stock X. Closest in the catalogue: A; B; C."): the first sentence
+// is the headline, the rest reads under it, with SHOUTED catalogue names in normal case.
+function splitLong(s: string, c: ReturnType<typeof useCopy>): [string, string | null] {
+  const m = s.length > 80 ? /^(.+?[.!?])\s+(\S.*)$/s.exec(s) : null
+  return m ? [m[1], m[2].replace(/\b[A-Z0-9][A-Z0-9 ]*[A-Z]{3}[A-Z0-9 ]*\b/g, (n) => c.tidyName(n))] : [s, null]
 }

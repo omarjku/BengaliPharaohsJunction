@@ -150,7 +150,7 @@ async def limit_body(request: Request, call_next):
         if size is None and request.headers.get("transfer-encoding"):
             return JSONResponse({"detail": "Content-Length required"}, status_code=411)
         cap = voice.MAX_BYTES if request.url.path == "/api/voice/transcribe" else MAX_BODY_BYTES  # audio clips
-        if size is not None and (not size.isdigit() or int(size) > cap):
+        if size is not None and (not size.isdigit() or len(size) > 12 or int(size) > cap):  # no 5,000-digit int()
             return JSONResponse({"detail": f"Request body over {cap} bytes"}, status_code=413)
     return await call_next(request)
 
@@ -216,19 +216,26 @@ class OrderRequest(BaseModel):
         return self
 
 
-def _mandate_for(who: auth.Principal, req: OrderRequest) -> Mandate | None:
+def _cross_buyer(request: Request, who: auth.Principal, claimed: str) -> HTTPException:
+    """A key used for another buyer's data: audited (QA round 2 N14), then 403."""
+    orders.security_event("cross_buyer_attempt", f"{request.method} {request.url.path}", ratelimit.client_ip(request),
+                          buyer_id=None, caller_buyer_id=who.buyer_id, target_buyer_id=claimed)  # Valio-only
+    return HTTPException(403, detail="This key may only act for its own buyer")
+
+
+def _mandate_for(request: Request, who: auth.Principal, req: OrderRequest) -> Mandate | None:
     """The mandate this order is judged by: the key's buyer's, stored server-side. None → refused (MANDATE_MISSING)."""
     if (req.buyer_id or who.buyer_id) != who.buyer_id:
-        raise HTTPException(403, detail="This agent key may only order for its own buyer")
+        raise _cross_buyer(request, who, req.buyer_id)
     return mandates.get(who.buyer_id)
 
 
 @app.post("/api/orders")
-async def place_order(req: OrderRequest, who: Agent, response: Response, idempotency_key: IdemKey = None) -> dict:
+async def place_order(req: OrderRequest, who: Agent, request: Request, response: Response, idempotency_key: IdemKey = None) -> dict:
     """Valio's front door (D2): re-checks the order against hard rules with fresh quotes. AUTO → confirmed,
     ASK_HUMAN → pending_approval, a hard violation or something Valio can't deliver → refused (nothing stored),
     always with reasons, suggested fixes and alternatives. Every run is audited. Needs X-Agent-Key."""
-    mandate = _mandate_for(who, req)
+    mandate = _mandate_for(request, who, req)
 
     async def act():  # readiness only matters for a new action; a stored replay is served during catalogue startup
         _catalogue_ready()
@@ -272,11 +279,12 @@ async def reject_order(order_id: OrderId, who: Approver, response: Response, ide
 
 
 @app.get("/api/audit")
-def audit(who: Approver, buyer_id: BuyerId | None = None, limit: Annotated[int, Query(ge=1, le=1000)] = 100) -> list[dict]:
+def audit(who: Approver, request: Request, buyer_id: BuyerId | None = None,
+          limit: Annotated[int, Query(ge=1, le=1000)] = 100) -> list[dict]:
     """The approver's buyer's audit trail (contract AuditEntry objects), oldest first. buyer_id, if sent, must
     be that buyer. Needs X-Approver-Key."""
     if (buyer_id or who.buyer_id) != who.buyer_id:
-        raise HTTPException(403, detail="This approver key may only read its own buyer's audit trail")
+        raise _cross_buyer(request, who, buyer_id)
     return orders.audit_log(who.buyer_id, limit)
 
 
@@ -458,19 +466,44 @@ def save_mandate(req: SaveMandateRequest, who: Approver, response: Response,
     open questions remain; 409 for big loosenings unless confirm_large_change=true. Audited. Needs X-Approver-Key."""
     out = rules.save(req.mandate, req.confirm_large_change, who, _if_match(if_match))
     response.headers["ETag"] = f'"{out["version"]}"'
+    if if_match is None:  # QA round 2 N11: still accepted (scripts), but never silently
+        note = ("Saved without If-Match: a concurrent change could have been overwritten. Send the ETag from "
+                "GET /api/mandate as If-Match.")
+        logging.getLogger(__name__).warning("mandate for %s saved without If-Match", who.buyer_id)
+        response.headers["Warning"] = f'299 - "{note}"'
+        out = {**out, "warning": note}
     return out
 
 
 # --- One input for everyone: order, menu or unclear, routed by Gemini; date and guests read from the text.
+class FollowUp(BaseModel):
+    """The chef's answer to the question a previous /ask returned (its conversation_id, valid ~10 min)."""
+    model_config = ConfigDict(extra="forbid")
+    to: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
+    answer: str = Field(min_length=1, max_length=500, examples=["five litres"])
+
+    @field_validator("answer")
+    @classmethod
+    def utf8(cls, t: str) -> str:
+        return AgentRunRequest.utf8(t)
+
+
 class AskRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    text: str = Field(min_length=1, max_length=4000, examples=["milk and 30 croissants for tomorrow"])
+    text: str = Field(default="", max_length=4000, examples=["milk and 30 croissants for tomorrow"])
     requested_date: date | None = Field(default=None, description="Optional when the text states a day.")
+    follow_up: FollowUp | None = Field(default=None, description="Answer a question instead of a new request.")
 
     @field_validator("text")
     @classmethod
     def utf8(cls, t: str) -> str:
         return AgentRunRequest.utf8(t)
+
+    @model_validator(mode="after")
+    def _something(self) -> "AskRequest":
+        if not self.text.strip() and self.follow_up is None:
+            raise ValueError("send text, or follow_up with the answer to a question")
+        return self
 
 
 @app.post("/api/agent/ask")
@@ -480,7 +513,7 @@ async def agent_ask(req: AskRequest, who: Agent) -> dict:
     asked (no date, menu without guests, unclear, conflicting dates), only `decision` (ASK_HUMAN) follows and nothing
     runs. Needs X-Agent-Key."""
     _catalogue_ready()
-    return await ask.ask(req.text, req.requested_date, who.buyer_id)
+    return await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump())
 
 
 # --- Voice: push-to-talk audio → the chef's words (Gemini Live via our backend; the key never reaches the browser).
@@ -489,10 +522,16 @@ async def voice_transcribe(request: Request, who: Agent) -> dict:
     """Body: the raw recording (Content-Type audio/webm, audio/ogg, audio/mp4, audio/wav...; at most 1 MB / 30 s).
     → {text, seconds, model}. The UI shows the text and sends it to POST /api/agent/ask; nothing is ordered here.
     Needs X-Agent-Key; rate-limited like agent runs."""
-    return await voice.transcribe(await request.body(), request.headers.get("content-type", ""))
+    body = bytearray()
+    async for chunk in request.stream():  # bounded read: a body without a length header can't grow past the cap
+        body += chunk
+        if len(body) > voice.MAX_BYTES:
+            raise HTTPException(413, detail=f"Recordings may be at most {voice.MAX_BYTES // 1000} KB.")
+    return await voice.transcribe(bytes(body), request.headers.get("content-type", ""))
 
 
 _STREAM_TASKS: set = set()
+MAX_STREAMS_PER_BUYER = 3  # disconnected streams keep working to the end, so cap them (Codex #10)
 
 
 @app.post("/api/agent/ask/stream")
@@ -502,23 +541,27 @@ async def agent_ask_stream(req: AskRequest, who: Agent) -> StreamingResponse:
     then one `event: result` with exactly the /api/agent/ask body, or `event: error` {status, detail}.
     Needs X-Agent-Key."""
     _catalogue_ready()
+    if sum(1 for t in _STREAM_TASKS if getattr(t, "buyer_id", None) == who.buyer_id) >= MAX_STREAMS_PER_BUYER:
+        raise HTTPException(429, detail="Too many requests still running for this kitchen; wait for them to finish.")
     queue: asyncio.Queue = asyncio.Queue()
 
     async def work():
         progress.set_sink(queue.put_nowait)  # inside the task's own context: only this request's phases
         try:
-            queue.put_nowait(("result", await ask.ask(req.text, req.requested_date, who.buyer_id)))
+            queue.put_nowait(("result", await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump())))
         except HTTPException as e:
             queue.put_nowait(("error", {"status": e.status_code, "detail": e.detail}))
         except Exception:  # noqa: BLE001 - details stay in the server log
             logging.getLogger(__name__).exception("ask stream failed")
-            queue.put_nowait(("error", {"status": 500, "detail": "Something went wrong; nothing was ordered."}))
+            queue.put_nowait(("error", {"status": 500, "detail": "Something went wrong. Check your orders before "
+                                                                 "trying again."}))  # it may have got as far as an order
 
     async def events():
         # A disconnect never cancels the work: cancelling mid-order could store an order without its audit entry.
         # The task finishes on its own (bounded like any /ask); the stream just stops forwarding. It is held in
         # _STREAM_TASKS until done, so it can't be garbage-collected mid-run.
         task = asyncio.create_task(work())
+        task.buyer_id = who.buyer_id
         _STREAM_TASKS.add(task)
         task.add_done_callback(_STREAM_TASKS.discard)
         while True:

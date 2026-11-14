@@ -196,3 +196,23 @@ def test_quotes_carry_integer_cents(shop):
     q = quote("463335", price=1.4)
     assert q["unit_price_cents"] == 140 and q["price"] == 1.4
     assert quote("x", price=None)["unit_price_cents"] is None
+
+
+def test_security_events_are_capped_per_minute(shop, monkeypatch):  # Codex whole-backend audit
+    import json as _json
+    monkeypatch.setattr(orders, "SECURITY_EVENTS_PER_MIN", 3)
+    monkeypatch.setattr(orders, "_sec", {"window": 0.0, "count": 0, "suppressed": 0})
+    for i in range(10):
+        c.get("/api/audit", headers={"X-Approver-Key": f"junk-{i}"})
+    lines = [_json.loads(x) for x in orders.AUDIT_FILE.read_text().splitlines()]
+    assert len(lines) == 3  # the rest were counted, not written
+    orders._sec["window"] = -1  # a new minute
+    c.get("/api/audit", headers={"X-Approver-Key": "junk-x"})
+    last = _json.loads(orders.AUDIT_FILE.read_text().splitlines()[-1])
+    assert last["suppressed_before"] == 7
+    # a flood of junk keys never hides an event about a real buyer (automated security review)
+    for i in range(10):
+        c.get("/api/audit", headers={"X-Approver-Key": f"more-junk-{i}"})
+    c.post("/api/orders/00000000-0000-4000-8000-000000000000/approve", headers={"X-Approver-Key": "agent-chef"})
+    events = [_json.loads(x) for x in orders.AUDIT_FILE.read_text().splitlines()]
+    assert events[-1]["event"] == "key_used_outside_its_role" and events[-1]["buyer_id"] == "chef"

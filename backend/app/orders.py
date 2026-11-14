@@ -6,10 +6,12 @@ refused → nothing stored, still audited. Approve re-runs the gate with fresh q
 Who may call what is decided in auth.py: the buyer comes from the caller's key, never from the body.
 """
 import asyncio
+import copy
 import json
 import logging
 import os
 import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
@@ -77,7 +79,9 @@ async def idempotent(caller: str, scope: str, fingerprint: str, run) -> tuple[di
     """Stripe-style Idempotency-Key. `scope` = caller + route + key; `fingerprint` = hash of the request.
     First call runs and stores its response; a retry with the same request gets that response back (→ True) without
     placing anything again; the same key with a different request → 422; while the first is still running → 409.
-    Errors are not stored, so a failed call can be retried with the same key. Check-and-set has no await in between,
+    Errors are not stored, so a failed call can be retried with the same key, except an outcome raised as
+    `final_error(...)` (e.g. "not approved, the decision changed"): that IS the answer, and is replayed, so a retry
+    never re-runs an approval against terms nobody saw. Check-and-set has no await in between,
     so the single event loop makes it atomic (ponytail: one worker, see main.py)."""
     store, now = _idem_store(), datetime.now(timezone.utc)
     for k in [k for k, r in store.items() if datetime.fromisoformat(r["at"]) < now - IDEM_TTL]:
@@ -91,17 +95,35 @@ async def idempotent(caller: str, scope: str, fingerprint: str, run) -> tuple[di
             raise HTTPException(422, detail="This Idempotency-Key was already used with a different request")
         if rec["response"] is None:
             raise HTTPException(409, detail="A request with this Idempotency-Key is still running; retry shortly")
+        if err := rec["response"].get("__final_error__"):
+            raise HTTPException(err["status"], detail=err["detail"], headers={"Idempotent-Replayed": "true"})
         return rec["response"], True
     store[scope] = {"caller": caller, "fingerprint": fingerprint, "response": None, "at": now.isoformat()}
     try:
         resp = await run()
+    except HTTPException as e:
+        if not getattr(e, "final", False):
+            store.pop(scope, None)
+            raise
+        resp, final = {"__final_error__": {"status": e.status_code, "detail": e.detail}}, e
     except BaseException:
         store.pop(scope, None)
         raise
+    else:
+        final = None
     store[scope]["response"] = resp
     async with _idem_save:
         await asyncio.to_thread(_write, IDEM_FILE, _idem_snapshot())
+    if final:
+        raise final
     return resp, False
+
+
+def final_error(status: int, detail) -> HTTPException:
+    """An error that is the request's real outcome: stored for Idempotency-Key replays like a success."""
+    e = HTTPException(status, detail=detail)
+    e.final = True
+    return e
 
 
 def _annotation(actor: str) -> dict:
@@ -123,17 +145,38 @@ def _append_audit(entry: AuditEntry, front_door: dict | None = None) -> None:
     _write_line({**json.loads(entry.model_dump_json()), "front_door": front_door or _annotation(entry.actor)})
 
 
+SECURITY_EVENTS_PER_MIN = 60  # cap on ANONYMOUS events only (unknown keys): junk probing can't grow the file unbounded
+_sec = {"window": 0.0, "count": 0, "suppressed": 0}
+
+
 def security_event(event: str, route: str, ip: str | None, buyer_id: str | None = None, **detail) -> None:
     """A refused attempt (wrong / missing key, a key used outside its role, a client-sent mandate), audited as its
-    own kind of line. Never holds a key or secret; buyer_id is the buyer a recognised key belongs to, if any."""
+    own kind of line. Never holds a key or secret; buyer_id is the buyer a recognised key belongs to, if any.
+    Events tied to a recognised buyer (a real key used outside its role, cross-buyer attempts, bad signatures,
+    client-sent mandates) are ALWAYS written: their keys are rate-limited, and flooding junk keys must never hide
+    them. Anonymous events over SECURITY_EVENTS_PER_MIN are only counted; the next one written says how many."""
+    if buyer_id or detail.get("caller_buyer_id"):
+        _write_line({"kind": "security_event", "id": str(uuid4()), "timestamp": datetime.now(timezone.utc).isoformat(),
+                     "actor": "front_door_security", "event": event, "route": route, "ip": ip, "buyer_id": buyer_id,
+                     **detail})
+        return
+    minute = time.monotonic() // 60
+    if minute != _sec["window"]:
+        _sec.update(window=minute, count=0)
+    if _sec["count"] >= SECURITY_EVENTS_PER_MIN:
+        _sec["suppressed"] += 1
+        return
+    _sec["count"] += 1
+    if _sec["suppressed"]:
+        detail["suppressed_before"], _sec["suppressed"] = _sec["suppressed"], 0
     _write_line({"kind": "security_event", "id": str(uuid4()), "timestamp": datetime.now(timezone.utc).isoformat(),
                  "actor": "front_door_security", "event": event, "route": route, "ip": ip, "buyer_id": buyer_id,
                  **detail})
 
 
-async def _audit(actor: str, order_id: str, buyer_id: str, requested_date: str, lines: list[dict], mandate: Mandate | None,
+def _entry(actor: str, order_id: str, buyer_id: str, requested_date: str, lines: list[dict], mandate: Mandate | None,
            res: gate.GateResult | None, decision=None, now: datetime | None = None, action: str = "order",
-           status: str | None = None) -> str:
+           status: str | None = None) -> tuple[AuditEntry, dict]:
     """The contracts have no Order shape, so the order is recorded as the PurchaseRequest it fulfils."""
     now = now or datetime.now(timezone.utc)
     text = "Order via Valio front door: " + "; ".join(
@@ -147,8 +190,61 @@ async def _audit(actor: str, order_id: str, buyer_id: str, requested_date: str, 
         input=AuditInput(request=request, mandate=mandate, quotes=res.quotes if res else []),
         decision=res.decision if res else decision, rejected_options=res.rejected_options if res else [])
     signer = actor.split(":")[1] if actor.startswith("human:") else None
-    await asyncio.to_thread(_append_audit, entry, {"action": action, "status": status, "signed_off_by": signer,
-                                                   "mandate_version": mandates.version(mandate)})
+    return entry, {"action": action, "status": status, "signed_off_by": signer,
+                   "mandate_version": mandates.version(mandate)}
+
+
+async def _audit(*args, **kwargs) -> str:
+    """An audit line on its own (no order change goes with it)."""
+    entry, fd = _entry(*args, **kwargs)
+    await asyncio.to_thread(_append_audit, entry, fd)
+    return entry.id
+
+
+_commit_lock = threading.Lock()
+
+
+def _commit_sync(apply, undo, entry: AuditEntry, fd: dict) -> None:
+    """Order change + its audit line, all or nothing: apply in memory, save orders.json, append the audit line; if
+    either write fails, undo in memory and on disk. So an order never exists without its audit line (Codex #11)."""
+    with _commit_lock:
+        if apply:
+            apply()
+        try:
+            if apply:
+                _save()
+            _append_audit(entry, fd)
+        except BaseException:
+            if apply:
+                undo()
+                try:
+                    _save()
+                except Exception:  # noqa: BLE001 - the in-memory store is already back; the file follows on the next save
+                    log.exception("rollback save failed")
+            raise
+
+
+async def _commit(apply, undo, entry: AuditEntry, fd: dict) -> str:
+    """Run the commit in a thread, shielded: a cancelled request (client gone, shutdown) can't stop it halfway;
+    the caller just loses the response. On cancellation we still WAIT for the commit before re-raising, so the
+    caller's `async with _order_lock` is only released once the store is updated: no other order can check the
+    budget or the order's state in between (automated security review). A failed write is a clean 503."""
+    fut = asyncio.ensure_future(asyncio.to_thread(_commit_sync, apply, undo, entry, fd))
+    try:
+        await asyncio.shield(fut)
+    except asyncio.CancelledError:
+        while not fut.done():
+            try:
+                await asyncio.shield(fut)
+            except asyncio.CancelledError:
+                continue
+            except Exception:  # noqa: BLE001 - it rolled back; the cancellation is what the caller hears about
+                break
+        raise
+    except Exception:
+        log.exception("order commit failed; rolled back")
+        raise HTTPException(503, detail="The change couldn't be recorded in the audit trail, so nothing was changed. "
+                                        "Retry shortly.") from None
     return entry.id
 
 
@@ -177,7 +273,7 @@ def _response(order_id: str | None, status: str, body: dict, audit_id: str) -> d
     """Every order response carries a signed statement of what the front door decided and the quote facts it used."""
     statement = {"v": 1, "iss": signing.ISSUER, "order_id": order_id, "status": status, "audit_id": audit_id,
                  "total_cents": body["total_cents"], "decision": body["decision"],
-                 "mandate_version": body.get("mandate_version"),
+                 "mandate_version": body.get("mandate_version"), "signed_off_by": body.get("signed_off_by"),
                  "quotes": body.get("quote_facts", []),
                  "lines": [{k: li.get(k) for k in ("product_id", "quantity", "unit", "unit_price_cents", "line_total_cents")}
                            for li in body.get("lines", [])]}
@@ -216,29 +312,38 @@ async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | N
         async with _order_lock:
             if _spent_7d(buyer_id, now) != spent:
                 continue  # another order of this buyer was confirmed meanwhile: decide again on the new budget
-            if res.status != "refused":
-                _store()[oid] = {
-                    "id": oid, "buyer_id": buyer_id, "status": res.status, "requested_date": requested_date.isoformat(),
-                    "lines": res.lines, "total_cents": res.total_cents, "mandate": mandate.model_dump(mode="json"),
-                    "mandate_version": res.mandate_version,
-                    "decision": res.decision.model_dump(mode="json"), "signed_off_by": None,
-                    "created_at": now.isoformat(), "updated_at": now.isoformat()}
-                await asyncio.to_thread(_save)
-            audit_id = await _audit(FRONT_DOOR, oid, buyer_id, requested_date.isoformat(), res.lines, mandate, res,
-                                    now=now, status=res.status)
+            if mandate is not None and mandates.version(current := mandates.get(buyer_id)) != mandates.version(mandate):
+                mandate = current  # the rules were saved meanwhile (Codex audit #7): decide again under the new ones
+                continue
+            record = None if res.status == "refused" else {
+                "id": oid, "buyer_id": buyer_id, "status": res.status, "requested_date": requested_date.isoformat(),
+                "lines": res.lines, "total_cents": res.total_cents, "mandate": mandate.model_dump(mode="json"),
+                "mandate_version": res.mandate_version,
+                "decision": res.decision.model_dump(mode="json"), "signed_off_by": None,
+                "created_at": now.isoformat(), "updated_at": now.isoformat()}
+            entry, fd = _entry(FRONT_DOOR, oid, buyer_id, requested_date.isoformat(), res.lines, mandate, res,
+                               now=now, status=res.status)
+            audit_id = await _commit((lambda: _store().__setitem__(oid, record)) if record else None,
+                                     lambda: _store().pop(oid, None), entry, fd)
         return _response(oid if res.status != "refused" else None, res.status, _view(res), audit_id)
     raise _busy()
 
 
-def get(order_id: str, buyer_id: str) -> dict:
-    """Another buyer's order is reported as unknown, not forbidden: ids don't leak."""
-    if not (o := _store().get(order_id)) or o["buyer_id"] != buyer_id:
+def get(order_id: str, buyer_id: str, action: str = "read") -> dict:
+    """Another buyer's order is reported as unknown, not forbidden: ids don't leak. The attempt itself is audited
+    as a security event (QA round 2 N14), visible to Valio; the caller sees the same 404 either way."""
+    if not (o := _store().get(order_id)):
+        raise HTTPException(404, detail="Unknown order id")
+    if o["buyer_id"] != buyer_id:
+        # Valio-only (buyer_id None): the caller's own audit view must not reveal that the order exists.
+        security_event("cross_buyer_attempt", f"{action} order", None, buyer_id=None, caller_buyer_id=buyer_id,
+                       target_buyer_id=o["buyer_id"], order_id=order_id)
         raise HTTPException(404, detail="Unknown order id")
     return o
 
 
-def _pending(order_id: str, buyer_id: str) -> dict:
-    o = get(order_id, buyer_id)
+def _pending(order_id: str, buyer_id: str, action: str = "change") -> dict:
+    o = get(order_id, buyer_id, action)
     if o["status"] != "pending_approval":
         raise HTTPException(409, detail=f"Order is {o['status']}, not pending approval")
     return o
@@ -270,7 +375,7 @@ async def approve(order_id: str, who: Principal, seen_decided_at: datetime | Non
     seen_decided_at (the decision.decided_at the human was shown) binds the click to that decision: if the order was
     re-decided since (another approver, a re-check), 409. Without it, a change DURING this call is still a 409, never
     a silent retry that would sign off on terms nobody saw."""
-    o = _pending(order_id, who.buyer_id)
+    o = _pending(order_id, who.buyer_id, "approve")
     if err := _stale(o, seen_decided_at):
         raise err
     seen, now = o["updated_at"], datetime.now(timezone.utc)
@@ -283,37 +388,58 @@ async def approve(order_id: str, who: Principal, seen_decided_at: datetime | Non
                       approved_prices={li["product_id"]: li["unit_price_cents"] for li in o["lines"]}, now=now)
     async with _order_lock:
         o = _pending(order_id, who.buyer_id)  # 409 if someone else approved / rejected it meanwhile
+        if mandates.version(mandates.get(o["buyer_id"])) != mandates.version(mandate):  # Codex audit #7
+            raise HTTPException(409, detail="The buyer's rules changed while the order was being re-checked; "
+                                            "review it and approve again.")
         if o["updated_at"] != seen or _spent_7d(o["buyer_id"], now, skip=order_id) != spent:
             raise HTTPException(409, detail="The order or the buyer's spend changed while it was being re-checked; "
                                             "review it and approve again.")
         status = _approval_status(o, res)
+        changes = dict(status=status, lines=res.lines, total_cents=res.total_cents, updated_at=now.isoformat(),
+                       decision=res.decision.model_dump(mode="json"),
+                       signed_off_by=who.name if status == "confirmed" else None)
         if mandate:  # judged under these (no mandate left = refused, keep the last snapshot for the record)
-            o.update(mandate=mandate.model_dump(mode="json"), mandate_version=res.mandate_version)
-        o.update(status=status, lines=res.lines, total_cents=res.total_cents, updated_at=now.isoformat(),
-                 decision=res.decision.model_dump(mode="json"),
-                 signed_off_by=who.name if status == "confirmed" else None)
-        await asyncio.to_thread(_save)
-        audit_id = await _audit(f"human:{who.name}:approve", order_id, o["buyer_id"], o["requested_date"],
-                                res.lines, mandate, res, now=now, status=status,
-                                action="approved" if status == "confirmed" else "approval_blocked")
-    return _response(order_id, status, _view(res), audit_id)
+            changes.update(mandate=mandate.model_dump(mode="json"), mandate_version=res.mandate_version)
+        entry, fd = _entry(f"human:{who.name}:approve", order_id, o["buyer_id"], o["requested_date"],
+                           res.lines, mandate, res, now=now, status=status,
+                           action="approved" if status == "confirmed" else "approval_blocked")
+        audit_id = await _commit(*_changing(o, changes), entry, fd)
+    out = _response(order_id, status, {**_view(res), "signed_off_by": o["signed_off_by"]}, audit_id)
+    if status != "confirmed":  # QA round 2 N3: an approve that didn't approve is never a 200
+        raise final_error(409, {
+            "error": "Not approved: the re-check changed the decision (new price, stock, rules or budget). Review the "
+                     "new decision below; approve again with its decided_at if it is still right." if status ==
+                     "pending_approval" else "Not approved: the re-check refused the order (see the decision below).",
+            **out})
+    return out
 
 
 async def reject(order_id: str, who: Principal) -> dict:
     """Human says no. Audited with the decision they were shown (AuditEntry has no action field, so the
     action is in the actor: human:<name>:reject)."""
     async with _order_lock:
-        o = _pending(order_id, who.buyer_id)
+        o = _pending(order_id, who.buyer_id, "reject")
         now = datetime.now(timezone.utc)
-        o.update(status="rejected", signed_off_by=who.name, updated_at=now.isoformat())
-        await asyncio.to_thread(_save)
         decision = Decision.model_validate(o["decision"])
-        audit_id = await _audit(f"human:{who.name}:reject", order_id, o["buyer_id"], o["requested_date"], o["lines"],
-                                Mandate.model_validate(o["mandate"]), None, decision=decision, now=now,
-                                action="rejected", status="rejected")
+        entry, fd = _entry(f"human:{who.name}:reject", order_id, o["buyer_id"], o["requested_date"], o["lines"],
+                           Mandate.model_validate(o["mandate"]), None, decision=decision, now=now,
+                           action="rejected", status="rejected")
+        audit_id = await _commit(*_changing(o, dict(status="rejected", signed_off_by=who.name,
+                                                    updated_at=now.isoformat())), entry, fd)
     return _response(order_id, "rejected", {"total_cents": o["total_cents"], "lines": o["lines"],
                                             "decision": o["decision"], "rejected_options": [],
-                                            "mandate_version": o.get("mandate_version")}, audit_id)
+                                            "mandate_version": o.get("mandate_version"),
+                                            "signed_off_by": who.name}, audit_id)
+
+
+def _changing(o: dict, changes: dict):
+    """(apply, undo) for an in-place update of a stored order."""
+    before = copy.deepcopy(o)
+
+    def undo():
+        o.clear()
+        o.update(before)
+    return (lambda: o.update(changes)), undo
 
 
 def _buyer(r: dict) -> str | None:

@@ -5,7 +5,7 @@ Carry address and opening hours, and that Click & Collect is Helsinki-only and r
 confirming. Store stock and pickup are NOT in the mock API, so every suggestion says so.
 """
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from . import mandates
 
@@ -41,8 +41,10 @@ def _hours_text(now: datetime) -> str:
 
 def _next_delivery(lines: list[dict]) -> dict:
     """The honest answer outside Helsinki: the earliest delivery day and its cut-off, from the live quotes."""
+    now = datetime.now(timezone.utc)
     best = min(((q["available_date"][:10], q.get("order_cutoff")) for ln in lines if (q := ln.get("quote"))
-                and q.get("available_date") and "undeliverable" not in q["flags"] and "cutoff_passed" not in q["flags"]),
+                and q.get("available_date") and q.get("orderable")  # orderable: no stock/block/cut-off trap (Codex #7)
+                and not (q.get("order_cutoff") and datetime.fromisoformat(q["order_cutoff"]) <= now)),
                default=None)
     text = (f"The earliest Valio delivery for these products is {best[0]}"
             + (f" if ordered before {best[1]}" if best[1] else "") + "." if best else

@@ -69,10 +69,10 @@ def test_split_is_exposed_by_the_front_door_and_reorderable(shop):
 def peanut_shop(shop):
     shop.products["110"] = product("110", "Sold-out cookies", category="200", claims=(), contains=("AE",),
                                    subs=("101", "111", "112", "113"))
-    shop.products["111"] = product("111", "Oat cookies", category="200", claims=(), contains=("AW",), rel=0.95)
-    shop.products["112"] = product("112", "Finnish oat cookies", category="200", claims=(), contains=("AW",), rel=0.95)
+    shop.products["111"] = product("111", "Oat cookies", category="200", claims=(), contains=("AE",), rel=0.95)
+    shop.products["112"] = product("112", "Finnish oat cookies", category="200", claims=(), contains=("AE",), rel=0.95)
     shop.products["112"]["origin"] = "fi"
-    shop.products["113"] = product("113", "Cheap unreliable cookies", category="200", claims=(), contains=("AW",), rel=0.5)
+    shop.products["113"] = product("113", "Cheap unreliable cookies", category="200", claims=(), contains=("AE",), rel=0.5)
     shop.quotes.update({"110": quote("110", amount=0.0), "111": quote("111", price=2.0),
                         "112": quote("112", price=2.1), "113": quote("113", price=1.9)})
 

@@ -28,7 +28,7 @@ from trade_contracts import (Alternative, AuditEntry, AuditInput, Decision, Mand
 from trade_contracts import ReasonCode as C
 from trade_contracts.common import RuleKind
 
-from . import catalogue, config, gate, mandates, orders, quantity, valio, progress
+from . import catalogue, config, conversation, gate, mandates, orders, progress, quantity, valio
 
 RULES_VERSION = "m1-buyer-agent-0.1"
 ACTOR = "buyer_agent"
@@ -127,7 +127,8 @@ async def _gemini(system: str, prompt: str, schema: dict) -> dict | None:
                                headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)
         r.raise_for_status()
         parts = r.json()["candidates"][0]["content"]["parts"]
-        return json.loads("".join(p.get("text", "") for p in parts if not p.get("thought")))
+        out = json.loads("".join(p.get("text", "") for p in parts if not p.get("thought")))
+        return out if isinstance(out, dict) else None  # a list or scalar is as unusable as no answer (Codex #16)
     except Exception as e:  # noqa: BLE001 - any failure means "use the fallback"
         log.warning("Gemini call failed (%s); using fallback", type(e).__name__)
         return None
@@ -142,9 +143,14 @@ DECISIONS_PER_MENU = 600  # 20 ingredients x (12 matches + 3 x 8 lines) + 180 as
 
 
 def start_budget(n: int = DECISIONS_PER_RUN) -> None:
-    """Open a per-run Decisions budget unless one is already open in this request."""
-    if _BUDGET.get() is None:
-        _BUDGET.set([n])
+    """Open a per-run Decisions budget unless one is already open in this request; if one is open with a smaller cap,
+    raise it to n (a request /ask opened at order size turns out to be a menu). Never lowers or resets it."""
+    b = _BUDGET.get()
+    if b is None:
+        _BUDGET.set([n, n])
+    elif n > b[1]:
+        b[0] += n - b[1]
+        b[1] = n
 DECISION_CACHE_TTL_S = 600
 DECISION_CACHE_MAX = 5000
 
@@ -399,13 +405,19 @@ def _numbers(text: str) -> set[float]:
     """One reading per number written: 1000, 1,000, 1 000, 1.000 → 1000; 1,5 / 1.5 → 1.5. (Two readings per token
     let '1,000 L' ground a parsed amount of 1.)"""
     out = set()
-    for raw in re.findall(r"\d+(?:[ ,.]\d+)*", text):
+    # Spoken numbers come back as words from voice ("Sata litraa"): read them as digits (Render live check + the
+    # video recording: the Finnish voice order was refused because the amount wasn't written as digits).
+    for raw in re.findall(r"\d+(?:[ ,.]\d+)*", conversation.spoken_to_digits(text)):
         if re.fullmatch(r"\d{1,3}(?:([ ,.])\d{3})(?:\1\d{3})*", raw):  # thousands separators
             out.add(float(re.sub(r"[ ,.]", "", raw)))
             continue
         for part in raw.split():  # "16 1000" is two numbers
             if re.fullmatch(r"\d+(?:[,.]\d+)?", part):  # "1.2.3" is no number
                 out.add(float(part.replace(",", ".")))
+    # Spoken numbers come back as words from voice ("Kymmenen kiloa voita"): read single-word numbers too (Render
+    # live check: the Finnish voice order was refused because "10" wasn't written as digits).
+    low = text.lower()
+    out |= {float(v) for w, v in conversation.NUMBER_WORDS.items() if re.search(rf"(?<![\wäöå]){w}(?![\wäöå])", low)}
     return out
 
 
@@ -442,10 +454,11 @@ def grounding(text: str, item: dict) -> tuple[str | None, set[int]]:
     """Deterministic injection / hallucination guard → (what in a Gemini-parsed item is NOT in the chef's own text,
     indices of the clauses that ground it). Product, amount and unit must all be in the SAME clause, so
     '12 kg butter and 1 L milk' can't become 12 L milk."""
-    words = re.findall(r"[\wäöå]+", item["query"].lower())
+    words = re.findall(r"[\wäöå]+", conversation.spoken_to_digits(item["query"]).lower())  # like the text below
     unit = (item["unit"] or "").lower()
     if unit and unit not in quantity.MEASURES:
         return f"the unit {item['unit']}", set()  # catalogue codes like KI multiply quantities; plain units only
+    text = conversation.spoken_to_digits(text)  # before splitting: "two hundred and fifty" is one amount
     clauses = {i: c for i, c in enumerate(re.split(_SPLIT, text)) if _words_in(words, c)}
     if not clauses:
         return f"the product '{item['query']}'", set()
@@ -566,6 +579,7 @@ SYNONYMS = {"kebab bread": ["pita bread", "pitabread", "pitaleipä"], "kebab mea
 NEAR_TIE = 0.10  # confident lines within this of the item's best confidence compete on limits/preference/price
 MATCH_MIN = 0.5  # P(this hit IS the item) needed to be a candidate at all; the line threshold still applies later
 MATCH_HITS = 12  # search hits judged per batch (security review: bounded paid fan-out)
+MATCH_STRONG = 0.85  # stop judging further batches only once a match this strong is in hand (Codex #1)
 MATCH_POOL = 36  # at most three batches per item, and only while no batch has found a real match
 MATCH_TOP = 8  # every real match competes on confidence, limits and price; a top-5-by-score cut dropped the
                 # cheapest milk behind small packs scoring 0.97 (measured, room3-speed)
@@ -586,11 +600,18 @@ async def match(item: dict, hits: list[dict]) -> list[str] | None:
         answered = answered or any(y is not None for y, *_ in res)
         found += [(y, start + n, p["id"]) for n, ((y, *_), p) in enumerate(zip(res, batch))
                   if y is not None and y >= MATCH_MIN]
-        if found:
+        if any(y >= MATCH_STRONG for y, *_ in found):  # a weak first-batch hit must not hide a strong later one
             break
     if not answered:
         return None
     return [pid for _, _, pid in sorted(found, key=lambda x: (-x[0], x[1]))][:MATCH_TOP]
+
+
+# Bare everyday nouns → what a kitchen usually means by them (searched first; the plain word's hits follow).
+EVERYDAY = {"cream": ["whipping cream", "cooking cream"], "kerma": ["kuohukerma", "ruokakerma", "whipping cream"],
+            "butter": ["butter 500 g", "butter"], "voi": ["voi 500 g", "butter"], "milk": ["milk 1 l"],
+            "maito": ["maito 1 l", "milk 1 l"], "flour": ["wheat flour"], "jauho": ["vehnäjauho", "wheat flour"],
+            "sugar": ["granulated sugar", "caster sugar"], "sokeri": ["sokeri 1 kg", "granulated sugar"]}
 
 
 async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[str], bool]:
@@ -605,6 +626,12 @@ async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[st
     for q in tries:
         if hits := catalogue.search(q, item["claims"], excl, False, None, SEARCH_LIMIT):
             break
+    if expansions := EVERYDAY.get(" ".join(map(_singular, words)).lower()):
+        # A bare everyday noun ("cream", "kerma") lists ice cream, sour cream and coconut cream first; the plain
+        # products a kitchen means come first here, the plain word's own hits after (QA round 2: "I need cream ASAP"
+        # → "Valio doesn't seem to stock 'cream'"; "kerma" → coconut cream). The matcher still judges every hit.
+        pool = [p for q in expansions for p in catalogue.search(q, item["claims"], excl, False, None, MATCH_HITS)]
+        hits = list({p["id"]: p for p in pool + hits}.values())[:SEARCH_LIMIT]
     if not hits and len(words) > 1:
         # No product has every word: rank products by how many of the words they have ("döner kebab meat" → the döner
         # kebab skewers first, then kebab meat), instead of taking whichever single word hits first.
@@ -819,7 +846,11 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                 judged = await judge(canonical(it),
                                      [(catalogue.get(a.product_id) or {"id": a.product_id}, ["sub"]) for a in subs])
                 ranked = sorted(zip(subs, judged), key=lambda x: -(x[1][0] or 0))  # most acceptable first
-                alternatives += [a.model_copy(update={"summary": a.summary + (
+                def doubted(summary: str, conf) -> str:  # QA round 2 N4: below threshold = at most "good"
+                    if conf is None or conf >= threshold:
+                        return summary
+                    return re.sub(r"^(BEST|BETTER) ", "GOOD ", summary) + " Gemini doubts this substitute."
+                alternatives += [a.model_copy(update={"summary": doubted(a.summary, conf) + (
                     f" Gemini Decisions: {_pct(conf)} that it is an acceptable substitute"
                     + ("" if conf >= threshold else f", below your {threshold:.2f} threshold: check before accepting")
                     + "." if conf is not None else " Not checked by Gemini Decisions.")}) for a, (conf, *_) in ranked]
@@ -865,7 +896,16 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
     # Guard (Gemini Decisions): is the chosen quantity believable for this kitchen? Only adds a question.
     for ln in chosen:
         p_ok = ln.get("plausibility")
-        if p_ok is not None and p_ok < PLAUSIBLE_MIN:
+        if p_ok is None:  # couldn't check the size: the mandate's uncertainty policy decides, never a silent pass
+            r = gate._unknown(m.uncertainty_policy, C.QTY_SUSPICIOUS, f"Couldn't check whether "
+                              f"{gate._qty(ln['quantity']['quantity'])} {ln['quantity']['sales_unit']} of "
+                              f"{_name(ln['product'])} is a plausible amount for your kitchen.", ln["product"]["id"],
+                              "Confirm the amount.")
+            reasons.append(r)
+            item_reasons.append(r)
+            if r.severity is not INFO:
+                failed.add(ln["item"])
+        elif p_ok < PLAUSIBLE_MIN:
             r = gate._r(C.QTY_SUSPICIOUS, ASK, f"Unusually large order: {gate._qty(ln['quantity']['quantity'])} "
                         f"{ln['quantity']['sales_unit']} of {_name(ln['product'])} for "
                         f"{canonical(items[ln['item']])}. Did you mean less? (Gemini Decisions: {_pct(p_ok)} that "
@@ -891,12 +931,25 @@ async def _given(value, make):
     return value if value is not None else await make()
 
 
-def recent_duplicate(buyer_id: str, lines: list[dict], now: datetime) -> dict | None:
-    """The buyer's confirmed or pending order from the last DUPLICATE_WINDOW_MIN minutes with exactly these lines."""
+_BUYER_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _buyer_lock(buyer_id: str) -> asyncio.Lock:
+    """ponytail: in-process, one worker (like orders._order_lock); a shared store when scaling out."""
+    lock = _BUYER_LOCKS.get(buyer_id)
+    if lock is None or getattr(lock, "_loop", None) not in (None, asyncio.get_running_loop()):
+        lock = _BUYER_LOCKS[buyer_id] = asyncio.Lock()
+    return lock
+
+
+def recent_duplicate(buyer_id: str, lines: list[dict], now: datetime, requested: date | None = None) -> dict | None:
+    """The buyer's confirmed or pending order from the last DUPLICATE_WINDOW_MIN minutes with exactly these lines,
+    for the same delivery day (Codex #9)."""
     want = {(ln["product"]["id"], float(ln["quantity"]["quantity"])) for ln in lines}
     since = (now - timedelta(minutes=DUPLICATE_WINDOW_MIN)).isoformat()
     for o in sorted(orders._store().values(), key=lambda o: o["created_at"], reverse=True):
         if (o["buyer_id"] == buyer_id and o["status"] in ("confirmed", "pending_approval") and o["created_at"] >= since
+                and (requested is None or o.get("requested_date") == requested.isoformat())
                 and {(li["product_id"], float(li["quantity"])) for li in o["lines"]} == want):
             return o
     return None
@@ -924,6 +977,12 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
                                f"wording suggests another day (Gemini Decisions: {_pct(meant)} that this is the day "
                                "you meant). Nothing was ordered.", None, "Confirm the delivery date.",
                                date_intent=meant, requested_date=requested.isoformat()))
+    if steer is None:  # the steering check couldn't run: the mandate's uncertainty policy decides (Codex #3)
+        reasons.append(gate._unknown(m.uncertainty_policy, C.LOW_CONFIDENCE, "Couldn't check the request for "
+                                     "attempts to change limits, delivery or approvals.", None, "Retry in a moment."))
+    if meant is None and _RELATIVE_DATE.search(text):  # a relative date the guard couldn't confirm (Codex #4)
+        reasons.append(gate._unknown(m.uncertainty_policy, C.LOW_CONFIDENCE, f"Couldn't confirm that delivery on "
+                                     f"{requested:%A %d %B} is the day you meant.", None, "Confirm the delivery date."))
     if steer is not None and steer >= INJECTION_MAX:
         reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, "This request seems to try to change limits, delivery, invoicing "
                                f"or approvals, or claims special authority (Gemini Decisions: {_pct(steer)}). Nothing "
@@ -1017,43 +1076,44 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
     item_ids = {id(r) for r in res["item_reasons"]}
     blocked = any(r.severity is not INFO and id(r) not in item_ids for r in reasons)
     orderable = [ln for ln in chosen if ln["item"] not in res["failed_items"]]
-    if orderable and not blocked and mandate and not _AGAIN.search(text) and (dup := recent_duplicate(buyer_id, orderable, now)):
-        mins = max(1, round((now - datetime.fromisoformat(dup["created_at"])).total_seconds() / 60))
-        r = gate._r(C.QTY_AMBIGUOUS, ASK, f"You ordered this {mins} minute{'s' if mins != 1 else ''} ago (order "
-                    f"{dup['id'][:8]}, {dup['status'].replace('_', ' ')}). Order again? Nothing was ordered.", None,
-                    "Say 'again' to order it a second time.", order_id=dup["id"], minutes_ago=mins)
-        reasons.append(r)
-        decision = _decision(run_id, reasons, alternatives, now, confidence)
-        audit_id = audit(decision)
-        blocked = True
-    if orderable and not blocked and mandate:
-        try:  # product ids are unique here (duplicates asked above)
-            progress.phase("ordering")
-            order = await orders.place(buyer_id, requested, [SimpleNamespace(product_id=ln["product"]["id"],
-                                                                             quantity=ln["quantity"]["quantity"])
-                                                             for ln in orderable], mandate)
-        except HTTPException as e:
-            reasons.append(gate._r(C.ENGINE_ERROR, ASK, f"The front door couldn't take the order: {e.detail}", None,
-                                   "Retry in a moment."))
+    async with _buyer_lock(buyer_id):  # duplicate check and placing are one step per buyer (Codex #8)
+        if orderable and not blocked and mandate and not _AGAIN.search(text) and (dup := recent_duplicate(buyer_id, orderable, now, requested)):
+            mins = max(1, round((now - datetime.fromisoformat(dup["created_at"])).total_seconds() / 60))
+            r = gate._r(C.QTY_AMBIGUOUS, ASK, f"You ordered this {mins} minute{'s' if mins != 1 else ''} ago (order "
+                        f"{dup['id'][:8]}, {dup['status'].replace('_', ' ')}). Order again? Nothing was ordered.", None,
+                        "Say 'again' to order it a second time.", order_id=dup["id"], minutes_ago=mins)
+            reasons.append(r)
             decision = _decision(run_id, reasons, alternatives, now, confidence)
             audit_id = audit(decision)
-        else:
-            door = Decision.model_validate(order["decision"])
-            # The door's verdict on what it was sent, plus the agent's notes and the held items' reasons (so a partly
-            # ordered request still says ASK_HUMAN for the rest); the agent's other matches when the door has none.
-            rs = gate._sorted(door.reasons + [r for r in reasons if r.severity is INFO or id(r) in item_ids])
-            decision = Decision(**door.model_dump(exclude={"reasons", "primary_reason", "alternatives", "confidence",
-                                                           "outcome"}),
-                                outcome={DECLINE: "DECLINE", ASK: "ASK_HUMAN", INFO: "AUTO"}[rs[0].severity] if rs else "AUTO",
-                                reasons=rs, alternatives=door.alternatives or alternatives[:3], confidence=confidence)
-            # QA round 2: the agent's audit entry carries the door's verdict (not a bare AUTO for an order the door
-            # held) and links to the door's entry and the order.
-            link = gate._r(C.FRONT_DOOR, INFO, f"Sent to Valio's front door: {order['status'].replace('_', ' ')}"
-                           + (f", order {order['order_id']}" if order.get("order_id") else "") + ".", None, None,
-                           order_id=order.get("order_id"), door_audit_id=order["audit_id"], status=order["status"])
-            decision = decision.model_copy(update={"reasons": [*decision.reasons, link]})
-            audit(decision)
-            audit_id = order["audit_id"]
+            blocked = True
+        if orderable and not blocked and mandate:
+            try:  # product ids are unique here (duplicates asked above)
+                progress.phase("ordering")
+                order = await orders.place(buyer_id, requested, [SimpleNamespace(product_id=ln["product"]["id"],
+                                                                                 quantity=ln["quantity"]["quantity"])
+                                                                 for ln in orderable], mandate)
+            except HTTPException as e:
+                reasons.append(gate._r(C.ENGINE_ERROR, ASK, f"The front door couldn't take the order: {e.detail}", None,
+                                       "Retry in a moment."))
+                decision = _decision(run_id, reasons, alternatives, now, confidence)
+                audit_id = audit(decision)
+            else:
+                door = Decision.model_validate(order["decision"])
+                # The door's verdict on what it was sent, plus the agent's notes and the held items' reasons (so a partly
+                # ordered request still says ASK_HUMAN for the rest); the agent's other matches when the door has none.
+                rs = gate._sorted(door.reasons + [r for r in reasons if r.severity is INFO or id(r) in item_ids])
+                decision = Decision(**door.model_dump(exclude={"reasons", "primary_reason", "alternatives", "confidence",
+                                                               "outcome"}),
+                                    outcome={DECLINE: "DECLINE", ASK: "ASK_HUMAN", INFO: "AUTO"}[rs[0].severity] if rs else "AUTO",
+                                    reasons=rs, alternatives=door.alternatives or alternatives[:3], confidence=confidence)
+                # QA round 2: the agent's audit entry carries the door's verdict (not a bare AUTO for an order the door
+                # held) and links to the door's entry and the order.
+                link = gate._r(C.FRONT_DOOR, INFO, f"Sent to Valio's front door: {order['status'].replace('_', ' ')}"
+                               + (f", order {order['order_id']}" if order.get("order_id") else "") + ".", None, None,
+                               order_id=order.get("order_id"), door_audit_id=order["audit_id"], status=order["status"])
+                decision = decision.model_copy(update={"reasons": [*decision.reasons, link]})
+                audit(decision)
+                audit_id = order["audit_id"]
     if audit_id is None:  # nothing reached the door: the agent's own decision is the record
         audit_id = audit(decision)
     for ln in lines:

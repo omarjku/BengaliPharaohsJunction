@@ -45,13 +45,18 @@ Neither is ever counted as stock, and the flags differ:
 - `quantity_unreported` (Stock) raises no question. So a Stock line with an unreported quantity **can be confirmed
   automatically**.
 
-Why that's acceptable for the demo:
-- Every other control still applies: the auto-approve limit, the per-line cap, the weekly budget, whole units only,
-  and at most 100,000 per line.
-- A Stock line is fulfilled from Valio's own warehouse, so a shortfall is Valio's to handle, not an unknown
-  supplier's.
-
-*(Room 2 may refine this rationale.)*
+Why that's acceptable:
+- The question an ask would put to the chef ("is there enough?") is one only Valio can answer, and Valio holds the
+  item. For Terminal lines nobody at Valio can answer it, so those still ask.
+- What the buyer controls still holds the order for a human: the auto-approve limit, the per-line cap and the weekly
+  budget. The gate's own limits apply on every path: whole units only, at most 100,000 per line. Cut-off, delivery
+  date, sales block and the allergen and claim rules are checked as for any line.
+- Nothing pretends to know the amount. Quotes, substitutes and the signed quote facts show
+  `available_quantity: null`, never 9,999,999,999. Unreported stock never fills a split proposal, and it never
+  makes a "partial stock" calculation look satisfied.
+- The meaning of `9999999999` is our reading of the mock API, not confirmed by Valio. If Valio says it can also mean
+  "unknown", it becomes one line in `gate.check_line` (treat `quantity_unreported` like `quantity_unknown`). That
+  trades the automatic path for an ask on every Stock line.
 
 Files: `docs/valio-api-notes.md`, `backend/app/valio.py`, `backend/app/gate.py`, `backend/app/mandates.py`,
 `contracts/trade_contracts/quote.py`.

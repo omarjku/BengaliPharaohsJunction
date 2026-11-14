@@ -281,7 +281,7 @@ def test_decisions_down_follows_the_mandate_uncertainty_policy(shop1, monkeypatc
     gemini(monkeypatch, ITEM, ranked=["463335"])
     decisions["down"] = True
     body = run()  # lapland-kitchen: uncertainty_policy = ask
-    assert body["order"] is None and codes(body) == ["LOW_CONFIDENCE"]
+    assert body["order"] is None and set(codes(body)) <= {"LOW_CONFIDENCE", "QTY_SUSPICIOUS"}  # every unchecked guard asks
     assert body["lines"][0]["confidence"] is None and body["decision"]["confidence"] is None
 
 
@@ -640,3 +640,80 @@ def test_duplicate_order_within_30_minutes_asks_unless_again(shop1, monkeypatch)
     body = run("10 L lactose-free milk")
     assert body["order"] is None and any("You ordered this" in r["message"] for r in body["decision"]["reasons"])
     assert run("10 L lactose-free milk again")["order"]["status"] == "confirmed"  # the chef said again
+
+
+# --- Codex review of 1b85ada (docs/codex-log/room3.md entry 11): one test per kept finding
+
+
+def test_codex1_weak_first_batch_does_not_hide_a_strong_later_match(decisions):
+    hits = [{"id": str(i), "name_en": f"Coffee milk {i}" if i < 12 else "Whole milk 1 l", "brand": "V", "claims": [],
+             "allergens": {"contains": []}} for i in range(13)]
+
+    async def by_name(inp, qs):
+        return {k: {"type": "noul", "noul": 0.96 if "Whole" in inp else 0.71} for k in qs}
+    import app.agent as a
+    a._decisions, real = by_name, a._decisions
+    try:
+        assert asyncio.run(agent.match(agent._item("milk", 1, "L", []), hits))[0] == "12"
+    finally:
+        a._decisions = real
+
+
+def test_codex2_3_unchecked_guards_ask(shop1, monkeypatch, decisions):
+    gemini(monkeypatch, ITEM, ranked=["463335"])
+
+    async def partial(inp, qs):  # only the plausibility and steering questions fail
+        if set(qs) & {"plausible", "steering"}:
+            return None
+        return {k: {"type": "noul", "noul": 0.95} for k in qs}
+    monkeypatch.setattr(agent, "_decisions", partial)
+    body = run()
+    assert body["order"] is None
+    msgs = " ".join(r["message"] for r in body["decision"]["reasons"])
+    assert "Couldn't check whether" in msgs and "Couldn't check the request" in msgs
+
+
+def test_codex9_duplicate_guard_includes_the_day(shop1, monkeypatch):
+    gemini(monkeypatch, [dict(ITEM[0], amount=10)], ranked=["463335"])
+    assert run("10 L lactose-free milk")["order"]["status"] == "confirmed"
+    later = REQ + timedelta(days=1)
+    shop1.quotes["463335"] = quote("463335", avail_date=later)
+    r = c.post("/api/agent/run", json={"text": "10 L lactose-free milk", "requested_date": later.isoformat()},
+               headers={"X-Agent-Key": KEYS["lapland-kitchen"]}).json()
+    assert not any("You ordered this" in x["message"] for x in r["decision"]["reasons"])  # another day: not a duplicate
+
+
+def test_codex16_wrong_shaped_gemini_json_is_no_answer(monkeypatch):
+    class Resp:
+        def raise_for_status(self): pass
+        def json(self): return {"candidates": [{"content": {"parts": [{"text": "[{}]"}]}}]}
+
+    class Client:
+        is_closed = False
+        def __init__(self, **kw): pass
+        async def post(self, *a, **kw): return Resp()
+    monkeypatch.setattr(agent.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(agent.config, "GEMINI_API_KEY", "k")
+    monkeypatch.setattr(agent, "_HTTP", [None, None, None])
+    assert asyncio.run(agent._gemini("s", "p", {})) is None
+
+
+def test_spoken_number_words_ground_the_amount():
+    """Render live check: 'Kymmenen kiloa voita' (a voice transcript) was refused because 10 wasn't written as digits."""
+    item = {"query": "butter", "amount": 10.0, "unit": "kg", "source": "voita"}
+    assert agent.ungrounded("Kymmenen kiloa voita maanantaiksi.", agent.anchored("Kymmenen kiloa voita maanantaiksi.", item)) is None
+    assert agent.ungrounded("ten kilos of butter", {"query": "butter", "amount": 10.0, "unit": "kg"}) is None
+    assert agent.ungrounded("ten kilos of butter", {"query": "butter", "amount": 100.0, "unit": "kg"}) is not None
+
+
+def test_budget_starts_order_sized_and_only_a_menu_raises_it():
+    async def go():
+        agent.start_budget()
+        b = agent._BUDGET.get()
+        assert b == [agent.DECISIONS_PER_RUN, agent.DECISIONS_PER_RUN]
+        b[0] -= 10
+        agent.start_budget(agent.DECISIONS_PER_MENU)  # menu.propose under /ask
+        assert b == [agent.DECISIONS_PER_MENU - 10, agent.DECISIONS_PER_MENU]
+        agent.start_budget()  # run() under /ask never lowers or resets it
+        assert b[1] == agent.DECISIONS_PER_MENU
+    asyncio.run(go())
