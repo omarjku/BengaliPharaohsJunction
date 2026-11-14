@@ -177,3 +177,15 @@ def test_corrupt_store_fails_closed(lk):
     assert c.get("/api/mandate", headers=APPR).status_code == 503
     assert c.put("/api/mandate", json=body, headers=APPR).status_code == 503
     assert mandates.STORE.read_text() == "{"  # never overwritten (it may hold other buyers' rules)
+
+
+def test_doubtful_compiled_rule_becomes_an_open_question(lk, monkeypatch, decisions):
+    compiler_says(monkeypatch, GOOD)
+    decisions["scores"] = {"faithful": 0.1}
+    body = c.post("/api/mandate/compile", json={"text": TEXT}, headers=APPR).json()
+    qs = [q["question"] for q in body["open_questions"]]
+    assert 'Did you mean: "Auto-approve up to EUR 1,500.00 per order."?' in qs
+    assert c.put("/api/mandate", json={"mandate": body["proposed_mandate"]}, headers=APPR).status_code == 422
+    decisions["scores"] = {}
+    body = c.post("/api/mandate/compile", json={"text": TEXT}, headers=APPR).json()
+    assert not any(q["question"].startswith("Did you mean") for q in body["open_questions"])

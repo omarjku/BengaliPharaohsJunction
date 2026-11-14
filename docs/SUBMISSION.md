@@ -55,6 +55,13 @@ Valio's side and never sent by the agent. It uses fresh quotes.
 
 Codex was our adversary: 62 findings, 43 fixed, each with a test.
 
+**Optional lines, only if they ship before submission** (add them to both descriptions):
+- One input box: "One box for kebab shops, cafés and restaurants: type an order or paste a menu, and the agent
+  asks for the number of guests when it needs it."
+- Voice: "Push-to-talk via Gemini Live, so a chef mid-service can order hands-free and the agent catches the order
+  cut-off. Valio delivers in about 24 hours on agreed days, so the cut-off is what matters."
+- If voice ships, add "Gemini Live API" to Technologies used.
+
 ## Challenges
 - **Valio Aimo: Trusted Trade Agents** (main challenge)
 - **Best Use of Gemini API**

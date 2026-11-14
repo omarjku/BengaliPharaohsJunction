@@ -112,3 +112,14 @@ _CONFIDENCE_THRESHOLDS = {"lapland-kitchen": 0.8, "smoke-kitchen": 0.8}
 
 def confidence_threshold(buyer_id: str) -> float:
     return _CONFIDENCE_THRESHOLDS.get(buyer_id, DEFAULT_CONFIDENCE_THRESHOLD)
+
+
+# What the Gemini Decisions guards may know about each kitchen (plausibility of an order size). Server-side, like the
+# mandate. Persona: Valio's brief orders 1,000 L of milk at once, so the demo buyer is a resort's central kitchen.
+_KITCHENS = {"lapland-kitchen": "the central kitchen of a Lapland ski resort: hotel restaurants and catering, about "
+                                "1,500 meals a day in season, ordering a week of supplies at a time"}
+DEFAULT_KITCHEN = "a professional restaurant kitchen, about 100 covers a day, ordering a few days of supplies at a time"
+
+
+def kitchen(buyer_id: str) -> str:
+    return _KITCHENS.get(buyer_id, DEFAULT_KITCHEN)

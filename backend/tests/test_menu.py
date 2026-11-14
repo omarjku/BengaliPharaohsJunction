@@ -81,8 +81,9 @@ def test_injection_in_the_menu_is_flagged_and_unlisted_dishes_dropped(shop1, mon
 
 def test_more_than_20_ingredients_asks(shop1, monkeypatch):
     many = [{"name": f"spice{n}", "per_cover": 1, "unit": "g", "assumption": "x", "dietary": []} for n in range(25)]
-    fake_gemini(monkeypatch, [{"name": "Porridge", "ingredients": many}])
-    body = post("Porridge").json()
+    fake_gemini(monkeypatch, [{"name": "Porridge", "ingredients": many[:13]},
+                              {"name": "Pudding", "ingredients": many[13:]}])  # under the per-dish cap of 15
+    body = post("Porridge; Pudding").json()
     assert len(body["ingredients"]) == menu.MAX_INGREDIENTS
     assert any("25 ingredients" in r["message"] for r in body["decision"]["reasons"])
 
@@ -171,3 +172,31 @@ def test_order_lines_never_exceed_the_front_door_cap(shop1, monkeypatch):
     body = post("Porridge", covers=2000).json()  # 1,800 L: fine
     assert body["order_lines"] == [{"product_id": "463335", "quantity": 1800}]
     assert body["cart_total_cents"] == 1800 * 140
+
+
+def test_menu_steering_classifier_flags(shop1, monkeypatch, decisions):
+    fake_gemini(monkeypatch, [PORRIDGE])
+    decisions["scores"] = {"steering": 0.95}
+    body = post("Porridge with milk").json()
+    assert any("This menu seems to try" in r["message"] for r in body["decision"]["reasons"])
+
+
+def test_menu_assumptions_are_checked_and_flagged(shop1, monkeypatch, decisions):
+    fake_gemini(monkeypatch, [PORRIDGE, PUDDING])
+    decisions["scores"] = {"amount": 0.2}  # Gemini doubts every per-portion amount
+    body = post("Porridge with milk; Milk pudding with butter").json()
+    assert all(a["flagged"] and a["check"] == 0.2 for a in body["assumptions"])
+    assert sum("Check this assumption" in r["message"] for r in body["decision"]["reasons"]) == 3
+    decisions["scores"] = {}
+    body = post("Porridge with milk").json()
+    assert body["assumptions"][0]["flagged"] is False and body["assumptions"][0]["check"] == 0.95
+
+
+def test_menu_parse_is_capped(shop1, monkeypatch, decisions):
+    """Security review: a steered parse can't fan out hundreds of paid checks."""
+    dish = {"name": "Porridge", "ingredients": [{"name": f"spice{n}", "per_cover": 1, "unit": "g", "assumption": "x",
+                                                  "dietary": []} for n in range(40)]}
+    fake_gemini(monkeypatch, [dict(dish, name=f"Porridge {n}") for n in range(30)])
+    post("Porridge " + "; ".join(f"Porridge {n}" for n in range(30)))
+    checks = [q for _, q in decisions["calls"] if "needed" in q]
+    assert len(checks) <= menu.MAX_DISHES * menu.MAX_PER_DISH
