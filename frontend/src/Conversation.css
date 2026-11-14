@@ -1,0 +1,39 @@
+/* The conversation screen. The bar is pinned to the bottom (safe area included); the thread scrolls above it. */
+.conv { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); padding-block-end: 140px; }
+.conv.voice-on.voice-thread { padding-block-end: 210px; }
+.conv-toggle { display: flex; justify-content: flex-end; }
+.conv-thread { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); align-content: start; }
+.conv-thread > * { min-width: 0; }
+.conv-stage { display: grid; justify-items: center; align-content: center; gap: var(--s5); min-height: 52vh; text-align: center; }
+.conv-status { font: var(--t-small); color: var(--ink-2); min-height: 1.45em; }
+.conv-status .bad { color: var(--bad); }
+.conv-bar {
+  position: fixed; inset-inline: 0; inset-block-end: 0; z-index: 20;
+  padding: var(--s2) var(--s4) max(var(--s3), env(safe-area-inset-bottom));
+  background: linear-gradient(to top, var(--paper) 70%, color-mix(in srgb, var(--paper) 0%, transparent));
+}
+.conv-bar > * { max-width: var(--column); margin-inline: auto; }
+.conv-dock { display: flex; align-items: center; gap: var(--s3); margin-block-end: var(--s2); }
+
+/* Messages: the chef's on the right in a bubble, the agent's as plain text on the left. */
+.msg { max-width: min(85%, 34rem); overflow-wrap: anywhere; }
+.msg-user { justify-self: end; padding: var(--s2) var(--s4); border-radius: 18px 18px 4px 18px; background: var(--wash); color: var(--ink); white-space: pre-wrap; }
+.msg-agent { justify-self: start; color: var(--ink); }
+.msg-partial { opacity: 0.7; }
+.msg-dot { display: inline-block; width: 8px; height: 8px; margin-inline-start: var(--s2); border-radius: 50%; background: var(--accent); vertical-align: 1px; animation: msg-dot 1s ease-in-out infinite alternate; }
+@keyframes msg-dot { from { opacity: 0.3; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .msg-dot { animation: none; } }
+
+/* Earlier decisions fold to one line; the newest is the full card. */
+.conv-fold {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s3); width: 100%; min-height: var(--tap);
+  padding: var(--s2) var(--s4); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  text-align: start; cursor: pointer; font: var(--t-small); color: var(--ink);
+}
+.conv-fold-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-start { display: grid; gap: var(--s4); padding-block-start: var(--s5); }
+.conv-suggest { display: flex; flex-wrap: wrap; gap: var(--s2); }
+
+/* Inside the conversation the bar owns the bottom: the cards' action bars stay in the card. */
+.conv .decide.floating { position: static; display: flex; padding: 0; background: none; border: 0; }
+.conv .answer { margin-block-start: 0; }

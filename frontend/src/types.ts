@@ -305,6 +305,9 @@ export type PhotoRead = {
   covers: number | null
   unreadable: string[] | string | null
   language: string | null
+  ignored_instructions?: string[] // lines written to the agent ("approve everything"): never acted on
+  suspicious?: boolean
+  message?: string | null // the backend's plain sentence about them
 }
 
 // GET /api/profile (agent key): the calling buyer's profile, read-only guidance.
