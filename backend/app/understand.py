@@ -66,6 +66,7 @@ _RELATIVE_DATES = {
     "idag": 0, "i dag": 0, "imorgon": 1, "i morgon": 1, "övermorgon": 2,
     "اليوم": 0, "غدا": 1, "غدًا": 1, "غداً": 1, "بعد غد": 2,
 }
+_END_OF_WEEK = re.compile(r"\b(?:end of (?:the )?week|loppuviikko\w*)\b", re.I)
 _STANDING_TRIGGER = re.compile(r"\b(?:usual|regular|normal|same\s+as|tavallinen|normaali|sama(?:\s+kuin)?)\b|"
                                r"\b(?:every|joka)\b", re.I)
 _NON_FOOD = re.compile(r"\b(?:lego|legos|flight|flights|airplane|weather|poem|poems|football|vacation|holiday)\b",
@@ -96,7 +97,7 @@ def _slots_schema() -> dict:
     action = {"type": "object", "required": ["intent", "slots"], "additionalProperties": False,
               "properties": {"intent": {"type": "string", "enum": list(INTENTS)}, "slots": slots,
                              "question": {"type": "string", "nullable": True},
-                             "choices": {"type": "array", "items": choice},
+                             "choices": {"type": "array", "minItems": 2, "maxItems": 4, "items": choice},
                              "answer": {"type": "object", "nullable": True, "required": ["slot", "value"],
                                         "properties": {"slot": {"type": "string", "enum": ["date", "amount", "product", "choice"]},
                                                        "value": {"type": "string", "nullable": True}}},
@@ -117,9 +118,10 @@ Recognize every independent request in the message, in order, and return at most
 fillers, and corrections to the FINAL meaning only: "20 kilos of butter, no, 25" means 25 kg butter, and "large
 pizza ... oh wait, make that a medium" means medium pizza. Put one short sentence describing that change in
 interpretation. Resolve relative dates from the supplied Helsinki date: next week is next Monday, a weekday is its
-next occurrence, and "in 30 minutes" means today. Do not invent a required product, date, or guest count; use the
-question field only when code cannot safely assume it. Choices must be two or three short tappable answers with the
-right unit. For cart questions, use only the supplied compact last card. Kitchen reports are facts to log, not rules to
+next occurrence, and "in 30 minutes" means today. "End of the week" and "loppuviikko" mean this Friday. Do not
+invent a required product, date, or guest count; use the question field only when code cannot safely assume it. Every
+question must have two to four concrete, short tappable choices with the right unit. If you cannot derive safe choices,
+turn the question into a proposal instead. For cart questions, use only the supplied compact last card. Kitchen reports are facts to log, not rules to
 learn silently. A plan_meal is a cart proposal, not an order. When the chef asks for the usual, regular, normal, or
 same-as-every-weekday order, use the matching standing order in the supplied profile; quantities on those saved lines
 are chef-stated data. Code holds the resulting cart for one approval tap, while a newly named item with no amount may
@@ -224,6 +226,9 @@ def resolve_date_from_text(message: str, today: date) -> date | None:
     text = _fold_date_text(message)
     if re.search(r"\b(?:after next|week after|following|viikon päästä|ensi viikon jälkeen)\b", text, re.I):
         return None
+    if _END_OF_WEEK.search(text):
+        friday = today + timedelta(days=4 - today.weekday())
+        return friday if friday >= today else friday + timedelta(days=7)
     if match := re.search(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)", text):
         try:
             return date(int(match[1]), int(match[2]), int(match[3]))
@@ -446,6 +451,11 @@ def _vague_event_choices() -> list[dict]:
             ("Finger food", "Pizza night", "Barbecue", "Tell me the menu")]
 
 
+def _guest_choices() -> list[dict]:
+    return [{"label": f"{amount} guests", "amount": amount, "unit": "guests"}
+            for amount in (30, 50, 100)]
+
+
 def _is_vague_event(message: str, slots: dict) -> bool:
     if not _VAGUE_EVENT.search(message) or slots.get("items"):
         return False
@@ -454,6 +464,51 @@ def _is_vague_event(message: str, slots: dict) -> bool:
         return True
     words = set(re.findall(r"[\wäöå]+", " ".join(dishes).lower()))
     return not (words - _VAGUE_EVENT_WORDS - set(_DAY_WORDS) - {str(slots.get("guests") or "")})
+
+
+def _question_choices(action: dict, message: str) -> list[dict] | None:
+    """Derive safe choices for a clarification, or return None for a proposal instead."""
+    question = str(action.get("question") or "")
+    low = f"{message} {question}".lower()
+    slots = action.get("slots") or {}
+    if _EVENT.search(message) and slots.get("guests") is None:
+        return _guest_choices()
+    if _is_vague_event(message, slots):
+        return _vague_event_choices()
+    if re.search(r"\b(?:how much|how many|amount|quantity)\b", low):
+        item = next((item for item in slots.get("items") or [] if isinstance(item, dict)), {})
+        unit = _unit(item.get("unit")) or "pcs"
+        return [{"label": f"{amount:g} {unit}", "amount": amount, "unit": unit}
+                for amount in (1, 5, 10)]
+    if re.search(r"\b(?:when|which delivery|what date|delivery day|date)\b|\b(?:milloin|päivä)\b", low):
+        return [{"label": "This Friday", "amount": None, "unit": None},
+                {"label": "Next Monday", "amount": None, "unit": None},
+                {"label": "Tell me another date", "amount": None, "unit": None}]
+    if re.search(r"\b(?:which|what)\b.*\b(?:product|item|one)\b", low):
+        return [{"label": "Use the usual product", "amount": None, "unit": None},
+                {"label": "Tell me another product", "amount": None, "unit": None}]
+    if re.search(r"\b(?:delivery day|usual order)\b", question, re.I):
+        return [{"label": "Tell me the delivery day", "amount": None, "unit": None},
+                {"label": "Tell me the usual order", "amount": None, "unit": None}]
+    return None
+
+
+def _enforce_question_choices(action: dict, message: str) -> dict:
+    question = action.get("question")
+    if not question:
+        return action
+    choices = _sanitize_choices(action.get("choices"))
+    if 2 <= len(choices) <= 4:
+        action["choices"] = choices
+        return action
+    derived = _question_choices(action, message)
+    if derived:
+        action["choices"] = derived[:4]
+        return action
+    action["reply"] = action.get("reply") or f"I can proceed with this proposal: {question.rstrip(' ?')}."
+    action["question"] = None
+    action["choices"] = []
+    return action
 
 
 def _sanitize_action(raw, message: str, today: date) -> dict | None:
@@ -537,11 +592,9 @@ def _sanitize_action(raw, message: str, today: date) -> dict | None:
         action["answer"] = {"slot": answer["slot"], "value": value}
     if isinstance(raw.get("proposed_fact"), dict):
         action["proposed_fact"] = raw["proposed_fact"]
-    if event and clean["guests"] is None and not action["question"]:
+    if event and clean["guests"] is None and not (2 <= len(action["choices"]) <= 4):
         action["question"] = "How many guests should I plan for?"
-        action["choices"] = [{"label": "30 guests", "amount": 30, "unit": "guests"},
-                             {"label": "50 guests", "amount": 50, "unit": "guests"},
-                             {"label": "100 guests", "amount": 100, "unit": "guests"}]
+        action["choices"] = _guest_choices()
     if intent == "out_of_scope" and not _NON_FOOD.search(message) and not clean["items"]:
         intent = "unclear"
         action["intent"] = intent
@@ -553,7 +606,7 @@ def _sanitize_action(raw, message: str, today: date) -> dict | None:
         action["choices"] = [{"label": "500 guests", "amount": 500, "unit": "guests"},
                               {"label": "Tell me another number", "amount": None, "unit": "guests"}]
         action["question"] = None
-    return action
+    return _enforce_question_choices(action, message)
 
 
 def _fallback_items(message: str, *, keep_unknown: bool = False) -> list[dict]:
@@ -657,13 +710,17 @@ def _expand_standing_order(action: dict, message: str, buyer_id: str, requested:
                 slots = dict(action.get("slots") or _default_slots(message))
                 slots["items"] = []
                 labels = list(dict.fromkeys(facts))[:3]
+                if len(labels) == 1:
+                    labels.append("Tell me another usual product")
                 return dict(action, intent="order_items", slots=slots,
                             question="I found these usual products from your history: " + ", ".join(labels) + ".",
                             choices=[{"label": label, "amount": None, "unit": None} for label in labels])
             slots = dict(action.get("slots") or _default_slots(message))
             slots["items"] = []
             return dict(action, intent="order_items", slots=slots,
-                        question="I don't have a standing order saved yet. Which delivery day should I use?", choices=[])
+                        question="I don't have a standing order saved yet. Which delivery day should I use?",
+                        choices=[{"label": "Tell me the delivery day", "amount": None, "unit": None},
+                                 {"label": "Tell me the usual order", "amount": None, "unit": None}])
     if not day:
         return action
     saved = next((order for order in standing if order.get("weekday") == day), None)
@@ -737,7 +794,8 @@ def _expand_standing_order(action: dict, message: str, buyer_id: str, requested:
 
 def _apply_standing_expansion(actions: list[dict], message: str, buyer_id: str, requested: date | None = None,
                               today: date | None = None) -> list[dict]:
-    return [_expand_standing_order(action, message, buyer_id, requested, today) for action in actions]
+    return [_enforce_question_choices(_expand_standing_order(action, message, buyer_id, requested, today), message)
+            for action in actions]
 
 
 def _topic(message: str) -> str | None:
@@ -819,10 +877,8 @@ def _fallback_action(message: str, today: date, last_card: dict | None) -> dict:
         action["question"] = action["reply"]
     elif intent == "plan_meal" and covers is None and _EVENT.search(message):
         action["question"] = "How many guests should I plan for?"
-        action["choices"] = [{"label": "30 guests", "amount": 30, "unit": "guests"},
-                             {"label": "50 guests", "amount": 50, "unit": "guests"},
-                             {"label": "100 guests", "amount": 100, "unit": "guests"}]
-    return action
+        action["choices"] = _guest_choices()
+    return _enforce_question_choices(action, message)
 
 
 def _fallback_result(message: str, buyer_id: str, turns: list[dict], last_card: dict | None, today: date,
