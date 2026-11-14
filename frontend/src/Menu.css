@@ -28,3 +28,6 @@
 .mt-spare-edit { display: inline-flex; align-items: center; gap: var(--s1); }
 .mt-spare-why { flex-basis: 100%; }
 .mt-spare-total { color: var(--ink-2); margin-block-end: var(--s3); }
+/* Pantry: what the kitchen already has, and the coverage of the cart in one sentence. */
+.mt-have { margin-block: var(--s1); }
+.mt-coverage { color: var(--ink-2); margin-block-end: var(--s2); }

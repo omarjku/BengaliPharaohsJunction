@@ -412,6 +412,11 @@ export const UI = {
     yours: 'your portion',
     updating: 'Updating the cart…',
     undoPortions: 'Undo',
+    youHave: (matched: string, thisOrder: boolean) => `You have this (${matched}${thisOrder ? ', this order only' : ''}), so it's left out.`,
+    addAnyway: 'Add anyway',
+    addAnywayOn: 'Will be added: Update the cart',
+    coverage: (total: string, inCart: number, all: number, check: number, checkTotal: string, have: number) =>
+      [`${total} for ${inCart} of ${all} ingredients`, have > 0 && `${have} you already have`, check > 0 && `${check} need your look, about ${checkTotal}`].filter(Boolean).join('; ') + '.',
     update: (n: number) => `Update the cart (${n} ${n === 1 ? 'change' : 'changes'})`,
     spareLine: (needed: string, pct: string) => `Needed ${needed}, plus ${pct}% spare`,
     spareCost: (m: string) => `(${m} beyond what the recipe needs)`,
@@ -521,6 +526,8 @@ export const UI = {
     orbToBig: 'Voice only',
     muted: 'Microphone off.',
     folded: (status: string, what: string) => `${status}: ${what}`,
+    pantryRead: (items: string) => `I can see you have: ${items}. I'll leave those out of your next menu cart.`,
+    cartNow: (total: string) => `Cart updated: ${total}. Check the assumptions before ordering.`,
     open: 'Open',
   },
   talk: {
