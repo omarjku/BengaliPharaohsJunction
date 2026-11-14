@@ -136,13 +136,13 @@ show request → Gemini or fallback parse → catalogue → Valio quote → quan
 allergen exclusions, and uses Gemini to distinguish the requested product from
 keyword neighbours. `backend/app/quantity.py` converts amounts without silently
 guessing. The demo story, the same in every doc (measured live on Sun 15 Nov):
-- **1000 L lactose-free milk:** the cheapest milk Gemini is confident about (at or
-  above the 0.70 threshold) wins. It is within the EUR 1,500 limit, so it is
-  **confirmed automatically**.
-- **1500 L:** over the EUR 1,500 limit, so the door holds it (`pending_approval`),
-  and the approver key confirms it.
-- **Gemini's doubt:** for "10 kg sugar for baking", 500 × 5 g sachets score below 0.5
-  and caster sugar ≈0.9, so the agent picks the caster sugar.
+- **"100 litraa laktoositonta maitoa maanantaiksi"** (typed or spoken): lactose-free
+  semi-skimmed milk, EUR 156, **confirmed automatically**. Among the milks Gemini is
+  confident about, confidence leads and price only breaks near-ties.
+- **1000 L lactose-free milk:** the same milk, EUR 1,560: EUR 60 over the EUR 1,500
+  limit, so the door holds it (`pending_approval`) and the approver key confirms it.
+- **Judgment:** "10 kg sugar for baking" → caster sugar. In the labelled evaluation,
+  5 g sugar sachets for baking score under 0.4, and coffee milk is a trap.
 - The second path is menu to cart. Exact scores per run are in `docs/GEMINI.md`.
 Details: [`docs/m1-e2e.md`](docs/m1-e2e.md), [`docs/GEMINI.md`](docs/GEMINI.md).
 

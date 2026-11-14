@@ -37,12 +37,12 @@ The door re-checks every order, from any agent, against the buyer's mandate. Uns
 
 ### 4. Demo
 Screens: `3-needs-ok-390.png` (held for the chef), `4-approved-390.png` (approved on a phone).
-**One box, English or Finnish. 1000 L milk → ordered alone. 1500 L → chef approves. Menu → "how many guests?"**
+**One box, typed or spoken, in Finnish too. 100 L milk → ordered alone. 1000 L → €60 over → chef approves. Menu → cart.**
 
 > **Notes:** Live, measured Sun 15 Nov:
-> - 1000 L: the cheapest milk Gemini is confident about (≥ 0.70), within the limit, AUTO confirmed.
-> - 1500 L: over the EUR 1,500 limit (SPEND_OVER_LIMIT), held. The agent key gets 401 on approve; the approver key
->   confirms.
+> - "100 litraa laktoositonta maitoa": semi-skimmed, EUR 156, AUTO confirmed.
+> - 1000 L: EUR 1,560, EUR 60 over the limit, held. The agent key gets 401 on approve; the approver key confirms.
+> - Menu for 80: a cart of about EUR 881, 7 lines, always asks.
 > - Exact products and prices of the latest live run: `docs/m1-e2e.md` and `docs/GEMINI.md`.
 > - Menu: always ASK_HUMAN (MENU_ASSUMPTIONS).
 
@@ -98,7 +98,7 @@ One box for kebab shops, cafés and restaurants, typed or spoken. Same door, sam
 | **0.7** | **14** | **0** |
 | 0.8 | 12 | 0 |
 
-Sugar sachets for baking: **below 0.5**. Caster sugar: **≈0.9**.
+Sugar sachets for baking: **below 0.4** (eval). Coffee milk for "milk": a trap our QA caught, now in the eval.
 
 > **Notes:**
 > - Gemini Decisions API: calibrated P(yes) on 30 hand-labelled cases with real Valio products.
