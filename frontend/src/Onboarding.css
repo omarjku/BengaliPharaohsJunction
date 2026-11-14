@@ -1,0 +1,62 @@
+/* Onboarding: one calm column, the same tokens as index.css (DESIGN.md). No cards, no shadows; type and space carry
+   the hierarchy. Every target is at least 48 px (--tap). */
+.ob { display: grid; gap: var(--s5); max-width: var(--column); margin-inline: auto; padding-block: var(--s5) var(--s7); }
+.ob-title { font: var(--t-title); outline: none; }
+.ob-sub { font: var(--t-small); color: var(--ink-2); margin-block-start: calc(-1 * var(--s3)); }
+.ob-note { font: var(--t-small); color: var(--ink); background: var(--warn-wash); border-radius: var(--radius); padding: var(--s3) var(--s4); }
+.ob-note.bad { background: none; padding: 0; color: var(--bad); }
+.ob-error { font: var(--t-small); color: var(--bad); }
+
+/* Two ways in: plain rows, the whole row is the target. */
+.ob-start { display: grid; gap: var(--s3); }
+.ob-path {
+  min-height: var(--tap); padding: var(--s3) var(--s4); display: grid; gap: var(--s1); text-align: start;
+  background: var(--surface); border: 1px solid var(--field-line); border-radius: var(--radius); cursor: pointer;
+  transition: transform 140ms var(--ease-out), border-color 140ms ease; -webkit-tap-highlight-color: transparent;
+}
+.ob-path:active { transform: scale(0.98); background: var(--wash); }
+.ob-path-title { font-weight: 600; }
+.ob-path-help { font: var(--t-small); color: var(--ink-2); }
+
+/* Questions: label above, help under it, then the control. */
+.ob-list { display: grid; gap: var(--s5); }
+.ob-q { display: grid; gap: var(--s2); border: 0; margin: 0; padding: 0; min-width: 0; }
+.ob-label { font-weight: 600; padding: 0; }
+.ob-q.big .ob-label { font: var(--t-title); }
+.ob-input, .ob-textarea {
+  width: 100%; min-height: var(--tap); padding: var(--s3) var(--s4); border: 1px solid var(--field-line);
+  border-radius: var(--radius); background: var(--surface); font: var(--t-body);
+}
+.ob-textarea { resize: vertical; min-height: 140px; }
+.ob-input:focus, .ob-textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+.ob-input[aria-invalid='true'] { border-color: var(--bad); }
+.ob-mic { margin-block-start: var(--s2); }
+
+/* Choices: large tap targets that wrap; the selected one says so in colour AND in its state (aria-pressed/checked). */
+.ob-options { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.ob-option {
+  min-height: var(--tap); padding: 0 var(--s4); border: 1px solid var(--field-line); border-radius: var(--radius);
+  background: var(--surface); cursor: pointer; font: var(--t-body); -webkit-tap-highlight-color: transparent;
+  transition: transform 140ms var(--ease-out), background-color 140ms ease, border-color 140ms ease;
+}
+.ob-option:active { transform: scale(0.97); }
+.ob-option[aria-pressed='true'], .ob-option[aria-checked='true'] {
+  border-color: var(--accent); background: rgba(11, 92, 173, 0.08); color: var(--accent); font-weight: 600;
+}
+.ob-option[aria-pressed='true']::before, .ob-option[aria-checked='true']::before { content: '✓ '; }
+.ob-q.big .ob-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+
+.ob-actions { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+.ob-skip { justify-self: start; padding-inline: 0; }
+.ob-unclear { list-style: disc; padding-inline-start: var(--s5); margin-block-start: var(--s1); }
+
+@media (max-width: 480px) {
+  .ob { padding-inline: var(--s4); }
+  .ob-actions .btn:not(.plain) { flex: 1 1 100%; }
+}
+@media (hover: hover) {
+  .ob-path:hover, .ob-option:hover { border-color: var(--accent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ob-path, .ob-option { transition: none; }
+}
