@@ -56,7 +56,8 @@ Set the variables from `.env.example`:
 | `APPROVER_KEYS` | Comma-separated `key=buyer_id[:name]` entries for human approvers. |
 | `VALIO_ADMIN_KEYS` | Comma-separated `key=valio[:name]` entries for Valio staff: read-only `GET /api/admin/audit` across all buyers (`X-Valio-Admin-Key`). |
 | `FRONT_DOOR_SIGNING_KEY` | Base64 of a 32-byte Ed25519 seed; signs every order response (public key at `/.well-known/front-door-keys.json`, check with `POST /api/verify`; see `docs/STANDARDS.md`). Unset = ephemeral key. |
-| `DATA_DIR` | Directory for the front door's state: orders, audit trail, idempotency keys, saved mandates. Default: the repo's `data/`. On Render, mount a persistent disk (e.g. `/var/data`) and set this so state survives redeploys. |
+| `DATA_DIR` | Directory for all front-door state: orders, audit trail, idempotency keys and saved mandates/rules. Default: the repo's `data/`. On Render, mount a persistent disk (e.g. `/var/data`) and set this. |
+| `TRUST_X_FORWARDED_FOR` | Set `1` behind a proxy that appends the client IP (Render, where it's set), so per-IP rate limits see real callers. Leave it unset when the API is reachable directly. |
 
 Use long random values for the front-door keys. `AGENT_KEYS` authenticates
 `X-Agent-Key`; `APPROVER_KEYS` authenticates `X-Approver-Key`. If either key

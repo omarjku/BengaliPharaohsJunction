@@ -231,9 +231,9 @@ Files: `backend/app/main.py`, `backend/app/auth.py`, `backend/app/agent.py`,
 
 ### 12. State lives in JSON files under `DATA_DIR`
 
-**Data / behaviour.** Orders, the audit trail, idempotency keys and saved
-mandates are JSON files under `DATA_DIR` (default: the repo's `data/`,
-`backend/app/config.py`).
+**Data / behaviour.** All state (orders, the audit trail, idempotency keys and
+saved buyer mandates) lives in JSON files under `DATA_DIR` (default: the repo's
+`data/`, `backend/app/config.py`).
 
 **Assumption.** Without a persistent disk, that state is lost on every
 redeploy: Render redeploys on each push to `main`. It is also lost on a
@@ -247,13 +247,15 @@ file and `os.replace`, appends audit entries under a file lock, and keeps
 idempotency records for 24 hours (`IDEM_TTL`). There is no database
 transaction or retention job. Postgres is next (NEXT-STEPS #1).
 
-Files: `backend/app/config.py`, `backend/app/orders.py`, `backend/app/main.py`.
+Files: `backend/app/config.py`, `backend/app/orders.py`, `backend/app/mandates.py`, `backend/app/main.py`.
 
 ### 13. Rate limits, the lock and storage assume one worker
 
 **Data / behaviour.** The limits are 30 requests per minute per agent key, 120
 requests per minute per human key, and 120 per minute per IP. Over the limit,
-the door answers `429` with `Retry-After` (`backend/app/ratelimit.py`). These
+the door answers `429` with `Retry-After` (`backend/app/ratelimit.py`). Per-IP
+limits use the client address from `X-Forwarded-For` only when
+`TRUST_X_FORWARDED_FOR=1` (set on Render, behind its proxy). These
 token buckets, the order lock and the order cache all live in process memory.
 
 **Assumption.** The API runs as exactly one uvicorn worker (`dev.sh` starts
