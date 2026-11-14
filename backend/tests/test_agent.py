@@ -265,3 +265,49 @@ def test_substitutes_carry_their_confidence(shop1, monkeypatch, decisions):
     alts = run()["decision"]["alternatives"]
     assert alts and all("Gemini Decisions" in a["summary"] for a in alts)
     assert "check before accepting" in alts[-1]["summary"] and "0.30" in alts[-1]["summary"]  # least acceptable last
+
+
+# --- M2: Lapland reliability floor + Finnish preference (Room 1)
+def test_demo_mandate_has_reliability_floor_and_soft_finnish_preference():
+    from app import mandates
+    m = mandates.get("lapland-kitchen")
+    assert [(r.kind, r.value) for r in m.hard_rules if r.kind == "min_delivery_reliability"] == [("min_delivery_reliability", 0.9)]
+    assert any("Finnish" in g.text for g in m.guidance)  # guidance, not a hard rule: it can't block or ask
+
+
+@pytest.mark.parametrize("rel, code", [(0.5, "LOW_RELIABILITY"), (None, "DATA_MISSING")])
+def test_reliability_floor_holds_order_for_the_human(shop1, monkeypatch, rel, code):
+    shop1.products["463335"]["delivery_reliability"] = rel     # Lapland mandate: on time at least 90%
+    gemini(monkeypatch, ITEM, ["463335"])
+    body = run()
+    assert body["order"]["status"] == "pending_approval" and code in codes(body)
+
+
+def _origins(shop, eila="fi", alt="se"):
+    shop.products["463335"]["origin"], shop.products["476240"]["origin"] = eila, alt
+
+
+def test_finnish_preference_breaks_a_near_tie_and_says_so(shop1, monkeypatch):
+    from conftest import quote
+    _origins(shop1)
+    shop1.quotes["476240"] = quote("476240", price=1.35)       # 3.6% cheaper, Gemini's first pick: still "similar"
+    gemini(monkeypatch, ITEM, ["476240", "463335"])
+    body = run()
+    alt, eila = body["lines"]
+    assert eila["chosen"] and not alt["chosen"] and "Finnish-origin (your preference)" in eila["why"]
+    assert eila["facts"] == {"delivery_reliability": 1.0, "carbon_kg_per_kg": None, "origin": "fi"}
+    assert "on time 100%" in eila["why"] and "origin FI" in eila["why"]
+
+
+def test_finnish_preference_never_beats_a_clearly_cheaper_product(shop1, monkeypatch):
+    _origins(shop1)                                             # 476240 is EUR 1.20 vs Eila 1.40: 14% cheaper
+    gemini(monkeypatch, ITEM, ["463335", "476240"])
+    eila, alt = run()["lines"]
+    assert alt["chosen"] and not eila["chosen"] and "Finnish" not in alt["why"]
+
+
+def test_reliability_floor_decides_and_the_why_says_so(shop1, monkeypatch):
+    shop1.products["476240"]["delivery_reliability"] = 0.5     # cheaper, but on time only half the time
+    gemini(monkeypatch, ITEM, ["476240", "463335"])
+    alt, eila = run()["lines"]
+    assert eila["chosen"] and "Chosen over Eila milk drink 1 l alt" in eila["why"] and "below your 90%" in eila["why"]
