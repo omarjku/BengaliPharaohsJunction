@@ -101,6 +101,14 @@ async def ask(text: str, requested: date | None, buyer_id: str) -> dict:
         classify(text), agent.parse(text), agent.steering(text),
         agent.date_intent(text, guess, today) if guess else agent.none())
     t1 = time.monotonic()
+    # An attack must never look like a normal clarification: instruction-like, authority or billing text is
+    # answered with the injection reason before any date / guests / intent question (QA round 2).
+    if (agent._INSTRUCTION.search(text) or agent._BILLING.search(text)
+            or (steer is not None and steer >= agent.INJECTION_MAX)):
+        return _ask(intent, covers, requested or stated, "request" if requested else "text" if stated else None,
+                    "This request seems to try to steer the agent (instructions, approvals, billing or authority "
+                    "claims). Nothing was ordered.", C.LOW_CONFIDENCE,
+                    "Send just the products, amounts and date; rules change only through the Rules screen.")
     if intent == "unclear":  # off-topic first: "what's the weather like?" isn't a date question (QA round 2)
         return _ask(intent, covers, requested or stated, "request" if requested else "text" if stated else None,
                     "I can only help with ordering from Valio. What do you need?", C.QTY_AMBIGUOUS,

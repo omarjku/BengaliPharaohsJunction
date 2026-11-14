@@ -593,6 +593,13 @@ async def match(item: dict, hits: list[dict]) -> list[str] | None:
     return [pid for _, _, pid in sorted(found, key=lambda x: (-x[0], x[1]))][:MATCH_TOP]
 
 
+# Bare everyday nouns → what a kitchen usually means by them (searched first; the plain word's hits follow).
+EVERYDAY = {"cream": ["whipping cream", "cooking cream"], "kerma": ["kuohukerma", "ruokakerma", "whipping cream"],
+            "butter": ["butter 500 g", "butter"], "voi": ["voi 500 g", "butter"], "milk": ["milk 1 l"],
+            "maito": ["maito 1 l", "milk 1 l"], "flour": ["wheat flour"], "jauho": ["vehnäjauho", "wheat flour"],
+            "sugar": ["granulated sugar", "caster sugar"], "sokeri": ["sokeri 1 kg", "granulated sugar"]}
+
+
 async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[str], bool]:
     """Catalogue hits for one item (claims + allergen filters), narrowed and ordered by Gemini. → (ids, used_gemini)."""
     excl = sorted(set(item["exclude_allergens"]) | excluded)
@@ -605,6 +612,12 @@ async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[st
     for q in tries:
         if hits := catalogue.search(q, item["claims"], excl, False, None, SEARCH_LIMIT):
             break
+    if expansions := EVERYDAY.get(" ".join(map(_singular, words)).lower()):
+        # A bare everyday noun ("cream", "kerma") lists ice cream, sour cream and coconut cream first; the plain
+        # products a kitchen means come first here, the plain word's own hits after (QA round 2: "I need cream ASAP"
+        # → "Valio doesn't seem to stock 'cream'"; "kerma" → coconut cream). The matcher still judges every hit.
+        pool = [p for q in expansions for p in catalogue.search(q, item["claims"], excl, False, None, MATCH_HITS)]
+        hits = list({p["id"]: p for p in pool + hits}.values())[:SEARCH_LIMIT]
     if not hits and len(words) > 1:
         # No product has every word: rank products by how many of the words they have ("döner kebab meat" → the döner
         # kebab skewers first, then kebab meat), instead of taking whichever single word hits first.
