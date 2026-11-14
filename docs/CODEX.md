@@ -34,38 +34,62 @@ they land.
 
 | Model | Effort | Used for |
 |---|---|---|
-| `gpt-reserve` | max | Drafts and design attacks |
-| `gpt-5.6-terra` | ultra (once high) | Adversarial reviews and the docs fact-check |
-| `gpt-6-luna` | high | Control-room reviews: the integration branch, and a blind second opinion on PR #8 |
+| `gpt-reserve` | max | 11 runs: drafts, design attacks and the `/ask` review |
+| `gpt-5.6-terra` | ultra (once high) | 15 runs: adversarial reviews, the docs fact-check and the judge audit |
+| `gpt-6-luna` | high | 2 runs: the integration-branch review and the blind second opinion on PR #8 |
 
 ## Run by run
 
+The table contains all 28 numbered Codex runs in the room logs after excluding the three automated security
+reviews by the security-guidance plugin, the Claude black-box QA entry, and Claude self-review notes. The raw files
+in `control-room/` are outputs for the control-room rows, not extra runs. "Not stated" means the log gives no
+number.
+
 "Kept" means fixed in our code, or (for docs) the claim was corrected.
 
-| Room | Run | Model | Findings | Kept | Rejected | Other | Fix commit |
-|---|---|---|---|---|---|---|---|
-| 1 docs | Draft README, ASSUMPTIONS, STANDARDS, NEXT-STEPS (4 runs) | reserve/max | 4 drafts | 4 drafts, fact-checked | 2 claims removed | 3 fixes by Claude | `5ed1e86` |
-| 1 docs | Fact-check every doc claim against the code | terra/ultra | 14 | 12 | 2 | | `019fd67` |
-| 1 docs | Review of the M2 ranking and "why" text | terra/ultra | 5 | 4 (1 code bug) | 1 | | `019fd67` |
-| 2 front door | Adversarial review of the front door | terra/ultra | 7 | 2 | 1 (by team decision D13) | 1 already fixed, 2 deferred, 1 forwarded | `7c2e3bb` |
-| 2 front door | Adversarial review of splits and substitutes | terra/ultra | 7 | 6 | 1 | | `aea3c82` |
-| 3 agent | Adversarial review of the agent hardening (`7d5be18`) | terra/ultra | 10 (8 High) | 8 | 0 | 3 already fixed (one also kept) | `e48cffb` |
-| 3 agent | Design attack on Gemini Decisions confidence | reserve/max | 10 (5 "P0") | 5 | 4, with measurements | 3 deferred | `c9dfdc5` |
-| 4 UI | Draft the auth UI (keys panel, headers, errors) | reserve/max | 1 feature | Most of it | 4 parts rewritten | | `a57d7cd` |
-| 4 UI | Adversarial review of `frontend/src` | terra/ultra | 4 | 2 | 1 | 1 forwarded to backend | `a57d7cd` |
-| 4 UI | Review of the M2 UI diff | terra/high | 1 | 0 | 1 (stale branch) | | none |
-| control room | Adversarial review of `omar/m1-integration` | luna/high | 4 (2 High) | 4 | 0 | | `7d5be18`, `a57d7cd` |
-| control room | Blind second opinion on PR #8 | luna/high | 4 | 3 matched Claude's | 0 | open in `decision/` | none yet |
-| control room | Judge-style audit against the official challenge texts | terra/high | score 8.0/10 for Valio; 3 top gaps | 2 acted on (docs reconciled, Gemini eval set) | | 1 needs Omar (CRACI sign-up) | this commit |
+| Room | Run | Model | Ask | Findings | Kept/fixed | Rejected | Other | Fix commit |
+|---|---|---|---|---|---|---|---|---|
+| 1 docs | #1 | `gpt-reserve` / max | Draft `README.md` | not a review | most, number not stated | not stated | — | `5ed1e86` |
+| 1 docs | #2 | `gpt-reserve` / max | Draft `ASSUMPTIONS.md` | not a review (13 traps) | kept after code check | 1 claim | — | `5ed1e86` |
+| 1 docs | #3 | `gpt-reserve` / max | Draft `STANDARDS.md` | not a review | kept | — | — | `5ed1e86` |
+| 1 docs | #4 | `gpt-reserve` / max | Draft `NEXT-STEPS.md` | not a review | kept | — | — | `5ed1e86` |
+| 1 docs | #5 | `gpt-5.6-terra` / ultra | Fact-check every doc claim against the code | 14 | 12 | 2 | — | `019fd67` |
+| 1 docs | #6 | `gpt-reserve` / max | Draft the M2 `agent.py` change | not a review | — | stopped as stale | Claude wrote the change | not stated |
+| 1 docs | #7 | `gpt-5.6-terra` / ultra | Review the M2 ranking and "why" text | 5 | 4 | 1 | — | `019fd67` |
+| 2 front door | #1 | `gpt-reserve` / max | Draft stored-mandate change | no result | — | — | never ran (`exit 127`); rerun | — |
+| 2 front door | #2 | `gpt-reserve` / max | Same draft prompt | no result | — | — | hung; no edits | — |
+| 2 front door | #3 | `gpt-5.6-terra` / ultra | Adversarial review of the front door | 7 | 2 | 1 | already fixed: 1; deferred: 2; forwarded: 1 | `7c2e3bb` |
+| 2 front door | #4 | `gpt-5.6-terra` / ultra | Adversarial review of splits and substitutes | 7 | 6 | 1 | — | `aea3c82` |
+| 2 front door | #5 | `gpt-5.6-terra` / ultra | Adversarial review of the trust pieces | 3 | 1 | — | noted, not fixed: 2 | `room2-qa` |
+| 2 front door | #6 | `gpt-5.6-terra` / ultra | Adversarial review of idempotency, rate limits and `DATA_DIR` | 5 | 5 | — | already fixed: 1 (overlap); deferred: 1 | `room2-qa` follow-up |
+| 2 front door | #7 | `gpt-5.6-terra` / ultra | Whole-backend adversarial audit | 6 | 3 | 1 | deferred: 2 | `room2-qa2` |
+| 3 agent | #1 | `gpt-reserve` / max | Design attack on `/api/agent/run` hardening | not stated (result: none) | n/a | n/a | first launch hung; see #3 | — |
+| 3 agent | #2 | `gpt-5.6-terra` / ultra | Adversarial review of the hardening commit | not stated (pending) | — | — | pending | — |
+| 3 agent | #3 | `gpt-5.6-terra` / ultra | Adversarial review of the agent hardening (`7d5be18`) | 10 (8 High) | 8 | 0 | already fixed: 3 (one also kept) | `e48cffb` |
+| 3 agent | #4 | `gpt-reserve` / max | Design attack on Gemini Decisions confidence | 10 (5 "P0") | 5 | 4 | deferred: 3 | `c9dfdc5` |
+| 3 agent | #8 | `gpt-5.6-terra` / ultra | Adversarial review of T15 menu (`656b1e6`) | 6 | 4 | — | already fixed: 1 (included in kept); left out: 2 | `6984950` |
+| 3 agent | #9 | `gpt-5.6-terra` / ultra | Adversarial review of plain-language rules (`b209cae`) | 9 | 7 | — | deferred: 2 | `room3-qa` |
+| 3 agent | #11 | `gpt-reserve` / max | Adversarial review of `/ask`, stream, voice and urgent paths | 17 | 16 | — | reported, not fixed here: 1 (Room 2) | `room3-followup` |
+| 4 UI | #1 | `gpt-reserve` / max | Draft the auth UI | not a review (1 feature) | most of it | — | 4 parts rewritten | `a57d7cd` |
+| 4 UI | #2 | `gpt-5.6-terra` / ultra | Adversarial review of `frontend/src` | 4 | 2 | 1 | forwarded to backend: 1 | `a57d7cd` |
+| 4 UI | #3 | `gpt-5.6-terra` / high | Review of the M2 UI diff | 1 | 0 | 1 | stale branch | none |
+| control room | #1 | `gpt-6-luna` / high | Adversarial review of `omar/m1-integration` | 4 (2 High) | 4 | 0 | — | `7d5be18`, `a57d7cd` |
+| control room | #2 | `gpt-6-luna` / high | Blind second opinion on PR #8 | 4 | 0 | 0 | 4 open in `decision/`; 3 matched Claude | none yet |
+| control room | #3 | `gpt-5.6-terra` / ultra | Whole-backend audit | not stated (hung; no result) | — | — | hung for 90+ minutes | — |
+| control room | #4 | `gpt-5.6-terra` / high | Judge-style audit against the official challenge texts | not a finding count (3 top gaps) | 2 acted on | — | 1 needs Omar (CRACI sign-up); score 8.0/10 | this commit |
 
-**Totals across the nine review and fact-check runs** (not counting PR #8 or the judge audit):
-- 62 findings: 43 kept and fixed, 11 rejected with a reason, 4 already fixed, 5 deferred to production next steps,
-  2 forwarded to another room. A finding that was partly fixed and partly deferred counts once in each.
-- 4 more findings came from the PR #8 second opinion, and 3 of them matched Claude's independently.
-- The judge audit scored the Valio entry 8.0/10 and named three gaps. The first, "demo truth is inconsistent", is
-  why every doc now tells the same milk story.
-- 6 drafts: 4 docs and 1 UI feature (plus a second draft that was stopped). All were kept after Claude's
-  corrections.
+**Totals from the 16 review and fact-check runs with numeric finding counts** (including the PR #8 second opinion;
+the judge audit is separate):
+- **112 findings:** 79 kept/fixed, 12 rejected, 10 deferred, 2 explicitly forwarded, and 6 already fixed. These
+  statuses overlap where the logs say they do: some already-fixed items are also listed under kept/fixed, and one
+  finding is partly fixed and deferred.
+- Other exact statuses are 2 noted but not fixed (Room 2 #5), 2 left out (Room 3 #8), 4 still open in `decision/`
+  (control room #2), and 1 reported to Room 2 but not fixed here (Room 3 #11).
+- Three other review entries give no numeric finding count: Room 3 #1 (result none), Room 3 #2 (pending), and
+  control-room #3 (hung/no result). The judge audit reports 3 top gaps, 2 acted on and 1 needing Omar; it does not
+  give a finding total.
+- The non-review entries include 6 draft attempts: 4 docs, the stopped M2 agent draft and 1 UI feature. The four
+  docs and UI feature were kept after Claude's corrections; the M2 draft was stopped as stale.
 
 Six more launches failed before doing anything: 2 in Room 2, 2 in Room 3 and 2 in the control room (one hung for over
 90 minutes). The causes were `timeout` missing on macOS, and `codex exec` waiting on stdin when it was started from a

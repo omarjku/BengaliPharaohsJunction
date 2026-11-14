@@ -9,7 +9,7 @@
     "/api/health": {
       "get": {
         "summary": "Health",
-        "description": "Liveness check; reports which keys are configured (never their values).",
+        "description": "Liveness check; reports which keys are configured (never their values) and the deployed git commit\n(RENDER_GIT_COMMIT, set by Render on every deploy), so a release check knows exactly what is live.",
         "operationId": "health_api_health_get",
         "responses": {
           "200": {
@@ -1152,6 +1152,22 @@
         "operationId": "agent_menu_api_agent_menu_post",
         "parameters": [
           {
+            "name": "x-approver-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Approver-Key"
+            }
+          },
+          {
             "name": "signature-input",
             "in": "header",
             "required": false,
@@ -1300,6 +1316,387 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Compile Mandate Route Api Mandate Compile Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/profile/memories/{memory_id}": {
+      "delete": {
+        "summary": "Forget Memory",
+        "description": "Forget one remembered preference (the memory panel's revoke button). Needs X-Approver-Key: forgetting a\nkitchen preference is the human's call, never the agent's. 404 for an unknown id, one already forgotten, or\nanother buyer's. A forgotten seeded memory stays forgotten across restarts; the demo reset restores it.\n→ the updated profile (same shape as GET /api/profile).",
+        "operationId": "forget_memory_api_profile_memories__memory_id__delete",
+        "parameters": [
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^mem_[0-9a-f]{12}$",
+              "title": "Memory Id"
+            }
+          },
+          {
+            "name": "x-approver-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Approver-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Forget Memory Api Profile Memories  Memory Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/profile/memories": {
+      "post": {
+        "summary": "Remember",
+        "description": "'Remember this': the chef keeps a product they chose (e.g. a pricier option guests like), for this order only\n(today's orders) or always. Needs X-Approver-Key. It only breaks near-ties between equally good matches: never past\nthe confidence threshold or the front door's limits. 422 if the product isn't in the catalogue.\n→ {memory, profile}.",
+        "operationId": "remember_api_profile_memories_post",
+        "parameters": [
+          {
+            "name": "x-approver-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Approver-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RememberRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Remember Api Profile Memories Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/profile/onboarding": {
+      "get": {
+        "summary": "Get Onboarding",
+        "description": "First-run questions about the kitchen → {onboarded, questions: [{id, question, input: text|choice|multi,\noptions?, answer?}]}. Answers are guidance for the agent, never rules. Needs X-Agent-Key.",
+        "operationId": "get_onboarding_api_profile_onboarding_get",
+        "parameters": [
+          {
+            "name": "signature-input",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\"",
+              "title": "Signature-Input"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\""
+          },
+          {
+            "name": "signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:",
+              "title": "Signature"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:"
+          },
+          {
+            "name": "content-digest",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:",
+              "title": "Content-Digest"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:"
+          },
+          {
+            "name": "x-agent-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Agent-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Onboarding Api Profile Onboarding Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Post Onboarding",
+        "description": "The human sets up the kitchen (X-Approver-Key). `about` → Gemini fills the answers (the text is untrusted data).\nWithout confirm: a PREVIEW {stored: false, proposed: [{id, question, value}], unclear, hints}. With confirm=true and\n`answers`: stored as profile memories → {stored: true, saved, hints, onboarding, profile}. Nothing here becomes a\nrule or changes the mandate (hints point to the Rules screen). Bad values → 422 {errors: {id: reason}}.",
+        "operationId": "post_onboarding_api_profile_onboarding_post",
+        "parameters": [
+          {
+            "name": "x-approver-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Approver-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Post Onboarding Api Profile Onboarding Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/profile": {
+      "get": {
+        "summary": "Get Profile",
+        "description": "The calling buyer's profile, read-only (guidance, never rules): standing dietary needs with the reason, usual\nproduct ids, the remembered items with why each is used, open questions, recent confirmed orders.",
+        "operationId": "get_profile_api_profile_get",
+        "parameters": [
+          {
+            "name": "signature-input",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\"",
+              "title": "Signature-Input"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\""
+          },
+          {
+            "name": "signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:",
+              "title": "Signature"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:"
+          },
+          {
+            "name": "content-digest",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:",
+              "title": "Content-Digest"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:"
+          },
+          {
+            "name": "x-agent-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Agent-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Profile Api Profile Get"
                 }
               }
             }
@@ -1663,6 +2060,109 @@
         }
       }
     },
+    "/api/vision/read": {
+      "post": {
+        "summary": "Vision Read",
+        "description": "A photo of a handwritten shopping list, a menu board or a whiteboard of menu ideas (multipart field `image`,\nor the raw image as the body; JPEG / PNG / WEBP / HEIC, at most 8 MB) → {kind: order_list|menu|other, text,\nitems, covers, unreadable, language, suspicious, message, model}. Gemini reads the image as untrusted DATA:\ninstruction-like text in it is only text. This route places NOTHING and stores no image: the UI sends `text` on\nthrough POST /api/agent/ask, where every rule and the front door apply. Needs X-Agent-Key; rate-limited.",
+        "operationId": "vision_read_api_vision_read_post",
+        "parameters": [
+          {
+            "name": "signature-input",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\"",
+              "title": "Signature-Input"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\""
+          },
+          {
+            "name": "signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:",
+              "title": "Signature"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:"
+          },
+          {
+            "name": "content-digest",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:",
+              "title": "Content-Digest"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:"
+          },
+          {
+            "name": "x-agent-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Agent-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Vision Read Api Vision Read Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/agent/ask/stream": {
       "post": {
         "summary": "Agent Ask Stream",
@@ -1824,8 +2324,8 @@
           "text": {
             "type": "string",
             "maxLength": 4000,
-            "minLength": 1,
             "title": "Text",
+            "default": "",
             "examples": [
               "milk and 30 croissants for tomorrow"
             ]
@@ -1842,13 +2342,21 @@
             ],
             "title": "Requested Date",
             "description": "Optional when the text states a day."
+          },
+          "follow_up": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FollowUp"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Answer a question instead of a new request."
           }
         },
         "additionalProperties": false,
         "type": "object",
-        "required": [
-          "text"
-        ],
         "title": "AskRequest"
       },
       "CompileRequest": {
@@ -1876,11 +2384,50 @@
             "type": "boolean",
             "title": "Restore Mandate",
             "default": false
+          },
+          "buyer_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_.:-]{1,64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buyer Id",
+            "description": "Reset only this buyer (e.g. judge-kitchen); omit for all."
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "DemoReset"
+      },
+      "FollowUp": {
+        "properties": {
+          "to": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "To"
+          },
+          "answer": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Answer",
+            "examples": [
+              "five litres"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "to",
+          "answer"
+        ],
+        "title": "FollowUp",
+        "description": "The chef's answer to the question a previous /ask returned (its conversation_id, valid ~10 min)."
       },
       "HTTPValidationError": {
         "properties": {
@@ -2058,6 +2605,14 @@
             "examples": [
               "2026-11-16"
             ]
+          },
+          "overrides": {
+            "items": {
+              "$ref": "#/components/schemas/PortionOverride"
+            },
+            "type": "array",
+            "maxItems": 40,
+            "title": "Overrides"
           }
         },
         "additionalProperties": false,
@@ -2068,6 +2623,44 @@
           "requested_date"
         ],
         "title": "MenuRequest"
+      },
+      "OnboardingRequest": {
+        "properties": {
+          "answers": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object",
+                "maxProperties": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answers"
+          },
+          "about": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "About"
+          },
+          "confirm": {
+            "type": "boolean",
+            "title": "Confirm",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "OnboardingRequest",
+        "description": "answers: {question id: value}; about: free text or dictated speech for Gemini to fill the answers from.\nWithout confirm=true nothing is stored: the response is a preview to show and edit."
       },
       "OpenQuestion": {
         "properties": {
@@ -2159,6 +2752,92 @@
         ],
         "title": "OrderRequest",
         "description": "An order at fixed prices. Price and stock are re-read from Valio here; the client can't set them.\nThe buyer is the one the X-Agent-Key belongs to; buyer_id is optional and must match it if sent.\nNo mandate field: the order is judged by the buyer's mandate stored at Valio (sending one is a 422)."
+      },
+      "PortionOverride": {
+        "properties": {
+          "ingredient": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Ingredient",
+            "examples": [
+              "butter"
+            ]
+          },
+          "per_cover": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 5000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Cover",
+            "examples": [
+              25
+            ]
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "L",
+                  "dl",
+                  "cl",
+                  "ml",
+                  "kg",
+                  "g",
+                  "pcs"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit",
+            "examples": [
+              "g"
+            ]
+          },
+          "dish": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dish",
+            "description": "Only in this dish; default: every dish."
+          },
+          "spare_percent": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 20.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spare Percent",
+            "description": "The chef's spare for this ingredient."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ingredient"
+        ],
+        "title": "PortionOverride",
+        "description": "The chef's own portion for one ingredient (the menu screen's editable grams per portion)."
       },
       "Preference": {
         "properties": {
@@ -2258,6 +2937,48 @@
           "requested_date"
         ],
         "title": "QuoteRequest"
+      },
+      "RememberRequest": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "usual_product",
+            "title": "Kind",
+            "default": "usual_product"
+          },
+          "product_id": {
+            "type": "string",
+            "pattern": "^\\d{1,12}$",
+            "title": "Product Id"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "this_order",
+              "always"
+            ],
+            "title": "Scope",
+            "default": "always"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "product_id"
+        ],
+        "title": "RememberRequest"
       },
       "RuleKind": {
         "type": "string",
