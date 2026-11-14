@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { getKeys, MOCK, placeOrder } from './api'
+import { getKeys, MOCK, placeOrder, planMenu } from './api'
 import { tidyName } from './copy'
 import { errorText } from './format'
 import { useCopy } from './i18n'
 import { RunResult } from './RunResult'
-import type { Line, MenuRun, OrderResponse } from './types'
+import type { Line, MenuRun, OrderResponse, PortionOverride } from './types'
 import './Menu.css'
 
 type Props = {
@@ -15,13 +15,20 @@ type Props = {
   onBusy: (busy: boolean) => void
   onAnnounce: (text: string) => void
   after?: ReactNode // shown right under the answer, before the cart
+  menuText?: string // the chef's menu as asked: with it, portions can be changed and the cart re-planned
 }
+const UNITS = ['L', 'dl', 'cl', 'ml', 'kg', 'g', 'pcs'] as const
 
 const productName = (l: Line) => tidyName(l.product.name_en ?? l.product.name_fi ?? l.product.id)
 const orderable = (l: Line) => l.quote != null && l.quote.orderable && l.quantity?.quantity != null && l.line_total_cents != null
 
 // A menu became a proposed cart: the chef checks the portions, then orders the cart as one order.
-export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAnnounce, after }: Props) {
+export function MenuResult({ plan: proposed, covers, requestedDate, onAction, onBusy, onAnnounce, after, menuText }: Props) {
+  // The plan on screen: the proposal, or the re-plan after the chef changed portions.
+  const [plan, setPlan] = useState(proposed)
+  const [portions, setPortions] = useState<Record<string, string>>({}) // "dish|ingredient" -> the chef's amount per portion
+  const [replanning, setReplanning] = useState(false)
+  const canEdit = !!menuText && covers != null
   const planFor = { covers, date: requestedDate }
   const c = useCopy()
   const t = c.UI.menu
@@ -58,6 +65,35 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
       else next[i] = l
       return next
     })
+  // Changed portions -> overrides; "Update the cart" re-plans with them (Room 3: POST /api/agent/menu overrides).
+  const changed: PortionOverride[] = plan.menu.dishes.flatMap((d) =>
+    d.ingredients.flatMap((i) => {
+      const v = portions[`${d.name}|${i.name}`]
+      const n = v == null || v.trim() === '' ? null : Number(v)
+      if (n == null || !Number.isFinite(n) || n <= 0 || n === i.per_cover || !i.unit || !(UNITS as readonly string[]).includes(i.unit)) return []
+      return [{ ingredient: i.name, per_cover: n, unit: i.unit as PortionOverride['unit'], dish: d.name }]
+    }),
+  )
+  async function replan() {
+    if (!menuText || covers == null || !changed.length) return
+    if (!MOCK && !getKeys().agentKey) return setError(c.UI.result.keysFirst)
+    setReplanning(true)
+    onBusy(true)
+    setError(null)
+    try {
+      const next = await planMenu({ menu_text: menuText, covers, requested_date: planFor.date, overrides: changed })
+      setPlan(next)
+      setPortions({})
+      setSwap({})
+      setAdded(new Set())
+      onAnnounce(t.announce(forWhom, c.money(next.cart_total_cents)))
+    } catch (err) {
+      setError(errorText(err))
+    } finally {
+      setReplanning(false)
+      onBusy(false)
+    }
+  }
   const heading = useRef<HTMLHeadingElement>(null)
   // The order button comes after the cart, and on a phone it floats only once the total has been seen.
   const totalRef = useRef<HTMLDivElement>(null)
@@ -159,7 +195,27 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
                         <span className="mt-ing-total num">
                           {i.per_cover != null && covers != null ? amount(round(i.per_cover * covers), i.unit) : t.amountUnclear}
                         </span>
-                        <span className="mt-ing-per quiet small num">{i.per_cover != null ? t.perCover(amount(i.per_cover, i.unit)) : ''}</span>
+                        {canEdit && i.unit && (UNITS as readonly string[]).includes(i.unit) ? (
+                          <label className="mt-ing-per quiet small">
+                            <input
+                              className="mt-portion num"
+                              type="number"
+                              inputMode="decimal"
+                              min={0}
+                              step="any"
+                              value={portions[`${d.name}|${i.name}`] ?? (i.per_cover != null ? String(i.per_cover) : '')}
+                              onChange={(e) => setPortions((p) => ({ ...p, [`${d.name}|${i.name}`]: e.target.value }))}
+                              aria-label={t.portionAria(i.name, d.name)}
+                              disabled={replanning || !!ordered}
+                            />{' '}
+                            {t.perPortion(i.unit)}
+                            {plan.assumptions.some((a) => a.dish === d.name && a.ingredient === i.name && a.set_by === 'chef') && (
+                              <span className="mt-yours"> · {t.yours}</span>
+                            )}
+                          </label>
+                        ) : (
+                          <span className="mt-ing-per quiet small num">{i.per_cover != null ? t.perCover(amount(i.per_cover, i.unit)) : ''}</span>
+                        )}
                         {i.assumption && <span className="mt-ing-why quiet small">{i.assumption}</span>}
                       </li>
                     ))}
@@ -167,6 +223,16 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
                 </article>
               ))}
             </div>
+            {changed.length > 0 && (
+              <div className="actions mt-replan">
+                <button type="button" className="btn" onClick={() => void replan()} disabled={replanning}>
+                  {replanning ? t.updating : t.update(changed.length)}
+                </button>
+                <button type="button" className="btn plain" onClick={() => setPortions({})} disabled={replanning}>
+                  {t.undoPortions}
+                </button>
+              </div>
+            )}
           </section>
 
           <section className="instead mt-step" aria-labelledby="menu-cart">
