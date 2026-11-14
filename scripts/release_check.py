@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """One-command release check: python3 scripts/release_check.py [BASE_URL] [--env PATH]
 
-Runs scripts/smoke.py, then replays the demo-critical black-box cases from both independent QA rounds
+First checks git: origin/main must equal origin/omar/m1-integration (the tested tree; GitHub's merge of #58 once
+produced a different main) and the deployed commit (/api/health → commit, from RENDER_GIT_COMMIT) must be
+origin/main. Then runs scripts/smoke.py and replays the demo-critical black-box cases from both independent QA rounds
 (docs/testing/independent-qa-*.md) against a deployed front door, and prints a PASS / FAIL / SKIP table.
 Exits 1 if anything fails. Run it before the freeze, before recording and right before the pitch.
 
@@ -118,8 +120,33 @@ def voice_case(name: str, text: str, voice: str, expect: tuple[str, ...], folder
     record(name, status == 200 and any(w in heard for w in expect), f"HTTP {status}, heard {heard[:60]!r}")
 
 
+def git(*args: str) -> str:
+    root = Path(__file__).resolve().parents[1]
+    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=120).stdout.strip()
+
+
+def git_checks() -> None:
+    print("-- what is live (git vs deploy)")
+    if not shutil.which("git"):
+        return record("git available", None, "no git: tree and deploy checks skipped")
+    git("fetch", "-q", "origin")
+    main, integ = git("rev-parse", "origin/main"), git("rev-parse", "origin/omar/m1-integration")
+    diff = git("diff", "--stat", "origin/main", "origin/omar/m1-integration")
+    record("origin/main has exactly the tested integration tree", bool(main) and not diff,
+           "identical" if not diff else "DIFFERS: " + diff.splitlines()[-1])
+    for line in diff.splitlines()[:-1][:10]:
+        print("      " + line)
+    s, h = smoke.call("GET", "/api/health")
+    live = (h or {}).get("commit") if isinstance(h, dict) else None
+    same = bool(live and main) and (live.startswith(main[:7]) or main.startswith(live[:7]))
+    record("deployed commit is origin/main", same, f"live {str(live)[:12]}, origin/main {main[:12]}"
+           + ("" if live else " (this deploy doesn't report /api/health.commit yet)"))
+    print()
+
+
 def main() -> int:
     print(f"Release check against {smoke.BASE}  (delivery day {DAY})\n")
+    git_checks()
     have = bool(AG["X-Agent-Key"] and HG["X-Agent-Key"] and AP["X-Approver-Key"] and ADM["X-Valio-Admin-Key"])
     record("keys for smoke-kitchen, helsinki-bistro and Valio admin in .env (not shown)", have)
     if not have:

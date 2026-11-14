@@ -9,6 +9,7 @@ instead of ordering twice, and the order's signature verifies (and fails once ta
 """
 import copy
 import json
+import random
 import sys
 import time
 import urllib.error
@@ -19,7 +20,9 @@ from pathlib import Path
 
 BASE = next((a for a in sys.argv[1:] if a.startswith("http")), "https://valio-front-door-api.onrender.com").rstrip("/")
 ENV = Path(sys.argv[sys.argv.index("--env") + 1]) if "--env" in sys.argv else Path(__file__).resolve().parents[1] / ".env"
-MILK = "20 L lactose-free milk for Monday"  # an everyday amount: the agent asks about unusually large ones
+# An everyday amount (the agent asks about unusually large ones), varied per run: an identical order within 30
+# minutes gets the duplicate question instead of an order, which the run checks on purpose below.
+MILK = f"{random.randint(12, 39)} L lactose-free milk for Monday"
 HELD_QTY = 1200  # cartons via POST /api/orders: over the demo mandate's EUR 1,500 auto-approve limit → held
 results: list[bool] = []
 
@@ -114,6 +117,12 @@ def main() -> int:
     check("decision carries a confidence value", isinstance(conf, (int, float)), f"confidence {conf}")
     if not order:
         return finish()
+    status, again = call("POST", "/api/agent/run", {"text": MILK, "requested_date": day}, {"X-Agent-Key": agent_key},
+                         timeout=180)
+    dup = isinstance(again, dict) and not again.get("order") and any(
+        "ago" in x.get("message", "") and "again" in x.get("message", "").lower()
+        for x in (again.get("decision") or {}).get("reasons", []))
+    check("same order again within 30 min → 'order again?', nothing ordered", status == 200 and dup, f"HTTP {status}")
 
     # The approval path needs a held order: a direct front-door order above the auto-approve limit.
     pid = (order.get("lines") or [{}])[0].get("product_id") or "463335"
