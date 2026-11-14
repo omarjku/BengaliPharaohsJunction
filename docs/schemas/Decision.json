@@ -136,7 +136,8 @@
         "LIMIT_CHANGE_ATTEMPT",
         "POLICY_DECLINE_UNKNOWN",
         "LOW_CONFIDENCE",
-        "ENGINE_ERROR"
+        "ENGINE_ERROR",
+        "MENU_ASSUMPTIONS"
       ],
       "title": "ReasonCode",
       "type": "string"
