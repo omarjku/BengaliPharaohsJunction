@@ -89,11 +89,13 @@ jobs:
       - packages-tests
       - frontend
     steps:
-      # The default proxy answers 403 "Access denied" for api.craci.com (even to a fake token). The audit template
-      # gives this job direct end-to-end connections (docs: setup-action-network, "Use standard CI networking").
+      # The default proxy answers 403 "Access denied" for api.craci.com (even to a fake token). No presets + default
+      # allow gives this job direct end-to-end connections (docs: setup-action-network, "Use standard CI networking").
       - uses: cracicorp/setup@v1
         with:
-          template: audit
+          network: |
+            default: allow
+            presets: []
       - name: Check out repository
         uses: actions/checkout@v4
       - name: Collect CRACI SBOM and network evidence
