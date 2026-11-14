@@ -1,0 +1,178 @@
+{
+  "$defs": {
+    "Availability": {
+      "enum": [
+        "available",
+        "partial",
+        "unavailable",
+        "unknown"
+      ],
+      "title": "Availability",
+      "type": "string"
+    },
+    "CutOff": {
+      "additionalProperties": false,
+      "properties": {
+        "closing_time": {
+          "format": "date-time",
+          "title": "Closing Time",
+          "type": "string"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "closing_time",
+        "passed"
+      ],
+      "title": "CutOff",
+      "type": "object"
+    },
+    "QuantityInfo": {
+      "additionalProperties": false,
+      "description": "Available quantity. `known=False` means unknown, NOT unlimited\n(the mock API reports Terminal stock as 999999).",
+      "properties": {
+        "known": {
+          "title": "Known",
+          "type": "boolean"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "known"
+      ],
+      "title": "QuantityInfo",
+      "type": "object"
+    },
+    "QuoteSource": {
+      "enum": [
+        "valio_api",
+        "valio_front_door",
+        "mock"
+      ],
+      "title": "QuoteSource",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "const": "0.2",
+      "default": "0.2",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "product_id": {
+      "minLength": 1,
+      "title": "Product Id",
+      "type": "string"
+    },
+    "product_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Product Name"
+    },
+    "unit_price_cents": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Net-of-VAT customer price per sales unit, integer cents; null if unknown.",
+      "title": "Unit Price Cents"
+    },
+    "unit": {
+      "description": "Sales unit, e.g. '1 L carton'.",
+      "minLength": 1,
+      "title": "Unit",
+      "type": "string"
+    },
+    "availability": {
+      "$ref": "#/$defs/Availability"
+    },
+    "quantity": {
+      "$ref": "#/$defs/QuantityInfo"
+    },
+    "available_date": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Available Date"
+    },
+    "source": {
+      "$ref": "#/$defs/QuoteSource"
+    },
+    "fetched_at": {
+      "description": "Freshness: when this was read.",
+      "format": "date-time",
+      "title": "Fetched At",
+      "type": "string"
+    },
+    "valid_until": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Valid Until"
+    },
+    "cut_off": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CutOff"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "product_id",
+    "unit_price_cents",
+    "unit",
+    "availability",
+    "quantity",
+    "source",
+    "fetched_at"
+  ],
+  "title": "Quote",
+  "type": "object"
+}

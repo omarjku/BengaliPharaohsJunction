@@ -1,0 +1,232 @@
+{
+  "$defs": {
+    "Alternative": {
+      "additionalProperties": false,
+      "properties": {
+        "product_id": {
+          "minLength": 1,
+          "title": "Product Id",
+          "type": "string"
+        },
+        "summary": {
+          "description": "Why this is offered instead.",
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "product_id",
+        "summary"
+      ],
+      "title": "Alternative",
+      "type": "object"
+    },
+    "Outcome": {
+      "enum": [
+        "AUTO",
+        "ASK_HUMAN",
+        "DECLINE"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "Reason": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ReasonCode"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "message": {
+          "description": "Plain language, shown to the chef.",
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "facts": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "The numbers behind the message (money in net cents).",
+          "title": "Facts",
+          "type": "object"
+        },
+        "suggested_fix": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the human can do about it.",
+          "title": "Suggested Fix"
+        },
+        "product_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Product Id"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ],
+      "title": "Reason",
+      "type": "object"
+    },
+    "ReasonCode": {
+      "enum": [
+        "QTY_INVALID",
+        "QTY_AMBIGUOUS",
+        "QTY_SUSPICIOUS",
+        "QTY_UNKNOWN",
+        "STOCK_PARTIAL",
+        "STOCK_NONE",
+        "UNIT_MISMATCH",
+        "CUTOFF_PASSED",
+        "UNDELIVERABLE",
+        "DATE_NOT_HONOURED",
+        "LOW_RELIABILITY",
+        "QUOTE_STALE",
+        "PRICE_MISSING",
+        "PRICE_CHANGED",
+        "UNKNOWN_PRODUCT",
+        "DATA_MISSING",
+        "SPEND_OVER_LIMIT",
+        "LINE_OVER_CAP",
+        "WEEKLY_BUDGET_EXCEEDED",
+        "ALLERGEN_CONTAINS",
+        "ALLERGEN_MAY_CONTAIN",
+        "ALLERGEN_DATA_MISSING",
+        "BLOCKLISTED",
+        "MANDATE_MISSING",
+        "MANDATE_EXPIRED",
+        "MANDATE_INVALID",
+        "DEFAULT_MANDATE_APPLIED",
+        "LIMIT_CHANGE_ATTEMPT",
+        "POLICY_DECLINE_UNKNOWN",
+        "LOW_CONFIDENCE",
+        "ENGINE_ERROR"
+      ],
+      "title": "ReasonCode",
+      "type": "string"
+    },
+    "Severity": {
+      "description": "Per-reason severity. The Decision outcome is the highest severity present:\nDECLINE > ASK_HUMAN > INFO (INFO only = AUTO).",
+      "enum": [
+        "INFO",
+        "ASK_HUMAN",
+        "DECLINE"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "const": "0.2",
+      "default": "0.2",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "request_id": {
+      "minLength": 1,
+      "title": "Request Id",
+      "type": "string"
+    },
+    "outcome": {
+      "$ref": "#/$defs/Outcome"
+    },
+    "reasons": {
+      "description": "All reasons, highest severity first.",
+      "items": {
+        "$ref": "#/$defs/Reason"
+      },
+      "title": "Reasons",
+      "type": "array"
+    },
+    "primary_reason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Reason"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "reasons[0]; filled in automatically; null only when no reasons."
+    },
+    "confidence": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confidence"
+    },
+    "alternatives": {
+      "items": {
+        "$ref": "#/$defs/Alternative"
+      },
+      "maxItems": 3,
+      "title": "Alternatives",
+      "type": "array"
+    },
+    "rules_version": {
+      "minLength": 1,
+      "title": "Rules Version",
+      "type": "string"
+    },
+    "decided_at": {
+      "format": "date-time",
+      "title": "Decided At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "outcome",
+    "rules_version",
+    "decided_at"
+  ],
+  "title": "Decision",
+  "type": "object"
+}
