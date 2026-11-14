@@ -80,7 +80,7 @@ check) for clipped text, contrast and loudness, then time the result at 1:55 or 
   - The cut-off times come from the mock API (Stock usually 17:00 the day before, Terminal about 4 days before) and
     are demo assumptions. Never say "delivered in an hour".
 
-## New beats for photo input and Talk (pending merge)
+## New beats for photo input and Talk (on main, PR #70)
 
 The draft is 1:55, and the hard cap is 2:00. To add the two new beats without going over, swap them in:
 

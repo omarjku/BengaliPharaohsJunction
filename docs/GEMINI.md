@@ -74,18 +74,34 @@ Each answer comes back with `speak`, one sentence in the chef's language, and th
 - **Read-only view:** `GET /api/profile` (agent key) returns the needs, usual products, remembered items with why
   each is used, open questions and recent confirmed orders.
 
-## Photo input (pending merge, Room 2 + Room 4)
+## Photo input (on main, PR #70)
 
-A chef photographs a handwritten list, a chalkboard menu or a whiteboard. Gemini reads it into the same structured
-items as typed text, and from there the normal pipeline runs: grounding, Decisions judge, Valio quotes, the front
-door. A photo is treated like the chef's own words, so a menu photo always asks, like a pasted menu. Test images:
-[`docs/demo-images/`](demo-images/). The model, the route and the live numbers go here after the merge.
+`POST /api/vision/read` (agent key) takes a photo (JPEG, PNG, WEBP or HEIC, up to 8 MB) of a handwritten list, a
+menu board or a whiteboard. `gemini-4-hydrogen` reads it as untrusted data into `{kind: order_list|menu|other, text,
+items, covers, unreadable, language, suspicious}`.
+- **It places nothing and stores no image.** The UI sends `text` on through `POST /api/agent/ask`, where every rule
+  and the front door apply.
+- **Instructions in the image are only text.** Instruction-like text is flagged as `suspicious`, then held by
+  `/ask` like typed text.
+- **Tested with real Gemini:** Room 2 ran the three demo photos ([`docs/demo-images/`](demo-images/)) through it,
+  and all three matched the expected readings in that folder's README.
 
-## Talk: a Gemini Live voice conversation (pending merge, Room 3 + Room 4)
+## Talk: a Gemini Live voice conversation (on main, PR #70)
 
-A spoken back-and-forth instead of push-to-talk: the chef talks, the agent answers aloud and asks its one
-follow-up question ("How much butter?"), and the order goes through the same front door. The models, latency and
-live results go here after the merge.
+WebSocket `/api/live`, model `gemini-3.8-live`.
+- **Gemini Live only talks.** It hears the chef, answers by voice and calls two tools:
+  - `ask_agent` runs the same `ask` pipeline as typing (checks, limits, profile, front door);
+  - `search_catalogue` is read-only.
+- **There is no approve tool:** sign-off stays with the approver key on screen.
+- **The browser never sees the Gemini key.** It authenticates with its agent key in the first message.
+
+**Real local check** (`scripts/talk_check.py`, smoke-kitchen):
+1. Spoken: "I need 20 L of lactose-free milk for Monday".
+2. The agent says "let me check the milk availability for Monday" and calls `ask_agent`.
+3. **Order confirmed:** 20 L of Valio lactose-free UHT milk for Mon 16 Nov.
+4. A spoken confirmation with the total.
+
+The first agent audio came 1.3 s after the chef stopped speaking; the answer started 1.2 s after the tool result.
 
 ## Guardrails: Gemini can only add caution
 

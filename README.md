@@ -80,7 +80,7 @@ signature base and the limits are in `docs/STANDARDS.md` ("Signed agent requests
 
 ## Testing
 
-- **Unit and integration tests:** `cd backend && .venv/bin/python -m pytest -q tests` gives 318 passed, 1 skipped
+- **Unit and integration tests:** `cd backend && .venv/bin/python -m pytest -q tests` gives 434 passed
   (offline, with Valio and Gemini faked).
 - **Labelled Gemini evaluation:** `backend/eval/` has 30 cases with real Valio products. It set the 0.70 threshold,
   and now includes the coffee-milk and coffee-cream traps.
@@ -137,10 +137,11 @@ Valio delivery and its cut-off instead.
 
 - **Buyer profile** (on main): standing needs and usual products steer the choice without becoming rules. Example:
   `helsinki-bistro`'s "our kitchen is gluten-free". Details are in `docs/GEMINI.md`.
-- **Photo input** (pending merge): photograph a handwritten list, a chalkboard or a whiteboard, and it becomes the
-  same order or menu flow as typed text. Test images are in [`docs/demo-images/`](docs/demo-images/).
-- **Talk** (pending merge): a Gemini Live voice conversation. The agent answers aloud and asks its one follow-up
-  question.
+- **Photo input** (on main): photograph a handwritten list, a chalkboard or a whiteboard. `POST /api/vision/read`
+  reads it into text, then the same order or menu flow runs. It places nothing itself. The three test images in
+  [`docs/demo-images/`](docs/demo-images/) all read as expected with real Gemini.
+- **Talk** (on main): a Gemini Live voice conversation (WebSocket `/api/live`). The agent answers aloud, asks its
+  follow-up, and orders through the same pipeline. It has no approve tool.
 
 ## API surface
 
@@ -149,6 +150,8 @@ routes derive the buyer identity from the key, not from a trusted request body.
 
 | Method and route | What it does | Header |
 | --- | --- | --- |
+| `POST /api/vision/read` | A photo (list, menu board, whiteboard) → the request in words. It places nothing; the UI sends the text to `/api/agent/ask`. | `X-Agent-Key` |
+| `WS /api/live` | Talk: a Gemini Live voice conversation. Its tools are `ask_agent` (the same pipeline) and a read-only catalogue search, with no approve tool. The agent key goes in the first message. | agent key (in-band) |
 | `GET /api/profile` | The buyer's profile, read-only: standing dietary needs (helsinki-bistro is gluten-free), usual products, what the agent remembers and why. Guidance, never a rule. | `X-Agent-Key` |
 | `POST /api/agent/ask` | **The one input box.** Free text, in English or Finnish: an order or a menu. It routes to run or menu, and asks back when it must ("For how many guests?", "For which delivery day?"). Urgent needs for a Helsinki buyer also get pickup suggestions. | `X-Agent-Key` |
 | `POST /api/voice/transcribe` | Push-to-talk audio (wav, webm, ogg or mp4; at most 1 MB / 30 s) → the chef's words (Gemini transcribe-live, about 1.3 s). Nothing is ordered here: the UI sends the text to `/api/agent/ask/stream`. | `X-Agent-Key` |
