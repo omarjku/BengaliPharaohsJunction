@@ -6,3 +6,4 @@ node_modules/
 __pycache__/
 .venv/
 data/
+.pytest_cache/
