@@ -231,6 +231,29 @@ def test_menu_assumptions_are_checked_and_flagged(shop1, monkeypatch, decisions)
     assert body["assumptions"][0]["flagged"] is False and body["assumptions"][0]["check"] == 0.95
 
 
+def test_menu_candidate_amounts_are_scored_in_one_batch_and_low_winner_is_not_kept(monkeypatch):
+    calls = []
+
+    async def fake_decisions(input_text, questions):
+        calls.append((input_text, questions))
+        return {key: {"type": "noul", "noul": (0.91 if key.endswith("_1") else 0.42)}
+                for key in questions}
+
+    monkeypatch.setattr(menu.agent, "_decisions", fake_decisions)
+    dishes = [{"name": "Pizza", "ingredients": [{
+        "name": "mozzarella", "per_cover": 0.15, "unit": "kg", "candidate_amounts": [0.1, 0.15],
+        "assumption": "150 g mozzarella per pizza", "dietary": [],
+    }]}]
+
+    result = asyncio.run(menu.score_candidate_amounts(dishes, 60, "chef"))
+
+    assert len(calls) == 1
+    assert set(calls[0][1]) == {"portion_0_0_0", "portion_0_0_1"}
+    assert result[0]["ingredients"][0]["per_cover"] == 0.15
+    assert result[0]["ingredients"][0]["p_yes"] == 0.91
+    assert result[0]["ingredients"][0]["kept"] is True
+
+
 def test_menu_parse_is_capped(shop1, monkeypatch, decisions):
     """Security review: a steered parse can't fan out hundreds of paid checks."""
     dish = {"name": "Porridge", "ingredients": [{"name": f"spice{n}", "per_cover": 1, "unit": "g", "assumption": "x",

@@ -268,6 +268,16 @@ type AskMeta = {
   cards?: AskCard[]
 }
 export type AskInput = { text: string; requested_date?: string; follow_up?: { to: string; answer: string }; have?: string[] }
+export type ChatCard = (AgentRun & { intent?: 'order' }) | (MenuRun & { intent?: 'menu' })
+export type ChatResponse = {
+  reply: string
+  cards: ChatCard[]
+  conversation_id: string
+  tools_used: string[]
+  question?: string | null
+  requested_date?: string | null
+  fallback?: boolean
+}
 export type AskResponse =
   | (AskMeta & { intent: 'order'; question?: null } & AgentRun)
   | (AskMeta & { intent: 'menu'; question?: null } & MenuRun)

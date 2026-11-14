@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { ApiError, askAgentStream, createSandbox, DROPPED, getAdminKey, getHealth, getKeys, getSandboxSession, KEYS_FROM_LINK, applyLinkKeys, checkLinkKeys, isTryEntry, MOCK, sandboxSessionLive, setAdminKey, setKeys, setSandboxSession, getOrder, transcribe, VOICE_READY, type ApiKeys } from './api'
+import { ApiError, chatAgent, createSandbox, getAdminKey, getHealth, getKeys, getSandboxSession, KEYS_FROM_LINK, applyLinkKeys, checkLinkKeys, isTryEntry, MOCK, sandboxSessionLive, setAdminKey, setKeys, setSandboxSession, getOrder, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
 import { buyerLabel, errorText, nextMonday } from './format'
 import { groupHistory } from './history'
@@ -7,7 +7,7 @@ import { COPIES, CopyContext, initialLang, rememberLang, useCopy, type Lang } fr
 import { MenuResult } from './Menu'
 import { Rules } from './Rules'
 import { RunResult } from './RunResult'
-import type { AskResponse, AuditEntry, MenuRun, Reason } from './types'
+import type { AskResponse, AuditEntry, ChatCard, MenuRun, Reason } from './types'
 import { UrgentOptions } from './Urgent'
 import { ValioView } from './Valio'
 
@@ -92,9 +92,10 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const [text, setText] = useState('')
   const [date, setDate] = useState(nextMonday)
   const [result, setResult] = useState<AskResponse | null>(null)
+  const [chatConversationId, setChatConversationId] = useState<string | null>(null)
   // A question wins: "How much cream?" and "Order again?" come with the run attached, but only the question is shown.
   const question = result?.question ? result : null
-  const convo = question?.conversation_id ?? null // the question can be answered right here (typed or spoken)
+  const convo = question?.conversation_id ?? chatConversationId // the question can be answered right here (typed or spoken)
   const convoRef = useRef(convo)
   useEffect(() => {
     convoRef.current = convo
@@ -297,28 +298,28 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     setRunning(true)
     setAnnounce(u.ask.announce)
     try {
-      phaseLine.reset()
       const have = pantry.current.length ? { have: pantry.current } : {}
       const input = to
         ? { text: '', follow_up: { to, answer: words.trim() }, ...have }
         : { text: words.trim(), ...(when ? { requested_date: when } : {}), ...have } // the day comes from the words, or the agent asks
-      const res = await askAgentStream(input, (p) =>
-        phaseLine.push(c.UI.progress.phases[p.phase] ?? p.text),
-      )
-      await phaseLine.settle() // let the last step be read before the answer replaces it
-      if (res.requested_date) setDate(res.requested_date) // the fallback day for cards that don't carry one
-      setResult(res)
-      // The agent's line (the backend's one-sentence `speak`), then the decision card; a question is its own message.
-      if (!res.question && res.speak) push({ kind: 'agent', text: res.speak })
-      // The pantry counts for this order only: a menu card keeps it for its own re-plans, then it is cleared.
-      const usedHave = res.intent === 'menu' && !res.question ? pantry.current : undefined
-      push({ kind: 'res', res, date: res.requested_date ?? date, asked: lastRequest.current, have: usedHave })
+      const res = await chatAgent(input)
+      if (res.requested_date) setDate(res.requested_date)
+      if (res.reply) push({ kind: 'agent', text: res.reply })
+      setChatConversationId(res.question ? res.conversation_id : null)
+      const cards = res.cards.filter((card): card is ChatCard => 'lines' in card)
+      const usedHave = cards.some((card) => 'menu' in card) ? pantry.current : undefined
+      const responses = cards.map((card) => ({ ...card, intent: card.intent ?? ('menu' in card ? 'menu' : 'order'),
+        reply: res.reply, speak: res.reply, requested_date: res.requested_date ?? date,
+      }) as AskResponse)
+      setResult(responses[0] ?? null)
+      responses.forEach((card) => push({ kind: 'res', res: card, date: card.requested_date ?? date,
+        asked: lastRequest.current, have: usedHave }))
       if (usedHave) pantry.current = []
-      if (res.question) setAnnounce(c.question(res.question, res.decision?.reasons[0]))
+      if (res.question) setAnnounce(c.question(res.question, null))
     } catch (err) {
       const expired = !!to && err instanceof ApiError && err.status === 404
       if (expired) setResult(null) // the question is gone; "Ask again" re-sends the original request
-      const message = expired ? u.question.expired : err instanceof Error && err.message === DROPPED ? u.progress.dropped : errorText(err)
+      const message = expired ? u.question.expired : errorText(err)
       push({ kind: 'error', text: message, reask: expired ? lastRequest.current : null })
       setAnnounce(expired ? u.question.expired : '')
     } finally {

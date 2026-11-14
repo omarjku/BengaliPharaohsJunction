@@ -316,6 +316,9 @@ def compact_card(body: dict | None) -> dict | None:
     order_status = order.get("status") or body.get("status")
     if order_status:
         result["order_status"] = order_status
+    order_id = order.get("order_id") or body.get("order_id")
+    if order_id:
+        result["order_id"] = _bounded_text(order_id)
     for key in ("cart_total_cents", "requested_date", "question"):
         value = body.get(key)
         if value is not None and value != "":
@@ -373,7 +376,8 @@ def _write_history(path, data: dict) -> None:
             pass
 
 
-def record_turn(buyer_id: str, role: str, text: str, card: dict | None = None) -> None:
+def record_turn(buyer_id: str, role: str, text: str, card: dict | None = None,
+                pending: dict | None = None) -> None:
     """Atomically append one bounded turn and optionally replace the buyer's compact last card."""
     if role not in {"user", "assistant"}:
         raise ValueError("role must be user or assistant")
@@ -389,6 +393,12 @@ def record_turn(buyer_id: str, role: str, text: str, card: dict | None = None) -
                                                                "cart_total_cents", "order")):
                 data["last_card"] = projected
                 data["last_card_time"] = now
+        if pending is not None:
+            if pending:
+                data["pending_state"] = {"pending_slot": str(pending.get("pending_slot") or "")[:120],
+                                          "choices": list(pending.get("choices") or [])[:4]}
+            else:
+                data.pop("pending_state", None)
         _write_history(path, data)
 
 
@@ -415,6 +425,18 @@ def last_card(buyer_id: str) -> dict | None:
             _write_history(path, data)
         card = data.get("last_card")
         return json.loads(json.dumps(card, ensure_ascii=False)) if isinstance(card, dict) else None
+
+
+def pending_state(buyer_id: str) -> dict | None:
+    """Return the typed slot a chat turn is waiting for, bounded by the same history TTL."""
+    now = time.time()
+    path = _history_path(buyer_id)
+    with _turns_lock:
+        data, changed = _pruned_history(_read_history(path), now)
+        if changed and path.exists():
+            _write_history(path, data)
+        value = data.get("pending_state")
+        return json.loads(json.dumps(value, ensure_ascii=False)) if isinstance(value, dict) else None
 
 
 def current_order(buyer_id: str) -> dict:

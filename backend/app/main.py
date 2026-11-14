@@ -19,7 +19,7 @@ from pydantic import (AwareDatetime, BaseModel, ConfigDict, Field, StrictFloat, 
                       field_validator, model_validator)
 from trade_contracts import Mandate
 
-from . import (agent, ask, auth, catalogue, calendar as kitchen_calendar, config, gate, httpsig, interview, kitchen,
+from . import (agent, ask, auth, catalogue, calendar as kitchen_calendar, chat_agent, config, gate, httpsig, interview, kitchen,
                live, mandates, menu, orders, profile, progress, quantity, ratelimit, rules, sandbox, signing, valio, vision,
                voice)
 
@@ -794,6 +794,10 @@ class AskRequest(BaseModel):
         return self
 
 
+class ChatRequest(AskRequest):
+    """A text turn for the Gemini tool-calling chat agent; its follow-up shape matches /ask."""
+
+
 @app.post("/api/agent/ask")
 async def agent_ask(req: AskRequest, who: Agent) -> dict:
     """Free text → {intent: order|menu|unclear, covers, requested_date, date_source: request|text|null,
@@ -803,6 +807,14 @@ async def agent_ask(req: AskRequest, who: Agent) -> dict:
     _catalogue_ready()
     return await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump(),
                          req.have)
+
+
+@app.post("/api/agent/chat")
+async def agent_chat(req: ChatRequest, who: Agent) -> dict:
+    """Gemini text chat with grounded function calls; provider protocol failures are surfaced as provider_call_ok=false."""
+    _catalogue_ready()
+    return await chat_agent.chat(req.text, who.buyer_id, req.requested_date,
+                                 req.follow_up and req.follow_up.model_dump(), req.have)
 
 
 # --- Talk: a spoken conversation over Gemini Live (live.py). Auth is the first message: browsers can't set headers.

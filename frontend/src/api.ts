@@ -1,5 +1,5 @@
 import type {
-  AdminFilter, AdminRow, AgentRun, BuyerProfile, KitchenContext, Memory, LiveEvent, LiveSocket, PhotoRead, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
+  AdminFilter, AdminRow, AgentRun, BuyerProfile, ChatResponse, KitchenContext, Memory, LiveEvent, LiveSocket, PhotoRead, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
 } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
@@ -254,6 +254,15 @@ export const transcribe = (audio: Blob): Promise<string> =>
 // One box: the backend works out whether it's an order or a menu. requested_date only when the chef overrode it.
 export const askAgent = (input: AskInput) =>
   MOCK ? mock().then((m) => m.ask(input)) : api<AskResponse>('/api/agent/ask', { ...post(input), headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')
+
+export const chatAgent = (input: AskInput): Promise<ChatResponse> =>
+  MOCK
+    ? mock().then((m) => m.ask(input)).then((card) => ({
+        reply: card.reply ?? card.speak ?? '', cards: 'lines' in card ? [card as ChatResponse['cards'][number]] : [],
+        conversation_id: card.conversation_id ?? '', tools_used: [], question: card.question ?? null,
+        requested_date: card.requested_date ?? null,
+      }))
+    : api<ChatResponse>('/api/agent/chat', { ...post(input), headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')
 
 // The same request, streamed (POST /api/agent/ask/stream, Server-Sent Events): `phase` {phase, text} as each step
 // starts, then one `result` (the /ask body) or `error` {status, detail}. fetch + a stream reader, since EventSource

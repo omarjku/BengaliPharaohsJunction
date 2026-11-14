@@ -4,6 +4,7 @@
     python3 scripts/chat.py                       # interactive, buyer helsinki-bistro
     python3 scripts/chat.py --buyer lapland-kitchen
     python3 scripts/chat.py --script convo.txt    # replay a conversation, one chef line per line
+    python3 scripts/chat.py --mode ask --script convo.txt  # use the legacy template path
 
 Runs the FastAPI app in-process (TestClient) with a fresh DATA_DIR, so every run starts clean. While the agent has an
 open question, what you type answers it (sent as a follow-up); otherwise it's a new message. Each turn prints what
@@ -73,11 +74,11 @@ def lines_of(body: dict) -> list[dict]:
                 q = ln.get("quantity") or {}
                 out.append({"name": p.get("name_en") or p.get("name_fi") or p.get("id"), "qty": q.get("quantity"),
                             "unit": q.get("unit") or (ln.get("quote") or {}).get("sales_unit"),
-                            "total": ln.get("line_total_cents"), "status": "proposal"})
+                            "total": ln.get("line_total_cents"), "status": order.get("status") or "proposal"})
     return out
 
 
-def show(body: dict, ms: float, debug: bool) -> None:
+def show(body: dict, ms: float, debug: bool, mode: str) -> None:
     und = body.get("understood") or {}
     acts = und.get("actions") if isinstance(und, dict) else None
     if acts:
@@ -88,6 +89,16 @@ def show(body: dict, ms: float, debug: bool) -> None:
         print(f"  \033[2minterpretation: {und['interpretation']}\033[0m")
     reply = body.get("reply") or body.get("speak") or ""
     print(f"\033[1magent:\033[0m {reply}")
+    if mode == "chat":
+        print(f"  tools: {', '.join(body.get('tools_used') or []) or 'none'}")
+        for card in body.get("cards") or []:
+            order = card.get("order") or {}
+            status = order.get("status") or (card.get("decision") or {}).get("outcome") or "proposal"
+            print(f"  card: {status} ({len(card.get('lines') or [])} lines)")
+            for assumption in card.get("assumptions") or []:
+                if isinstance(assumption, dict):
+                    print(f"  assumption: {assumption.get('text')}  p_yes={assumption.get('p_yes')}"
+                          f"  {'kept' if assumption.get('kept') else 'check this'}")
     q = body.get("question")
     if q and q not in reply:
         print(f"  question: {q}")
@@ -104,7 +115,11 @@ def show(body: dict, ms: float, debug: bool) -> None:
     d = body.get("decision") or {}
     if d.get("reasons"):
         print(f"  reasons: {', '.join(r.get('code', '?') for r in d['reasons'][:5])}")
-    print(f"  \033[2m{ms:.0f} ms{'  ⚠ GEMINI FAILED: ' + GEMINI_FAILURES[-1] if GEMINI_FAILURES else ''}\033[0m")
+    if body.get("pending_slot"):
+        print(f"  pending_slot: {body['pending_slot']} choices={body.get('choices') or []}")
+    provider = "provider ok" if body.get("provider_call_ok", True) else "⚠ provider_call_ok=false"
+    print(f"  \033[2m{ms:.0f} ms · {provider}"
+          f"{' · ⚠ GEMINI FAILED: ' + GEMINI_FAILURES[-1] if GEMINI_FAILURES else ''}\033[0m")
     GEMINI_FAILURES.clear()
     if debug:
         print(json.dumps(body, ensure_ascii=False, indent=1, default=str)[:6000])
@@ -113,6 +128,7 @@ def show(body: dict, ms: float, debug: bool) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--buyer", default="helsinki-bistro")
+    ap.add_argument("--mode", choices=("chat", "ask"), default="chat")
     ap.add_argument("--script", help="replay: one chef line per line ('#' comments, '/command' allowed)")
     ap.add_argument("--debug", action="store_true")
     a = ap.parse_args()
@@ -182,7 +198,8 @@ def main() -> None:
             continue
         body = {"follow_up": {"to": convo, "answer": text}} if (pending and convo) else {"text": text}
         t0 = time.perf_counter()
-        r = client.post("/api/agent/ask", json=body, headers={"X-Agent-Key": agent})
+        path = "/api/agent/chat" if a.mode == "chat" else "/api/agent/ask"
+        r = client.post(path, json=body, headers={"X-Agent-Key": agent})
         ms = (time.perf_counter() - t0) * 1000
         if r.status_code != 200:
             print(f"  HTTP {r.status_code}: {r.text[:400]}")
@@ -190,7 +207,7 @@ def main() -> None:
                 pending = False
             continue
         out = r.json()
-        show(out, ms, debug)
+        show(out, ms, debug, a.mode)
         convo = out.get("conversation_id") or convo
         pending = bool(out.get("question") or out.get("choices"))
         oid = (out.get("order") or {}).get("order_id")
