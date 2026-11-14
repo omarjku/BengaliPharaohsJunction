@@ -1,18 +1,19 @@
 """Valio Aimo front door: API entry point. OpenAPI spec is served at /openapi.json, docs at /docs."""
+import hashlib
 import re
 import threading
 from contextlib import asynccontextmanager
 from datetime import date
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import agent, auth, menu, catalogue, config, gate, mandates, orders, quantity, signing, valio
+from . import agent, auth, catalogue, config, gate, mandates, menu, orders, quantity, ratelimit, signing, valio
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -147,6 +148,22 @@ async def limit_body(request: Request, call_next):
     return await call_next(request)
 
 
+app.middleware("http")(ratelimit.middleware)  # per key / per IP token buckets → 429 + Retry-After
+IdemKey = Annotated[str | None, Header(pattern=r"^[\x21-\x7e]{1,255}$",
+                                       description="Optional. Retrying with the same key and body returns the "
+                                                   "original response instead of acting twice (24 h).")]
+
+
+async def _once(response: Response, scope: str, key: str | None, request: dict, run) -> dict:
+    """Run `run` once per Idempotency-Key (scope = caller + route); a replay says so in Idempotent-Replayed."""
+    if key is None:
+        return await run()
+    body, replayed = await orders.idempotent(f"{scope}:{key}", hashlib.sha256(signing.canonical(request)).hexdigest(), run)
+    if replayed:
+        response.headers["Idempotent-Replayed"] = "true"
+    return body
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
     """422 without echoing the input back: a NaN in the body can't be JSON-encoded (it was a 500), and the
@@ -193,13 +210,14 @@ def _mandate_for(who: auth.Principal, req: OrderRequest) -> Mandate | None:
 
 
 @app.post("/api/orders")
-async def place_order(req: OrderRequest, who: Agent) -> dict:
+async def place_order(req: OrderRequest, who: Agent, response: Response, idempotency_key: IdemKey = None) -> dict:
     """Valio's front door (D2): re-checks the order against hard rules with fresh quotes. AUTO → confirmed,
     ASK_HUMAN → pending_approval, a hard violation or something Valio can't deliver → refused (nothing stored),
     always with reasons, suggested fixes and alternatives. Every run is audited. Needs X-Agent-Key."""
     mandate = _mandate_for(who, req)
     _catalogue_ready()
-    return await orders.place(who.buyer_id, req.requested_date, req.lines, mandate)
+    return await _once(response, f"agent:{who.buyer_id}:orders", idempotency_key, req.model_dump(mode="json"),
+                       lambda: orders.place(who.buyer_id, req.requested_date, req.lines, mandate))
 
 
 @app.get("/api/orders/{order_id}")
@@ -215,17 +233,21 @@ class SignOff(BaseModel):
 
 
 @app.post("/api/orders/{order_id}/approve")
-async def approve_order(order_id: OrderId, who: Approver, body: SignOff | None = None) -> dict:
+async def approve_order(order_id: OrderId, who: Approver, response: Response, body: SignOff | None = None,
+                        idempotency_key: IdemKey = None) -> dict:
     """Human sign-off as the key's owner; re-runs the gate first (cut-offs pass, prices and stock change).
     Needs X-Approver-Key. The approver's name comes from the key, never the body."""
     _catalogue_ready()
-    return await orders.approve(order_id, who, body.decided_at if body else None)
+    return await _once(response, f"approver:{who.buyer_id}:approve:{order_id}", idempotency_key,
+                       body.model_dump(mode="json") if body else {},
+                       lambda: orders.approve(order_id, who, body.decided_at if body else None))
 
 
 @app.post("/api/orders/{order_id}/reject")
-async def reject_order(order_id: OrderId, who: Approver) -> dict:
+async def reject_order(order_id: OrderId, who: Approver, response: Response, idempotency_key: IdemKey = None) -> dict:
     """Human refusal as the key's owner. Needs X-Approver-Key; a request body is ignored."""
-    return await orders.reject(order_id, who)
+    return await _once(response, f"approver:{who.buyer_id}:reject:{order_id}", idempotency_key, {},
+                       lambda: orders.reject(order_id, who))
 
 
 @app.get("/api/audit")

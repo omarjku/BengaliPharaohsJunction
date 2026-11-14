@@ -5,7 +5,7 @@ import pytest
 
 from trade_contracts import Mandate
 
-from app import catalogue, config, mandates, orders, valio
+from app import catalogue, config, mandates, orders, ratelimit, valio
 
 NOW = datetime.now(timezone.utc)
 REQ = date.today() + timedelta(days=2)
@@ -79,8 +79,18 @@ def shop(monkeypatch, tmp_path):
     monkeypatch.setattr(orders, "AUDIT_FILE", tmp_path / "audit.jsonl")
     monkeypatch.setattr(orders, "ORDERS_FILE", tmp_path / "orders.json")
     monkeypatch.setattr(orders, "_orders", None)
+    monkeypatch.setattr(orders, "IDEM_FILE", tmp_path / "idempotency.json")
+    monkeypatch.setattr(orders, "_idem", None)
     monkeypatch.setattr(mandates, "_MANDATES", dict(mandates._MANDATES))  # tests store their own; demo buyer kept
     monkeypatch.setattr(config, "AGENT_KEYS", "agent-chef=chef,agent-other=other")
     monkeypatch.setattr(config, "APPROVER_KEYS", "appr-chef=chef:Chef Aino,appr-other=other:Olli")
     monkeypatch.setattr(config, "VALIO_ADMIN_KEYS", "valio-ops=valio:Valio ops")
     return s
+
+
+@pytest.fixture(autouse=True)
+def fresh_rate_limits():
+    """Every test starts with full buckets (the whole suite comes from one TestClient address)."""
+    ratelimit._buckets.clear()
+    yield
+    ratelimit._buckets.clear()
