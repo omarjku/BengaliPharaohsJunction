@@ -18,6 +18,7 @@ const DOOR_STATUS: Record<string, string> = { confirmed: 'confirmed', pending_ap
 export function question(q: string, r?: Reason | null): string {
   const mins = num(r?.facts.minutes_ago)
   if (mins !== null) return `You ordered this ${mins} minute${mins === 1 ? '' : 's'} ago. Order again?`
+  if (/^Which one did you mean: /.test(q)) return 'Which one did you mean?' // the options are buttons under it
   const past = /^\w+ (\d{1,2} \w+ \d{4}) is in the past\./.exec(q)
   if (past) return `${past[1].replace(/^0/, '')} is in the past. Which delivery day?`
   return q
@@ -261,6 +262,7 @@ export const UI = {
     reask: 'Ask again',
     edit: 'Edit your request',
     days: 'Delivery days',
+    options: 'Options',
   },
   keys: {
     title: 'Keys',
@@ -320,6 +322,11 @@ export const UI = {
     co2: (v: string) => `${v} kg CO₂e per kg.`,
     per: (p: string, unit: string) => ` ${p} per ${unit}.`,
     orderInstead: 'Choose this',
+    usual: 'You usually order this',
+    plainInstead: (need: string) => `Not ${need} this time`,
+    checkThis: 'Check this: not in the order yet.',
+    addToOrder: 'Add to the order',
+    added: 'Added to the order.',
     askFor: 'Ask for this instead',
     keysFirst: 'Enter your keys first (Keys, at the top).',
     otherChoices: 'Other choices Valio has',
@@ -350,6 +357,12 @@ export const UI = {
     title: 'Your rules',
     intro: 'What the agent follows on every order. Valio’s front door checks them again.',
     needKey: 'Add your approver key under Keys to see and change your rules.',
+    know: 'What I know about your kitchen',
+    knowNote: 'From your kitchen’s profile. The agent uses it as guidance, never as a rule.',
+    knowDiet: 'Always',
+    knowUsual: (n: number) => `${n} product${n === 1 ? '' : 's'} you usually order`,
+    knowNothing: 'Nothing yet. It learns from your confirmed orders.',
+    knowFailed: 'Couldn’t load your kitchen’s profile.',
     loadFailed: 'Couldn’t load your rules.',
     loading: 'Loading your rules…',
     none: 'No rules yet. Until you add some, the agent asks you about every order.',

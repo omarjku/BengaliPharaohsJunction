@@ -33,12 +33,23 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
   const swapped = Object.entries(swap).map(([i, l]) => [Number(i), l] as const)
   const replaced = plan.lines.filter((l) => l.chosen && l.item != null && swap[l.item] !== undefined)
   // ponytail: a product the agent chose for two ingredients is one order line; swapping one ingredient drops both.
+  // Doubted lines ("check this") are left out of order_lines by the backend; the chef adds each one deliberately.
+  const [added, setAdded] = useState<Set<string>>(new Set())
+  const addedLines = plan.lines.filter((l) => l.check && added.has(l.product.id) && orderable(l) && (l.item == null || swap[l.item] === undefined))
   const orderLines = [
     ...plan.order_lines.filter((o) => !replaced.some((l) => l.product.id === o.product_id)),
-    ...swapped.map(([, l]) => ({ product_id: l.product.id, quantity: l.quantity!.quantity! })),
+    ...[...swapped.map(([, l]) => l), ...addedLines].map((l) => ({ product_id: l.product.id, quantity: l.quantity!.quantity! })),
   ]
   const total =
-    plan.cart_total_cents - replaced.reduce((a, l) => a + (l.line_total_cents ?? 0), 0) + swapped.reduce((a, [, l]) => a + (l.line_total_cents ?? 0), 0)
+    plan.cart_total_cents -
+    replaced.filter((l) => !l.check).reduce((a, l) => a + (l.line_total_cents ?? 0), 0) +
+    [...swapped.map(([, l]) => l), ...addedLines].reduce((a, l) => a + (l.line_total_cents ?? 0), 0)
+  const toggleAdd = (id: string) =>
+    setAdded((s) => {
+      const next = new Set(s)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
   const choose = (i: number, l: Line) =>
     setSwap((s) => {
       const next = { ...s }
@@ -153,6 +164,17 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
                           {c.headline({ ...r, message: c.humanize(r.message) })}
                         </span>
                       ))}
+                      {l.usual && <span className="quiet small concern">{c.UI.result.usual}</span>}
+                      {l.check && !swap[i] && (
+                        <span className="concern">
+                          <span className="option-why warn">{added.has(l.product.id) ? c.UI.result.added : c.UI.result.checkThis}</span>{' '}
+                          {orderable(l) && (
+                            <button type="button" className="link accent inline" aria-pressed={added.has(l.product.id)} onClick={() => toggleAdd(l.product.id)} disabled={ordering}>
+                              {added.has(l.product.id) ? c.UI.rules.undo : c.UI.result.addToOrder}
+                            </button>
+                          )}
+                        </span>
+                      )}
                     </div>
                   ))}
                   {others.length > 0 && (

@@ -125,7 +125,7 @@ def test_unknown_category_is_not_the_same_category(shop):
 
 def test_split_units_compared_after_resolving_the_catalogue_unit(shop):
     shop.quotes["462775"]["sales_unit"] = None   # Valio silent; catalogue says ST
-    for pid in ("476240", "463335", "102"):
+    for pid in ("476240", "463335", "102", "106"):
         shop.quotes[pid]["sales_unit"] = None
         shop.products[pid]["sales_unit"] = "KI"  # substitutes are sold per case
     assert run([("462775", 100)]).alternative_order is None
