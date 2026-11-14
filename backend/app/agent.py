@@ -689,6 +689,8 @@ async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[st
     return ids, True
 
 
+EGG_KG = 0.05  # one shelled egg, about 50 g: the shown assumption when eggs are counted but sold by weight
+_EGG_COUNT = re.compile(r"\b(?:XL|L|M|S)(\d{1,3})\b")
 _PIECES = re.compile(r"(?:(\d{1,4})\s*x\s*\d+(?:[.,]\d+)?\s*(?:g|kg|ml|cl|dl|l)\b|(\d{1,4})\s*(?:pcs|pc|kpl)\b)", re.I)
 
 
@@ -696,11 +698,22 @@ def resolve(p: dict, amount: float, unit: str) -> dict:
     """quantity.resolve, plus one everyday case it can't do from the data: pieces of a product sold by the case where
     only the NAME says how many are inside ('Croissant 36x90g', '... 56 pcs 80 g'). Used only when the resolver can't
     convert pieces; the Decisions quantity check still judges the result."""
+    name = p.get("name_en") or p.get("name_fi") or ""
+    if (unit.lower() in ("pcs", "units") and re.search(r"\b(eggs?|kananmun\w*)\b", name, re.I)
+            and not _EGG_COUNT.search(name) and not _PIECES.search(name)
+            and (w := quantity.resolve(p, amount * EGG_KG, "kg"))["quantity"] is not None):
+        # eggs counted, egg sold by weight (liquid / whole egg 1000 g): black-box E1, 80 eggs became 80 kg
+        return w | {"needs_confirmation": True, "explanation": f"{gate._qty(amount)} eggs × about "
+                    f"{int(EGG_KG * 1000)} g each (assumption) = {gate._qty(amount * EGG_KG)} kg; " + w["explanation"]}
     q = quantity.resolve(p, amount, unit)
     if unit.lower() not in ("pcs", "units") or (q["quantity"] is not None and not q["needs_confirmation"]):
         return q
-    m = _PIECES.search(p.get("name_en") or p.get("name_fi") or "")
+    m = _PIECES.search(name)
     per = int(m[1] or m[2]) if m else 0
+    if not m and re.search(r"\b(eggs?|kananmun\w*)\b", name, re.I) and (e := _EGG_COUNT.search(name)):
+        per = int(e[1])  # egg sizes carry the count: "M90 5200g" = 90 eggs (black-box A5: read as 1 egg per case)
+        if mult := re.match(r"\s*(\d{1,3})\s*x\s", name):  # "20 x Kieku Barn egg L6" = 20 packs of 6
+            per *= int(mult[1])
     if per < 2:
         return q
     lot = Fraction(str(p.get("lot_size") or 1))

@@ -33,7 +33,8 @@ kitchen buys from a food wholesaler. For each ingredient:
 - name: 1-3 English words, the way a wholesaler lists it (e.g. "potato", "whipping cream", "reindeer meat").
 - per_cover: the amount for ONE portion, and unit: one of L, dl, cl, ml, kg, g, pcs.
 - assumption: one short sentence a chef can check, e.g. "Mashed potatoes: 200 g potato per portion".
-- dietary: only constraints the menu itself states for that dish.
+- dietary: only constraints the menu itself states for that dish, and only on the ingredients that need a special
+  product to meet them (gluten-free cake: the flour, not the butter, sugar or eggs, which are naturally gluten-free).
 Skip water, salt, pepper and other trace seasonings. Use the dish names as written on the menu."""
 
 _MENU_SCHEMA = {"type": "object", "required": ["dishes"], "properties": {"dishes": {"type": "array", "items": {
@@ -50,8 +51,31 @@ def dish_tags(menu_text: str, dish: str) -> list[str]:
     """Dietary words written in the dish's own line of the menu (lines split on ; . and newlines, not 'and': dish
     names contain it). Deterministic, so a parse that drops 'lactose-free' can't make it disappear."""
     words = re.findall(r"[\wäöå]+", dish.lower())
-    return list(dict.fromkeys(tag for line in re.split(r"[;\n]|\.\s", menu_text) if agent._words_in(words, line)
-                              for word, tag in agent._WORDS.items() if word in line.lower()))
+    plain = [w for w in words if not any(w in d for d in agent._WORDS)]  # the dish's own name, without diet words
+    tags = []
+    for line in re.split(r"[;\n]|\.\s", menu_text):
+        if not agent._words_in(words, line):
+            continue
+        low, seg = line.lower(), line.lower()
+        # Two dishes on one line ("lactose-free mash and gluten-free cake"): only the words just before and in this
+        # dish's name count (black-box E4: the two dishes' diet labels were swapped).
+        hits = [m for w in plain for m in re.finditer(rf"(?<![\wäöå]){re.escape(w)}", low)]
+        if hits:
+            first, last = min(m.start() for m in hits), max(m.end() for m in hits)
+            cuts = [0] + [m.end() for m in re.finditer(r",|:| and | ja | with ", low[:first])]
+            start = cuts.pop()
+            while cuts:  # "nut-free, lactose-free cheesecake": a chunk of only diet words still belongs to the dish
+                chunk = low[cuts[-1]:start]
+                rest = chunk
+                for word in agent._WORDS:
+                    rest = rest.replace(word, " ")
+                if not re.search(r"[a-zäöå]", re.sub(r"\b(and|ja)\b|[,:]", " ", rest)):
+                    start = cuts.pop()
+                else:
+                    break
+            seg = low[start:last]
+        tags += [tag for word, tag in agent._WORDS.items() if word in seg]
+    return list(dict.fromkeys(tags))
 
 
 def apply_dietary(menu_text: str, dishes: list[dict]) -> list[Reason]:
@@ -242,6 +266,16 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
         ln.pop("_weakest", None)
     qty: dict[str, float] = {}
     price: dict[str, int] = {}
+    # A line with a doubt (low confidence, odd quantity, unlabelled, ...) never goes into order_lines silently (black-box
+    # #7: an 80 kg egg line reached the door and was held only by chance): it is listed under check_lines instead.
+    check = [ln for ln in chosen if ln["item"] in res["failed_items"]]
+    for ln in check:
+        ln["check"] = True
+    if check:
+        reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, "Left out of the order lines until you check them: "
+                               + "; ".join(agent._name(ln["product"]) for ln in check) + ". Add them back once the "
+                               "doubt on each line is cleared.", None, "Check those lines, then add them to the order."))
+    chosen = [ln for ln in chosen if not ln.get("check")]
     for ln in chosen:  # the chef confirms the whole cart, so two ingredients on one product become one order line
         qty[ln["product"]["id"]] = qty.get(ln["product"]["id"], 0) + ln["quantity"]["quantity"]
         price[ln["product"]["id"]] = gate.eur_to_cents(ln["quote"]["price"])
@@ -272,4 +306,6 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
             "cart_total_cents": sum(int((Decimal(price[p]) * Decimal(str(q))).quantize(Decimal(1), ROUND_HALF_UP))
                                     for p, q in qty.items()),
             "order_lines": [{"product_id": p, "quantity": q} for p, q in qty.items()],
+            "check_lines": [{"product_id": ln["product"]["id"], "quantity": ln["quantity"]["quantity"],
+                             "name": agent._name(ln["product"])} for ln in check],
             "decision": decision.model_dump(mode="json"), "audit_id": entry.id}

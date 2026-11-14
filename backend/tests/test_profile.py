@@ -161,3 +161,45 @@ def test_menu_reading_knows_the_kitchen_is_gluten_free(monkeypatch, tmp_path):
     asyncio.run(menu.parse_menu("regular pizza for 20 people", "helsinki-bistro"))
     assert "standing dietary needs (from its profile): gluten-free" in seen[0]
     assert seen[1] == seen[2] == menu.MENU_PROMPT
+
+
+def test_eggs_convert_through_the_count_in_the_name():
+    """Black-box A5: '180 eggs' became 180 cases of 90-egg trays (about 16,200 eggs)."""
+    def egg(name, unit="KI"):
+        return {"id": "e", "name_en": name, "sales_unit": unit, "lot_size": 1, "base_unit": unit, "units": {unit: 1.0},
+                "volume": None, "net_weight": None}
+    assert agent.resolve(egg("Kieku Organic egg M90 5200g"), 180, "pcs")["quantity"] == 2
+    assert agent.resolve(egg("Kieku Barn egg M10 580g", "RAS"), 180, "pcs")["quantity"] == 18
+    assert agent.resolve(egg("20 x Kieku Barn egg L6 408g"), 180, "pcs")["quantity"] == 2  # 120 per case, rounded up
+
+
+def test_counted_eggs_sold_by_weight_use_a_shown_assumption():
+    """Black-box E1: '80 eggs' in a menu became 80 x 1 kg of whole egg."""
+    p = {"id": "w", "name_en": "Munax whole egg barn 1000 g", "sales_unit": "ST", "lot_size": 1, "base_unit": "ST",
+         "units": {"ST": 1.0}, "volume": None, "net_weight": {"unit": "KGM", "value": 1.0}}
+    q = agent.resolve(p, 80, "pcs")
+    assert q["quantity"] == 4 and q["needs_confirmation"] and "about 50 g each (assumption)" in q["explanation"]
+
+
+def test_a_doubted_menu_line_is_not_in_order_lines(shop1, monkeypatch):  # noqa: F811
+    """Black-box #7: a flagged line went into order_lines; it is listed under check_lines instead."""
+    pizza_shop(shop1)
+    fake_gemini(monkeypatch, [{"name": "Pizza", "ingredients": [
+        {"name": "pizza base", "per_cover": 1, "unit": "L", "assumption": "1 base", "dietary": []},
+        {"name": "mozzarella", "per_cover": 0.1, "unit": "L", "assumption": "100 g", "dietary": []}]}])
+
+    async def match(item, hits):
+        return [p["id"] for p in hits]
+    monkeypatch.setattr(agent, "match", match)
+    real = agent.judge_line
+
+    async def judge(text, p, expl):
+        conf, why, weakest = await real(text, p, expl)
+        return (0.3 if "mozzarella" in text else conf), why, weakest
+    monkeypatch.setattr(agent, "judge_line", judge)
+    body = c.post("/api/agent/menu", json={"menu_text": "Pizza", "covers": 20, "requested_date": REQ.isoformat()},
+                  headers={"X-Agent-Key": "agent-lk"}).json()
+    in_order = {ln["product_id"] for ln in body["order_lines"]}
+    assert body["check_lines"] and all(x["product_id"] not in in_order for x in body["check_lines"])
+    assert "mozzarella" in body["check_lines"][0]["name"].lower()
+    assert any(r["message"].startswith("Left out of the order lines") for r in reasons(body))
