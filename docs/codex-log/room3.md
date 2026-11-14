@@ -96,3 +96,25 @@
   unconstrained. Now `menu.apply_dietary` reads the dietary words on the dish's own menu line. Allergen exclusions
   ("nut-free") go on every ingredient of that dish; a claim ("lactose-free") that no ingredient of the dish carries
   → ASK; a dietary word no dish line owns → ASK.
+
+## 8. Adversarial review of T15 menu (656b1e6): gpt-5.6-terra, effort ultra (background)
+- **Result:** no CRITICAL (the menu route never orders). 6 findings.
+- **Kept and fixed** (6984950): dietary words dropped (already fixed in 1c209ec); lingonberries/lingonberry didn't
+  merge, and duplicate-product totals differed from the door's (now `_singular` keys, and the total is computed as
+  the door does); dish grounding across the whole menu and duplicate dishes (now one menu line, counted once);
+  1e308 per cover → OverflowError 500 (left out); order_lines over the 100,000 cap (left out); a newline in an
+  ingredient name riding into the rank prompt (`_item` normalises queries to plain words).
+
+## 9. Adversarial review of plain-language rules (b209cae): gpt-5.6-terra, effort ultra (background)
+- **Result:** no CRITICAL. 9 findings.
+- **Kept and fixed** (room3-qa, rules-hardening commit): `this_order` rules saved as standing rules; fractional or
+  non-numeric cents; unknown allergens; a reliability floor of 0 (now must be 0 < v <= 1, and any lowering needs
+  confirmation); expiry removed or extended (now a looser change needing confirmation); the mandate saved before
+  its audit (now rolled back if the audit can't be written); a corrupt mandates.json (now a 503 that fails closed
+  and is never overwritten).
+- **Deferred:** concurrent same-buyer saves and in-flight orders racing a mandate change (needs a mandate
+  version/ETag with compare-and-swap; one approver per kitchen at the hackathon).
+
+## 10. Independent black-box QA (control room, 50 live cases): Room 3 items
+- HP-01 root cause measured: the Decisions API is deterministic; raw chef wording in the judge input moved scores
+  (and an authority claim raised them). Fixed with canonical judge input. See docs/GEMINI.md.
