@@ -29,27 +29,31 @@ that the mock ignored it. Direct orders reject a past date in
 Files: `docs/valio-api-notes.md`, `backend/app/valio.py`,
 `backend/app/gate.py`, `backend/app/main.py`.
 
-### 2. Terminal `999999` means unknown quantity
+### 2. Terminal `999999` means unknown; Stock `9999999999` means "not reported"
 
-**Data / behaviour.** Terminal availability reports `availableAmount: 999999`.
-It does not mean unlimited stock. The notes also report Stock values of
-`9999999999`, described as a second effectively-unlimited sentinel. That
-meaning is not verified by the backend.
+**Data / behaviour.** Terminal availability reports `availableAmount: 999999`. Some Stock lines report
+`9999999999`. Neither is a real stock figure.
 
-**Assumption.** `999999` is an unknown quantity. For review, the larger Stock
-value is an unverified sentinel, not a real stock promise. The backend does not
-yet encode that assumption.
+**Assumption.**
+- `999999` (Terminal) means **unknown**. The supplier delivers it, and Valio can't confirm that much is there.
+- `9999999999` (Stock) means **not reported**: Valio holds the item in its own warehouse but doesn't publish a count.
 
-**Code / human path.** `backend/app/valio.py` maps exactly `999999` to
-`available_amount: null`, sets `quantity_known: false`, and adds
-`quantity_unknown`. `backend/app/gate.py` emits `QTY_UNKNOWN` according to the
-mandate's uncertainty policy. The demo policy is `ASK`, so the default result
-asks the human. An explicit `DECLINE` policy declines it; an explicit
-`APPROVE` policy allows it. The code currently leaves `9999999999` as a known,
-very large amount. It does not ask about that value.
+**Code / human path.** `backend/app/valio.py` shows both as `available_amount: null` and `quantity_known: false`.
+Neither is ever counted as stock, and the flags differ:
+- `quantity_unknown` (Terminal) raises `QTY_UNKNOWN` under the mandate's uncertainty policy. The demo policy is
+  `ask`, so the human is asked.
+- `quantity_unreported` (Stock) raises no question. So a Stock line with an unreported quantity **can be confirmed
+  automatically**.
 
-Files: `docs/valio-api-notes.md`, `backend/app/valio.py`,
-`backend/app/gate.py`, `backend/app/mandates.py`,
+Why that's acceptable for the demo:
+- Every other control still applies: the auto-approve limit, the per-line cap, the weekly budget, whole units only,
+  and at most 100,000 per line.
+- A Stock line is fulfilled from Valio's own warehouse, so a shortfall is Valio's to handle, not an unknown
+  supplier's.
+
+*(Room 2 may refine this rationale.)*
+
+Files: `docs/valio-api-notes.md`, `backend/app/valio.py`, `backend/app/gate.py`, `backend/app/mandates.py`,
 `contracts/trade_contracts/quote.py`.
 
 ### 3. A cut-off can be past while availability says Monday

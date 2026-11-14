@@ -103,10 +103,9 @@
   <p class="kicker">Demo, live on Valio's API</p>
   <div class="split" style="grid-template-columns: 1.15fr 1fr; gap:72px">
     <div style="display:grid;gap:40px;align-self:center">
-      <div><span class="tag good">One box</span><p style="margin-top:12px">Order or menu, English or Finnish</p></div>
-      <div><span class="tag good">Ordered</span><p style="margin-top:12px">1000 L milk, €1,400, by itself</p></div>
-      <div><span class="tag warn">Needs your OK</span><p style="margin-top:12px">1500 L, and the chef approves</p></div>
-      <div><span class="tag warn">Asks</span><p style="margin-top:12px">Menu? "For how many guests?"</p></div>
+      <div><span class="tag good">Ordered</span><p style="margin-top:12px">"100 litraa maitoa", spoken, €156, by itself</p></div>
+      <div><span class="tag warn">Needs your OK</span><p style="margin-top:12px">1000 L, €60 over, the chef approves</p></div>
+      <div><span class="tag warn">Asks</span><p style="margin-top:12px">Menu for 80, cart of €881</p></div>
     </div>
     <div class="shots">
       <div class="frame" style="width:400px"><img src="../design/screens/3-needs-ok-390.png" alt="Held for the chef's OK"></div>
@@ -116,14 +115,14 @@
   <div class="foot"><span>Screens from a live test run (1,200 L, held, then approved)</span><span>4</span></div>
 </section>
 
-<!-- IF VOICE LANDS: uncomment this slide (and renumber the footers), then re-export. Facts: docs/valio-context.md.
+<!-- 4b Voice -->
 <section class="slide">
   <p class="kicker">Voice, during service</p>
   <h2>"Cream for Monday?" Asked hands-free, before the cut-off.</h2>
-  <p class="lead">One box for kebab shops, cafés and restaurants, typed or spoken. Same door, same rules.</p>
-  <div class="foot"><span>Push-to-talk via Gemini Live · delivery ~24 h on agreed days, so the win is the cut-off, not speed</span><span>4b</span></div>
+  <p class="lead">One box for kebab shops, cafés and restaurants, typed or spoken. Same door, same rules. In Helsinki, "as soon as possible" gets Cash &amp; Carry and Click &amp; Collect suggestions.</p>
+  <div class="foot"><span>Push-to-talk · Gemini transcribes in ~1 s, Finnish too · delivery ~24 h on agreed days, so the win is the cut-off</span><span>4b</span></div>
 </section>
--->
+
 
 <!-- 5 Trust and controls -->
 <section class="slide">
@@ -162,9 +161,9 @@
   <p class="kicker">Open by design · J5</p>
   <h2>No proprietary format.</h2>
   <div class="cols3">
-    <div><h3>Implemented</h3><p>OpenAPI 3.1, JSON Schemas, MCP server, Ed25519 signed statements, GS1 allergens</p></div>
+    <div><h3>Implemented</h3><p>OpenAPI 3.1, JSON Schemas, MCP server, Ed25519 signed statements, RFC 9421 agent signing (optional), GS1 allergens</p></div>
     <div><h3>Mapped</h3><p>Peppol BIS Order / UBL 2.1, AP2 mandates</p></div>
-    <div><h3>Next</h3><p>RFC 9421 signed requests, signed mandates, Postgres</p></div>
+    <div><h3>Next</h3><p>Signed AP2-style mandates, Postgres</p></div>
   </div>
   <div class="foot"><span>MIT · public repo · docs/STANDARDS.md</span><span>7</span></div>
 </section>
@@ -183,9 +182,9 @@
       <p style="margin-top:32px;font-size:28px;color:var(--ink-2)">30 hand-labelled cases, real Valio products</p>
     </div>
     <div>
-      <p style="font-size:30px;color:var(--ink-2);margin-bottom:24px">"10 kg sugar for baking"</p>
-      <p><span class="tag bad">below 0.5</span>&nbsp; 500 × 5 g sachets</p>
-      <p style="margin-top:24px"><span class="tag good">≈0.9</span>&nbsp; caster sugar</p>
+      <p style="font-size:30px;color:var(--ink-2);margin-bottom:24px">Caught by our own QA</p>
+      <p><span class="tag bad">trap</span>&nbsp; coffee milk for "milk"</p>
+      <p style="margin-top:20px;font-size:32px;color:var(--ink-2)">Cheapest and barely confident, so it won on price. Now confidence leads, and it's a labelled trap.</p>
     </div>
   </div>
   <div class="foot"><span>Gemini Decisions API · calibrated confidence</span><span>8</span></div>

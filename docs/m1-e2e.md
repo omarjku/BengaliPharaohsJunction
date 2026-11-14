@@ -15,40 +15,35 @@ Money is net of VAT. Delivery date: Monday 2026-11-16.
 Path A was run on Sun 15 Nov 2026 against a local backend with the live Valio mock and live Gemini (the same code
 as the deployment). Path C is covered by `backend/tests/test_agent.py`.
 
-## A. "1000 L lactose-free milk for Monday": confirmed automatically
+## A. "100 litraa laktoositonta maitoa maanantaiksi": confirmed automatically, in Finnish
 
-Run twice on Sun 15 Nov 2026, with the same result both times: local backend on the integration code, live Valio
-mock, live Gemini.
+Measured on Sun 15 Nov on the deployed API (`smoke-kitchen`, the same rules as the demo kitchen), typed or spoken.
 
-1. Gemini parses `milk, 1000 L, claims [FREE_FROM_LACTOSE]` and picks the real milks out of the keyword hits.
-   Keyword search alone ranks "milk ice cream" first.
-2. Each candidate is quoted live at Valio. Terminal milks have no line total: their cut-off (Thu 12 Nov) has passed
-   and their stock is reported as 999999 (= unknown).
-3. The Gemini Decisions API asks, for each orderable candidate, "is it the product?" (without amounts) and "is the
-   quantity right?" (with the resolver's explanation). The agent takes the weaker answer:
+1. Gemini parses the Finnish request: milk, 100 L, lactose-free.
+2. The matching milks are quoted live at Valio. Terminal milks are rejected: their cut-off has passed and their stock
+   is 999999 (= unknown).
+3. The Gemini Decisions API asks, for each orderable candidate, "is it the product?" and "is the quantity right?".
+   Confidence leads, and price only breaks near-ties (within 0.10):
 
 | product | Decisions P(yes) | line total | |
 |---|---|---|---|
-| 464201 Valio semi-skimmed milk 1 l lactose free UHT | ≈0.95 | EUR 1,560.00 | alternative |
-| 464073 Valio whole milk 1 l lactose free UHT | ≈0.95 | EUR 1,640.00 | alternative |
-| **463335 Valio Eila 3 % milk drink 1 l lactose free** | **≈0.9** | **EUR 1,400.00** | **chosen** |
+| Valio whole milk 1 l lactose free UHT | ≈0.9 | EUR 164.00 | near-tie, dearer |
+| **Valio semi-skimmed milk 1 l lactose free UHT** | **≈0.85** | **EUR 156.00** | **chosen** |
+| Valio Eila 3 % milk drink 1 l lactose free | below 0.70 | EUR 140.00 | judged a different product |
 
-All three clear the 0.80 threshold, so the cheapest total wins. Exact scores per run are kept in one place,
-[`docs/GEMINI.md`](GEMINI.md), because Gemini output can shift a little between runs.
+4. EUR 156 is within every limit, so the door returns **`confirmed`, `AUTO`**. Exact scores are in
+   [`docs/GEMINI.md`](GEMINI.md).
 
-4. EUR 1,400 is within the EUR 1,500 auto-approve limit, so the door returns **`confirmed`, outcome `AUTO`**.
-5. The audit log holds the agent's entry (the chef's words, the rejected Terminal options and why) and the door's
-   entry.
+**History.**
+- Sat 14 Nov: the milk drink was the agent's pick.
+- Sun 15 Nov morning: Valio *coffee* milk won on price at barely 0.72. Our QA caught it.
+- Since the ranking fix, confidence leads, and coffee milk is a labelled trap in the eval.
 
-**History.** An earlier run (Sat 14 Nov) scored the milk drink below 0.8. The agent then picked semi-skimmed milk at
-EUR 1,560 and the order was held for the chef. Room 3's labelled evaluation showed that asking about product and
-quantity in one question biased the score (`docs/GEMINI.md`), so the judge now asks them separately.
+## B. "1000 L lactose-free milk for Monday": held, the chef signs off
 
-## B. "1500 L lactose-free milk for Monday": held, the chef signs off
-
-The same choice: 1,500 ST × EUR 1.40 = **EUR 2,100.00**. The front door holds it: **`pending_approval`,
-`ASK_HUMAN`**, with `LINE_OVER_CAP` (above the EUR 2,000 per-line cap) and `SPEND_OVER_LIMIT` (above the EUR 1,500
-auto-approve limit). The other two milks ride along as alternatives.
+The same choice: 1,000 × EUR 1.56 = **EUR 1,560**, which is EUR 60 over the EUR 1,500 auto-approve limit. The front
+door holds it: **`pending_approval`, `ASK_HUMAN`, `SPEND_OVER_LIMIT`**, with whole milk as an alternative. 1500 L
+would be EUR 2,340, held for `LINE_OVER_CAP` as well.
 
 Sign-off:
 - `POST /api/orders/{id}/approve` with the **agent key** → **401**. An agent can never approve its own order.
