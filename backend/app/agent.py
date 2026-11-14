@@ -282,8 +282,11 @@ def ungrounded(text: str, item: dict) -> str | None:
 
 def unassigned_tags(text: str, items: list[dict]) -> list[str]:
     """Dietary words in the chef's text that no item carries ('20 L milk, lactose-free' splits off the word)."""
+    # A tag counts as assigned only on an item whose own clause states it (or the only item): otherwise a parse
+    # that hangs "lactose-free" on the butter would leave the milk unconstrained and still pass.
     have = {t for t, (claims, allergens) in DIETARY.items() for it in items
-            if set(claims) <= set(it["claims"]) and set(allergens) <= set(it["exclude_allergens"])}
+            if set(claims) <= set(it["claims"]) and set(allergens) <= set(it["exclude_allergens"])
+            and (len(items) == 1 or t in keyword_tags(text, it))}
     return sorted({tag for word, tag in _WORDS.items() if word in text.lower()} - have)
 
 
@@ -417,10 +420,6 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
             reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The request says {', '.join(t.replace('_', '-') for t in lost)}"
                                    " but it isn't clear which product that applies to. Nothing was ordered.", None,
                                    "Put the dietary word next to its product, e.g. '20 L lactose-free milk'."))
-    keys = [(i["query"].lower(), i["amount"], (i["unit"] or "").lower()) for i in request["items"]]
-    if len(set(keys)) < len(keys):  # the same line twice would silently double the order
-        reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, "The same item appears more than once in the request. Nothing "
-                               "was ordered.", None, "Send each product once, with the total amount."))
     if not request["items"]:
         reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, "No product could be read from the request.", None,
                                "Say what to order and how much, e.g. '1000 L lactose-free milk'."))
@@ -555,18 +554,20 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
         orders._append_audit(entry)
         return entry.id
 
+    pids = [ln["product"]["id"] for ln in chosen]
+    if len(set(pids)) < len(pids):  # judged on what would be ORDERED: never add two items' quantities together
+        reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, "Two items in the request resolve to the same product, so the "
+                               "order would add their amounts together. Nothing was ordered.", None,
+                               "Send each product once, with the total amount."))
     confs = [ln["confidence"] for ln in chosen]
     confidence = min(confs) if confs and None not in confs else None  # Decision.confidence: the weakest chosen line
     decision = _decision(run_id, reasons, alternatives, now, confidence)
     order, audit_id = None, audit(decision)  # the agent's own decision is logged before the door sees anything
     if chosen and decision.outcome == "AUTO" and mandate:
-        qty_by_pid: dict[str, float] = {}
-        for line in chosen:  # two items resolving to one product become one order line
-            pid = line["product"]["id"]
-            qty_by_pid[pid] = qty_by_pid.get(pid, 0) + line["quantity"]["quantity"]
-        try:
-            order = await orders.place(buyer_id, requested, [SimpleNamespace(product_id=p, quantity=q)
-                                                             for p, q in qty_by_pid.items()], mandate)
+        try:  # product ids are unique here (duplicates asked above)
+            order = await orders.place(buyer_id, requested, [SimpleNamespace(product_id=ln["product"]["id"],
+                                                                             quantity=ln["quantity"]["quantity"])
+                                                             for ln in chosen], mandate)
         except HTTPException as e:
             reasons.append(gate._r(C.ENGINE_ERROR, ASK, f"The front door couldn't take the order: {e.detail}", None,
                                    "Retry in a moment."))
