@@ -221,8 +221,9 @@ async def place_order(req: OrderRequest, who: Agent, response: Response, idempot
 
 
 @app.get("/api/orders/{order_id}")
-def get_order(order_id: OrderId, who: Approver) -> dict:
-    """One of the approver's buyer's orders. Needs X-Approver-Key."""
+def get_order(order_id: OrderId, who: Annotated[auth.Principal, Depends(auth.order_reader)]) -> dict:
+    """One of the caller's buyer's orders (read-only). X-Approver-Key, or X-Agent-Key so an agent can follow an
+    order it placed. Another buyer's order is 404, like an unknown id, so ids don't leak."""
     return orders.get(order_id, who.buyer_id)
 
 

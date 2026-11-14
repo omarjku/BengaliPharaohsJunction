@@ -65,6 +65,14 @@ def approver(x_approver_key: Annotated[str | None, Header()] = None) -> Principa
     return p
 
 
+def order_reader(x_agent_key: Annotated[str | None, Header()] = None,
+                 x_approver_key: Annotated[str | None, Header()] = None) -> Principal:
+    """Read-only access to one buyer's orders: the buyer's approver, or its agent checking an order it placed."""
+    if x_approver_key is not None or x_agent_key is None:
+        return approver(x_approver_key)
+    return agent(x_agent_key)
+
+
 def valio_admin(x_valio_admin_key: Annotated[str | None, Header()] = None) -> Principal:
     """Valio's own view across buyers. Principal.buyer_id is the label from the key (e.g. "valio"), not a buyer."""
     p = _match(config.VALIO_ADMIN_KEYS, x_valio_admin_key, "X-Valio-Admin-Key")
