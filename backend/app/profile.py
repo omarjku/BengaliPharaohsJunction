@@ -13,6 +13,7 @@ A revoked seed stays revoked (the loader never re-adds a memory the log has seen
 import hashlib
 import json
 import os
+import re
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -680,6 +681,82 @@ def _note_chunks(text: str) -> list[str]:
     return [text[index:index + 400] for index in range(0, min(len(text), 8_000), 400) if text[index:index + 400]]
 
 
+def _fallback_about(about: str) -> dict:
+    """Extract the interview's concrete facts when structured extraction is unavailable."""
+    from . import agent
+
+    text = str(about or "")
+    lines = [line.split(":", 1)[1].strip() if ":" in line else line.strip() for line in text.splitlines()]
+    full = "\n".join(lines)
+    out = {}
+
+    if match := re.search(r"\b(\d+)\s*[- ]?\s*seat\s+([^.!?\n]+)", full, re.I):
+        business = match.group(0).strip(" .")
+        business = re.sub(r"\s+in\s+[A-Z][\w-]+\s*$", "", business).strip()
+        out["business_type"] = business
+        out["covers"] = int(match.group(1))
+    if match := re.search(r"\b(?:in|at)\s+([A-Z][\w-]+)", next((line for line in lines if "seat" in line.lower()), "")):
+        out["location"] = {"city": match.group(1), "region": None}
+
+    delivery = " ".join(line for line in lines if re.search(r"deliver|receive|weekday", line, re.I))
+    found_days = [day for day in WEEKDAYS if re.search(rf"\b{day}\w*\b", delivery, re.I)]
+    if len(found_days) >= 2 and re.search(r"\b(?:through|to|-)\b", delivery, re.I):
+        first, last = WEEKDAYS.index(found_days[0]), WEEKDAYS.index(found_days[-1])
+        out["delivery_days"] = WEEKDAYS[first:last + 1] if first <= last else found_days
+    elif found_days:
+        out["delivery_days"] = [day for day in WEEKDAYS if day in found_days]
+
+    dietary = []
+    for phrase, tag in (("gluten[- ]free", "gluten_free"), ("vegan", "vegan"),
+                        ("vegetarian", "vegetarian"), ("lactose[- ]free", "lactose_free")):
+        if re.search(rf"\b{phrase}\b", full, re.I):
+            dietary.append(tag)
+    if dietary:
+        out["dietary"] = sorted(set(dietary))
+    allergens = []
+    for name in catalogue.ALLERGEN_NAMES.values():
+        stem = name.removesuffix("s")
+        if re.search(rf"\b{re.escape(stem)}s?\b", full, re.I) and re.search(
+                rf"\b{re.escape(stem)}s?\b[^.\n]{{0,30}}\b(?:allerg|avoid|free)\w*\b|"
+                rf"\b(?:allerg|avoid|free)\w*\b[^.\n]{{0,30}}\b{re.escape(stem)}s?\b", full, re.I):
+            allergens.append(name)
+    if allergens:
+        out["allergens"] = sorted(set(allergens))
+
+    if match := re.search(r"(?:€|eur(?:os?)?|budget|order total)[^\d]{0,12}(\d[\d\s,.]*)|"
+                          r"(\d[\d\s,.]*)[^\d]{0,12}(?:€|eur(?:os?)?)", full, re.I):
+        raw = next(value for value in match.groups() if value is not None)
+        out["spend_comfort"] = float(raw.replace(" ", "").replace(",", ""))
+
+    standing = []
+    for day in WEEKDAYS:
+        match = re.search(rf"\b{day}\w*\b(?=[^.!?\n]*\b(?:order|usual|regular|standing)\b)[^.!?\n]*",
+                          full, re.I)
+        if not match:
+            continue
+        segment = match.group(0)
+        first_amount = re.search(r"\d[\d\s,.]*\s*(?:l|litre\w*|kg|kilo\w*|g|gram\w*)\b", segment, re.I)
+        if not first_amount:
+            continue
+        segment = segment[first_amount.start():]
+        normalised = re.sub(r"\blit(?:re|res|er|ers)\b|\blitraa?\b", "L", segment, flags=re.I)
+        normalised = re.sub(r"\b(?:kilograms?|kilos?)\b", "kg", normalised, flags=re.I)
+        normalised = re.sub(r"\b(?:grams?)\b", "g", normalised, flags=re.I)
+        parsed = agent.fallback_parse(normalised)
+        parsed_lines = [{"text": f"{item['amount']:g} {item['unit']} {item['query']}".strip(),
+                         "quantity": item["amount"], "unit": item["unit"]}
+                        for item in parsed if item.get("query") and item.get("amount") is not None and item.get("unit")]
+        if parsed_lines:
+            standing.append({"weekday": day, "lines": parsed_lines})
+    if standing:
+        out["standing_orders"] = standing
+
+    if match := re.search(r"\b(?:usually|regularly)\s+(?:buy|order|use)\s+([^.!?\n]+)", full, re.I):
+        products = re.split(r",|\band\b", match.group(1), flags=re.I)
+        out["usual_products"] = [product.strip(" .") for product in products if product.strip(" .")]
+    return out
+
+
 async def from_about(about: str) -> tuple[dict, list[str]]:
     """Free text or dictated speech → (proposed answers, unclear) via Gemini structured output. Nothing is stored."""
     from . import agent
@@ -707,9 +784,12 @@ async def from_about(about: str) -> tuple[dict, list[str]]:
         "unclear": {"type": "array", "items": {"type": "string"}}}, "required": ["unclear"]}
     out = await agent._gemini(ABOUT_SYSTEM.replace("{diets}", ", ".join(diets)),
                               f"<chef_text>\n{about}\n</chef_text>", schema)
+    fallback = _fallback_about(about)
     if out is None:
-        return {"notes": _note_chunks(about)}, ["Couldn't read the description right now; the spoken text is kept as notes."]
+        return {**fallback, "notes": _note_chunks(about)}, ["Couldn't read the description right now; the spoken text is kept as notes."]
     raw = {k: v for k, v in out.items() if k != "unclear" and v not in (None, "", [], {})}
+    for key, value in fallback.items():
+        raw.setdefault(key, value)
     ok, errors = validate(raw)
     unclear = [str(u)[:200] for u in (out.get("unclear") or []) if isinstance(u, str)][:10]
     notes = list(ok.get("notes") or [])
