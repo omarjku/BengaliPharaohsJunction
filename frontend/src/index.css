@@ -411,3 +411,21 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
 .answer-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
 .answer-box .mic { inset-block-end: 6px; }
 @media (max-width: 600px) { .answer-box .mic { width: 44px; height: 44px; } }
+
+/* --- Valio view: filters, the security list set apart, one section per kitchen. */
+.filters { display: flex; flex-wrap: wrap; gap: var(--s3) var(--s5); margin-block: var(--s5) var(--s2); }
+.filter { display: grid; gap: var(--s1); font: var(--t-small); color: var(--ink-2); }
+.filter select {
+  min-height: var(--tap); padding: 0 var(--s7) 0 var(--s3); border: 1px solid var(--field-line); border-radius: var(--radius);
+  background: var(--surface); color: var(--ink); font: var(--t-body); max-width: 100%;
+}
+.filter select:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+.security { margin-block-start: var(--s6); }
+.security-row { padding-block: var(--s3); border-block-end: 1px solid var(--line); }
+.security .event-said { white-space: normal; }
+.kitchen { margin-block-start: var(--s7); }
+.kitchen-title { font: var(--t-title); display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; }
+.kitchen-title .quiet { font-weight: 400; }
+.valio-link { margin-block-start: var(--s5); }
+.verify { min-height: 44px; padding-inline: 0; }
+.flush-link { padding-inline: 0; }

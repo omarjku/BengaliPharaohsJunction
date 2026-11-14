@@ -72,3 +72,6 @@ export function ownWords(m: { hard_rules: { source_text?: string | null }[] }, s
   if (!s || s.startsWith('Default:') || s.length > 140) return null
   return m.hard_rules.filter((r) => r.source_text === s).length === 1 ? s : null
 }
+
+// "lapland-kitchen" -> "Lapland kitchen": the buyer id is all the API tells us about the buyer.
+export const buyerLabel = (id: string) => id.replace(/[-_.]+/g, ' ').replace(/^./, (c) => c.toUpperCase())
