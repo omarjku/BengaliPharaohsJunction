@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -14,11 +15,13 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (AwareDatetime, BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StringConstraints,
+                      field_validator, model_validator)
 from trade_contracts import Mandate
 
-from . import (agent, ask, auth, catalogue, config, gate, httpsig, kitchen, live, mandates, menu, orders, profile,
-               progress, quantity, ratelimit, rules, signing, valio, vision, voice)
+from . import (agent, ask, auth, catalogue, calendar as kitchen_calendar, chat_agent, config, gate, httpsig, interview, kitchen,
+               live, mandates, menu, orders, profile, progress, quantity, ratelimit, rules, sandbox, signing, valio, vision,
+               voice)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -34,6 +37,17 @@ app = FastAPI(
     version="0.1.0",
 )
 app.add_middleware(CORSMiddleware, allow_origins=config.FRONTEND_ORIGINS, allow_methods=["*"], allow_headers=["*"])
+
+
+@app.post("/api/sandbox")
+def create_sandbox(request: Request) -> dict:
+    """Mint a 24-hour QR test kitchen; its credentials are returned only in this response."""
+    if not config.SANDBOX_ENABLED:
+        raise HTTPException(404, detail="Test kitchens are switched off")
+    if (wait := ratelimit.wait_s("sandbox", ratelimit.client_ip(request))) > 0:
+        raise HTTPException(429, detail="Too many test kitchens from this network, try again in a while",
+                            headers={"Retry-After": str(math.ceil(wait))})
+    return sandbox.mint()
 
 
 @app.get("/api/health")
@@ -245,7 +259,7 @@ async def place_order(req: OrderRequest, who: Agent, request: Request, response:
 
     async def act():  # readiness only matters for a new action; a stored replay is served during catalogue startup
         _catalogue_ready()
-        return await orders.place(who.buyer_id, req.requested_date, req.lines, mandate)
+        return await orders.place(who.buyer_id, req.requested_date, req.lines, mandate, actor=who)
     effective = {"requested_date": req.requested_date.isoformat(), "lines": [ln.model_dump() for ln in req.lines]}
     return await _once(response, who, f"agent:{who.buyer_id}:orders", idempotency_key, effective, act)
 
@@ -395,7 +409,11 @@ async def agent_run(req: AgentRunRequest, who: Agent) -> dict:
     if (req.buyer_id or who.buyer_id) != who.buyer_id:
         raise HTTPException(403, detail="This agent key may only run the agent for its own buyer")
     _catalogue_ready()
-    return await agent.run(req.text, req.requested_date, who.buyer_id)
+    token = auth.CURRENT_AGENT.set(who)
+    try:
+        return await agent.run(req.text, req.requested_date, who.buyer_id)
+    finally:
+        auth.CURRENT_AGENT.reset(token)
 
 
 # --- T15 menu → cart: a proposal only (always ASK_HUMAN); the chef orders it by posting order_lines to /api/orders.
@@ -458,6 +476,43 @@ async def agent_menu(req: MenuRequest, who: Agent, request: Request,
         chef = True
     return await menu.propose(req.menu_text, req.covers, req.requested_date, who.buyer_id,
                               overrides=[o.model_dump() for o in req.overrides], by_chef=chef, have=req.have)
+
+
+# --- Delivery calendar and buyer-owned weekly menus. Menus edit with the approver key; planning and calendar reads
+# use the same agent key as the front door and never place an order by themselves.
+@app.get("/api/menus/weekly")
+def get_weekly_menus(who: Agent) -> list[dict]:
+    return kitchen_calendar.weekly_menus(who.buyer_id)
+
+
+@app.put("/api/menus/weekly/{weekday}")
+def put_weekly_menu(weekday: str, req: kitchen_calendar.WeeklyMenuInput, who: Approver) -> dict:
+    return kitchen_calendar.save_weekly_menu(who.buyer_id, weekday, req)
+
+
+@app.delete("/api/menus/weekly/{weekday}")
+def delete_weekly_menu(weekday: str, who: Approver) -> dict:
+    return kitchen_calendar.delete_weekly_menu(who.buyer_id, weekday)
+
+
+@app.post("/api/menus/weekly/{weekday}/plan")
+async def plan_weekly_menu(weekday: str, who: Agent, target_date: date = Query(..., alias="date")) -> dict:
+    return await kitchen_calendar.plan_weekly_menu(who.buyer_id, weekday, target_date)
+
+
+@app.get("/api/calendar")
+def get_calendar(who: Agent, start: date = Query(..., alias="from"), end: date = Query(..., alias="to")) -> dict:
+    return kitchen_calendar.calendar_view(who.buyer_id, start, end)
+
+
+@app.post("/api/calendar/recurring/{weekday}/place")
+async def place_recurring(weekday: str, who: Agent, target_date: date = Query(..., alias="date")) -> dict:
+    return await kitchen_calendar.place_recurring(who.buyer_id, weekday, target_date)
+
+
+@app.post("/api/calendar/recurring/{weekday}/skip")
+def skip_recurring(weekday: str, who: Approver, target_date: date = Query(..., alias="date")) -> dict:
+    return kitchen_calendar.skip_recurring(who.buyer_id, weekday, target_date)
 
 
 # --- The chef's rules in plain language (T09 compiler). Human acts: X-Approver-Key only; an agent key can never
@@ -543,8 +598,19 @@ class OnboardingRequest(BaseModel):
     Without confirm=true nothing is stored: the response is a preview to show and edit."""
     model_config = ConfigDict(extra="forbid")
     answers: dict[str, Any] | None = Field(default=None, max_length=20)
-    about: str | None = Field(default=None, max_length=2000)
+    about: str | None = Field(default=None, max_length=6000)
     confirm: bool = False
+
+
+class InterviewAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    topic: str = Field(min_length=1, max_length=64)
+    text: str = Field(min_length=1, max_length=6_000)
+
+
+class InterviewNextRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    answers: list[InterviewAnswer] = Field(default_factory=list, max_length=50)
 
 
 @app.get("/api/profile/onboarding")
@@ -574,14 +640,88 @@ async def post_onboarding(req: OnboardingRequest, who: Approver) -> dict:
     proposed, unclear = (await profile.from_about(req.about)) if req.about else ({}, [])
     proposed = {**proposed, **answers}  # what the chef typed beats what Gemini read
     questions = {q["id"]: q["question"] for q in profile.onboarding(who.buyer_id)["questions"]}
-    return {"stored": False, "proposed": [{"id": k, "question": questions[k], "value": v} for k, v in proposed.items()],
+    return {"stored": False, "proposed": [{"id": k, "question": questions.get(k, "What else should I remember about your kitchen?"), "value": v}
+                                           for k, v in proposed.items()],
             "unclear": unclear, "hints": profile.hints(proposed)}
+
+
+@app.post("/api/profile/interview/next")
+async def interview_next(req: InterviewNextRequest, who: Agent) -> dict:
+    """Advance the short, stateless kitchen interview. Agent-key access is read-only; confirmation remains on onboarding."""
+    try:
+        return await interview.next_step(who.buyer_id, [answer.model_dump() for answer in req.answers])
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e)) from None
 
 
 @app.get("/api/profile")
 def get_profile(who: Agent) -> dict:
     """The calling buyer's profile, read-only (guidance, never rules): standing dietary needs with the reason, usual
     product ids, the remembered items with why each is used, open questions, recent confirmed orders."""
+    return profile.context(who.buyer_id)
+
+
+class KitchenCoversRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mon: StrictInt | None = Field(default=None, ge=0, le=5000)
+    tue: StrictInt | None = Field(default=None, ge=0, le=5000)
+    wed: StrictInt | None = Field(default=None, ge=0, le=5000)
+    thu: StrictInt | None = Field(default=None, ge=0, le=5000)
+    fri: StrictInt | None = Field(default=None, ge=0, le=5000)
+    sat: StrictInt | None = Field(default=None, ge=0, le=5000)
+    sun: StrictInt | None = Field(default=None, ge=0, le=5000)
+
+
+class StandingOrderLineRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=200)
+    product_id: ProductId | None = None
+    quantity: StrictFloat | StrictInt | None = Field(default=None, gt=0, le=1_000_000, allow_inf_nan=False)
+    unit: str | None = Field(default=None, max_length=20)
+
+
+class StandingOrderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    lines: list[StandingOrderLineRequest] = Field(min_length=1, max_length=50)
+
+
+@app.get("/api/kitchen/history")
+def get_kitchen_history(who: Agent) -> dict:
+    return kitchen.history(who.buyer_id)
+
+
+@app.put("/api/kitchen/history/covers")
+def put_kitchen_covers(req: KitchenCoversRequest, who: Approver) -> dict:
+    covers = {key: getattr(req, key) for key in kitchen.DAY_KEYS if key in req.model_fields_set}
+    if not covers:
+        raise HTTPException(422, detail="Send at least one weekday cover count.")
+    if any(value is None for value in covers.values()):
+        raise HTTPException(422, detail="Cover counts must be integers.")
+    return kitchen.save_covers(who.buyer_id, covers)
+
+
+@app.post("/api/kitchen/history/clear-example")
+def post_clear_kitchen_example(who: Approver) -> dict:
+    return kitchen.clear_example(who.buyer_id)
+
+
+@app.put("/api/profile/standing-orders/{weekday}")
+def put_standing_order(weekday: str, req: StandingOrderRequest, who: Approver) -> dict:
+    try:
+        profile.update_standing_order(who.buyer_id, weekday, [line.model_dump(exclude_none=True) for line in req.lines])
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e)) from None
+    return profile.context(who.buyer_id)
+
+
+@app.delete("/api/profile/standing-orders/{weekday}")
+def delete_standing_order(weekday: str, who: Approver) -> dict:
+    try:
+        profile.delete_standing_order(who.buyer_id, weekday)
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e)) from None
+    except KeyError:
+        raise HTTPException(404, detail="No standing order for that weekday.") from None
     return profile.context(who.buyer_id)
 
 
@@ -665,6 +805,10 @@ class AskRequest(BaseModel):
         return self
 
 
+class ChatRequest(AskRequest):
+    """A text turn for the Gemini tool-calling chat agent; its follow-up shape matches /ask."""
+
+
 @app.post("/api/agent/ask")
 async def agent_ask(req: AskRequest, who: Agent) -> dict:
     """Free text → {intent: order|menu|unclear, covers, requested_date, date_source: request|text|null,
@@ -672,8 +816,24 @@ async def agent_ask(req: AskRequest, who: Agent) -> dict:
     asked (no date, menu without guests, unclear, conflicting dates), only `decision` (ASK_HUMAN) follows and nothing
     runs. Needs X-Agent-Key."""
     _catalogue_ready()
-    return await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump(),
-                         req.have)
+    token = auth.CURRENT_AGENT.set(who)
+    try:
+        return await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump(),
+                             req.have)
+    finally:
+        auth.CURRENT_AGENT.reset(token)
+
+
+@app.post("/api/agent/chat")
+async def agent_chat(req: ChatRequest, who: Agent) -> dict:
+    """Gemini text chat with grounded function calls; provider protocol failures are surfaced as provider_call_ok=false."""
+    _catalogue_ready()
+    token = auth.CURRENT_AGENT.set(who)
+    try:
+        return await chat_agent.chat(req.text, who.buyer_id, req.requested_date,
+                                     req.follow_up and req.follow_up.model_dump(), req.have)
+    finally:
+        auth.CURRENT_AGENT.reset(token)
 
 
 # --- Talk: a spoken conversation over Gemini Live (live.py). Auth is the first message: browsers can't set headers.
@@ -728,6 +888,7 @@ async def agent_ask_stream(req: AskRequest, who: Agent) -> StreamingResponse:
 
     async def work():
         progress.set_sink(queue.put_nowait)  # inside the task's own context: only this request's phases
+        token = auth.CURRENT_AGENT.set(who)
         try:
             queue.put_nowait(("result", await ask.ask(req.text, req.requested_date, who.buyer_id,
                                                       req.follow_up and req.follow_up.model_dump(), req.have)))
@@ -737,6 +898,8 @@ async def agent_ask_stream(req: AskRequest, who: Agent) -> StreamingResponse:
             logging.getLogger(__name__).exception("ask stream failed")
             queue.put_nowait(("error", {"status": 500, "detail": "Something went wrong. Check your orders before "
                                                                  "trying again."}))  # it may have got as far as an order
+        finally:
+            auth.CURRENT_AGENT.reset(token)
 
     async def events():
         # A disconnect never cancels the work: cancelling mid-order could store an order without its audit entry.

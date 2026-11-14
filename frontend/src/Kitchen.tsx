@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getKeys, getKitchenContext, MOCK, VOICE_READY } from './api'
+import { HistoryEditor } from './HistoryEditor'
+import { InterviewCard } from './InterviewCard'
 import { KcGroup } from './KcCards'
 import { MemoryPanel } from './MemoryPanel'
 import { useCopy } from './i18n'
@@ -91,6 +93,14 @@ export function Kitchen({ refreshKey }: { refreshKey: number }) {
       <section className="kitchen-section">
         <h2 className="title">{t.factsTitle}</h2>
         <MemoryPanel refreshKey={refreshKey} reloadKey={factsRefresh} />
+      </section>
+
+      <section className="kitchen-section">
+        <InterviewCard />
+      </section>
+
+      <section className="kitchen-section">
+        <HistoryEditor refreshKey={refreshKey} />
       </section>
 
       <section className="kitchen-section">

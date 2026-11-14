@@ -444,6 +444,36 @@ def test_one_clause_grounds_at_most_one_item(shop1, monkeypatch):
                                          for r in body["decision"]["reasons"])
 
 
+def test_grounding_accepts_corrections_finnish_inflections_and_ja_separator():
+    items = [
+        {"query": "maito", "amount": 20, "unit": "L"},
+        {"query": "voi", "amount": 5, "unit": "kg"},
+    ]
+    text = "20 litraa maitoa ja 5 kiloa voita perjantaiksi"
+    assert agent.ungrounded(text, items[0]) is None
+    assert agent.ungrounded(text, items[1]) is None
+    assert agent.overgrounded(text, items) == []
+    assert agent.ungrounded("20 kg mozzarellaa", {"query": "mozzarella", "amount": 20, "unit": "kg"}) is None
+    assert agent.ungrounded("5 litres of whipping cream, no wait, make it 8 litres",
+                            {"query": "whipping cream", "amount": 8, "unit": "L"}) is None
+
+
+def test_unparsed_clauses_ignore_filler_but_keep_catalogue_or_quantity_clauses(shop1):
+    item = {"query": "milk", "amount": 20, "unit": "L"}
+    assert agent.unparsed_clauses("Hi, I need 20 litres of milk", [item]) == []
+    assert agent.unparsed_clauses("Okay, so, delivered tomorrow, thanks", [item]) == []
+
+
+def test_hold_message_includes_amount_and_delivery_assumptions(shop1, monkeypatch):
+    item = {"query": "milk", "amount": 20, "unit": "L", "dietary": ["lactose_free"],
+            "amount_assumed": True, "amount_assumption": "the usual weekly amount",
+            "approval_required": {"delivery_assumption": "the next delivery"}}
+    gemini(monkeypatch, [item], ranked=["463335"])
+    body = run("20 L lactose-free milk")
+    messages = [r["message"] for r in body["decision"]["reasons"] if r["code"] == "ASSUMPTION_CONFIRM"]
+    assert messages and "the usual weekly amount" in messages[0] and "the next delivery" in messages[0]
+
+
 def test_singular_search_fallbacks():
     assert [agent._singular(w) for w in ("lingonberries", "potatoes", "biscuits", "glass", "gas", "eggs")] == [
         "lingonberry", "potato", "biscuit", "glass", "gas", "egg"]
@@ -763,3 +793,13 @@ def test_deliverable_on_the_day_wins_near_ties_only(shop1, monkeypatch):
     assert best["product"]["id"] == "476240" and "can't be delivered by" in best["why"]  # in the 0.10 band
     scores["476240"] = 0.40  # outside the band: confidence still leads, even though it arrives late
     assert [ln for ln in run(MILK + " again")["lines"] if ln["chosen"]][0]["product"]["id"] == "462775"
+
+
+def test_api_schema_strips_keys_gemini_rejects():
+    """Regression: additionalProperties made every understand/diet/expand call fail with HTTP 400 (silent fallback)."""
+    from app import agent, understand
+    cleaned = agent._api_schema(understand.SCHEMA if hasattr(understand, "SCHEMA") else
+                                {"type": "object", "additionalProperties": False,
+                                 "properties": {"a": {"type": "array", "items": {"type": "object",
+                                                                                 "additionalProperties": False}}}})
+    assert "additionalProperties" not in str(cleaned)

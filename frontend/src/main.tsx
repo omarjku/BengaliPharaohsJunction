@@ -4,9 +4,10 @@ import './index.css'
 import { useState } from 'react'
 import App from './App.tsx'
 import Landing from './Landing.tsx'
+import { isTryEntry } from './api'
 
 function Root() {
-  const skip = new URLSearchParams(location.search).has('app')
+  const skip = new URLSearchParams(location.search).has('app') || isTryEntry()
   const [entered, setEntered] = useState(() => skip || import.meta.env.MODE === 'test' || sessionStorage.getItem('fd-entered') === '1')
   const [leaving, setLeaving] = useState(false)
   function enter() {

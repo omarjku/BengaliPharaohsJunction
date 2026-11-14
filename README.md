@@ -5,13 +5,14 @@
 Junction 2026 submission for Valio Aimo's **Trusted Trade Agents** challenge.
 This is an agent-agnostic REST front door for purchasing from Valio's mock API.
 
-It turns a buyer's text request into catalogue matches, quantity conversions, live
-price and availability checks, a mandate decision, and an order or human hand-off.
-Gemini parses the request and ranks catalogue matches; the Gemini Decisions API then
-gives a calibrated confidence that each chosen product and quantity really fits the
-request, and anything under the buyer's threshold (0.70 for the demo buyers, set from a
-labelled evaluation; 0.80 for any other buyer) goes to the human. A simple parser and lexical search are the fallback. Money, stock, dates, quantities, and
-mandate checks stay in deterministic Python code. Every decision is auditable.
+It turns a buyer's text, voice, photo, or menu request into catalogue matches, quantity
+conversions, live price and availability checks, a mandate decision, and an order or
+human hand-off. `gemini-4-hydrogen` reads structured requests, menus, photos, kitchen
+profiles, and reports. `gemini-decision-1` supplies calibrated yes/no probabilities for
+product, quantity, date, plausibility, injection, substitute, menu-assumption, and rule
+checks. Money, stock, dates, quantities, and mandate checks stay in deterministic
+Python code. Every decision is auditable. If Gemini is unavailable, the order path has
+a deterministic parser/search fallback; menu and photo reading ask the chef to retry.
 
 The rule behind every answer (decision D6): when the data is uncertain, bring it to
 the human with the reason and alternatives. Never silently guess. (That is the default
@@ -19,6 +20,7 @@ the human with the reason and alternatives. Never silently guess. (That is the d
 
 ## Try it
 
+- [Open a test kitchen](https://valio-front-door.onrender.com/#try) on a phone, or scan the [Try it QR code](docs/try-qr.png). The `#try` flow calls `POST /api/sandbox` and mints a temporary Helsinki-bistro copy with no credentials to type; the kitchen, profile, and orders reset after 24 hours.
 - [Live UI](https://valio-front-door.onrender.com)
 - [API docs](https://valio-front-door-api.onrender.com/docs)
 
@@ -40,9 +42,22 @@ cp .env.example .env
 ```
 
 `dev.sh` starts the backend at `http://localhost:8000` and the Vite UI at
-`http://localhost:5173`. API docs are at `http://localhost:8000/docs`.
-Run the backend with one Uvicorn worker. The order store and lock are
-process-local.
+`http://localhost:5173`; the Vite dev server proxies `/api` to the backend. API docs
+are at `http://localhost:8000/docs`. It creates the backend virtualenv and installs
+requirements on first run when they are missing. Run the backend with one Uvicorn
+worker: the order store, Gemini caches, and lock are process-local.
+
+For explicit commands after installing the dependencies:
+
+```bash
+cd backend
+PYTHONPATH=$(pwd)/../contracts:$(pwd)/../compiler:$(pwd)/../profile \
+  .venv/bin/python -m uvicorn app.main:app --port 8000
+
+# in another terminal
+cd frontend
+npm run dev -- --port 5173
+```
 
 Set the variables from `.env.example`:
 
@@ -80,10 +95,23 @@ signature base and the limits are in `docs/STANDARDS.md` ("Signed agent requests
 
 ## Testing
 
-- **Unit and integration tests:** `cd backend && .venv/bin/python -m pytest -q tests` gives 434 passed
-  (offline, with Valio and Gemini faked).
-- **Labelled Gemini evaluation:** `backend/eval/` has 30 cases with real Valio products. It set the 0.70 threshold,
-  and now includes the coffee-milk and coffee-cream traps.
+- **Unit and integration tests:** run from `backend/` with `GEMINI_API_KEY=` and the
+  repository `contracts`, `compiler`, and `profile` directories on `PYTHONPATH`:
+
+  ```bash
+  cd backend
+  GEMINI_API_KEY= PYTHONPATH=$(pwd)/../contracts:$(pwd)/../compiler:$(pwd)/../profile \
+    .venv/bin/python -m pytest -q tests
+  ```
+
+  The suite is offline: Valio and Gemini are faked by the tests.
+  TODO: rerun after the parallel release fixes; this branch's current offline result is
+  tracked in `docs/CHECKLIST.md`.
+- **Frontend checks:** `cd frontend && npm run build && npm run lint`.
+- **Labelled Gemini evaluation:** `backend/eval/gemini_eval.py` defines 33 cases with
+  real Valio products and writes `backend/eval/results.json` when run live. The chosen
+  confidence threshold for demo buyers is 0.70; the buyer rules are in
+  `backend/app/mandates.py`.
 - **Two independent black-box QA rounds** against a real backend with the live Valio mock and live Gemini. The
   tester wrote the cases and expectations from the docs only, and read the code afterwards.
 
@@ -108,10 +136,11 @@ signature base and the limits are in `docs/STANDARDS.md` ("Signed agent requests
   - Finnish "voita" (butter) blocked;
   - no guard against duplicate orders.
 
-  **Fixed after round 2:** the ranking now lets confidence pick the product, and price only breaks near-ties
-  (`ffa93e1`). Voice silence, Finnish case forms, off-topic messages, urgency, billing and duplicates (`a79caa5`).
-  An approve that doesn't approve returns 409, the approver is signed, and substitutes that add allergens are
-  demoted (`f30c0cd`). Each of these commits adds regression tests.
+  **Latest real-Gemini release acceptance:** 7/12 flows passed in
+  `/tmp/acceptance-release-1.md`. The remaining failures cover standing-order plus-item
+  follow-ups, a 25 kg butter correction, usual-product selection, duplicate protection
+  on questions/changes, and party planning choices. TODO: rerun the acceptance flows
+  after the release fixes; no post-fix live score is claimed here.
 
 ## Demo buyers
 
@@ -133,15 +162,20 @@ Each suggestion is marked as an assumption, because store stock and pickup aren'
 places a pickup order. The facts come from valioaimo.fi (`backend/app/urgent.py`). Any other buyer gets the earliest
 Valio delivery and its cut-off instead.
 
-## New today (Sun 15 Nov)
+## Release features
 
-- **Buyer profile** (on main): standing needs and usual products steer the choice without becoming rules. Example:
+- **Buyer profile:** standing needs and usual products steer the choice without becoming rules. Example:
   `helsinki-bistro`'s "our kitchen is gluten-free". Details are in `docs/GEMINI.md`.
-- **Photo input** (on main): photograph a handwritten list, a chalkboard or a whiteboard. `POST /api/vision/read`
+- **Photo input:** photograph a handwritten list, a chalkboard, a pantry, or a whiteboard. `POST /api/vision/read`
   reads it into text, then the same order or menu flow runs. It places nothing itself. The three test images in
   [`docs/demo-images/`](docs/demo-images/) all read as expected with real Gemini.
-- **Talk** (on main): a Gemini Live voice conversation (WebSocket `/api/live`). The agent answers aloud, asks its
+- **Talk:** a Gemini Live voice conversation (WebSocket `/api/live`). The agent answers aloud, asks its
   follow-up, and orders through the same pipeline. It has no approve tool.
+- **Kitchen setup and history:** the approver can preview and save profile facts, standing
+  weekday orders, cover counts, leftovers, and notes. These are guidance; mandates remain
+  a separate approver-controlled surface.
+- **Calendar:** weekly menus can be saved by an approver, planned by an agent, and placed
+  or skipped through the recurring-menu routes with the corresponding key.
 
 ## API surface
 
@@ -150,14 +184,22 @@ routes derive the buyer identity from the key, not from a trusted request body.
 
 | Method and route | What it does | Header |
 | --- | --- | --- |
+| `POST /api/sandbox` | Mints a 24-hour temporary test kitchen when `SANDBOX_ENABLED=1`; the UI's `#try` flow uses it. | None |
 | `POST /api/vision/read` | A photo (list, menu board, whiteboard) → the request in words. It places nothing; the UI sends the text to `/api/agent/ask`. | `X-Agent-Key` |
 | `WS /api/live` | Talk: a Gemini Live voice conversation. Its tools are `ask_agent` (the same pipeline) and a read-only catalogue search, with no approve tool. The agent key goes in the first message. | agent key (in-band) |
 | `GET /api/profile` | The buyer's profile, read-only: standing dietary needs (helsinki-bistro is gluten-free), usual products, what the agent remembers and why. Guidance, never a rule. | `X-Agent-Key` |
+| `GET /api/profile/onboarding`<br>`POST /api/profile/onboarding` | Reads the onboarding form; the approver can preview free text and save confirmed answers as profile guidance. | agent / approver |
+| `POST /api/profile/interview/next` | Advances the short, stateless kitchen interview; it never saves or approves. | `X-Agent-Key` |
+| `PUT /api/profile/standing-orders/{weekday}`<br>`DELETE /api/profile/standing-orders/{weekday}` | Saves or removes a buyer-owned standing order. | `X-Approver-Key` |
 | `POST /api/agent/ask` | **The one input box.** Free text, in English or Finnish: an order or a menu. It routes to run or menu, and asks back when it must ("For how many guests?", "For which delivery day?"). Urgent needs for a Helsinki buyer also get pickup suggestions. | `X-Agent-Key` |
 | `POST /api/voice/transcribe` | Push-to-talk audio (wav, webm, ogg or mp4; at most 1 MB / 30 s) → the chef's words (Gemini transcribe-live, about 1.3 s). Nothing is ordered here: the UI sends the text to `/api/agent/ask/stream`. | `X-Agent-Key` |
 | `POST /api/agent/ask/stream` | The same as `/api/agent/ask`, streamed as Server-Sent Events: progress lines, then the result. | `X-Agent-Key` |
 | `POST /api/agent/run` | Runs the buyer-agent flow end to end; the mandate is loaded server-side. | `X-Agent-Key` |
 | `POST /api/agent/menu` | Menu to cart: proposes `order_lines` for a menu and covers; always asks the chef. | `X-Agent-Key` |
+| `GET /api/kitchen/history`<br>`PUT /api/kitchen/history/covers` | Reads demo/chef kitchen history; the approver can save weekday cover counts. | agent / approver |
+| `POST /api/kitchen/log`<br>`GET /api/kitchen/context` | Records a validated chef report, or reads the buyer-scoped context used by planning and Talk. | `X-Agent-Key` |
+| `GET /api/menus/weekly`<br>`PUT` / `DELETE` / `POST .../plan` | Reads, edits, or plans a buyer's weekly menus. | agent / approver |
+| `GET /api/calendar`<br>`POST /api/calendar/recurring/{weekday}/place`<br>`POST .../skip` | Reads delivery calendar entries; places or skips a recurring menu. | agent / approver |
 | `POST /api/orders` | Places an order through the front door. Send an `Idempotency-Key`. | `X-Agent-Key` |
 | `GET /api/orders/{id}` | Reads one of the caller's buyer's orders (read-only). | `X-Approver-Key` or `X-Agent-Key` |
 | `POST /api/orders/{id}/approve`<br>`POST /api/orders/{id}/reject` | Human sign-off or refusal. | `X-Approver-Key` |
@@ -196,7 +238,7 @@ show request → Gemini or fallback parse → catalogue → Valio quote → quan
 `backend/app/agent.py` keeps the buyer's text, applies dietary claims and
 allergen exclusions, and uses Gemini to distinguish the requested product from
 keyword neighbours. `backend/app/quantity.py` converts amounts without silently
-guessing. The demo story, the same in every doc (measured live on Sun 15 Nov):
+guessing. The earlier live demo story, also described in `docs/GEMINI.md`, is:
 - **"100 litraa laktoositonta maitoa maanantaiksi"** (typed or spoken): lactose-free
   semi-skimmed milk, EUR 156, **confirmed automatically**. Among the milks Gemini is
   confident about, confidence leads and price only breaks near-ties.

@@ -1,4 +1,16 @@
 import { ApiError } from './api'
+import type {
+  InterviewAnswer,
+  InterviewNextResponse,
+  InterviewPreview,
+  KitchenHistory,
+  KitchenProfile,
+  KitchenLiveEvent,
+  StandingOrder,
+  StandingOrderLine,
+  Weekday,
+} from './kitchenEditApi'
+import type { Saved } from './onboardingApi'
 // Mock backend for VITE_MOCK=1 / ?mock=1 (dev only). Products are real catalogue entries; prices,
 // stock and cut-offs are illustrative. Which fixture you get depends on the request text:
 //   contains "1000" / "1 000" / "1,000"  -> ASK_HUMAN, order pending_approval (the lactose-free milk case)
@@ -7,9 +19,10 @@ import { ApiError } from './api'
 //   contains "error"                     -> a failed request (to see the error state)
 //   anything else                        -> AUTO, order confirmed (small butter order)
 import type {
-  AdminFilter, AdminRow, BuyerProfile, KitchenContext, LiveEvent, LiveSocket, PhotoRead, SecurityEvent, AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
+  AdminFilter, AdminRow, BuyerProfile, KitchenContext, LiveSocket, PhotoRead, SecurityEvent, AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
   AskInput, AskResponse, CompileResult, Mandate, MenuInput, MenuRun, Product, RuleChange, SaveResult, Quote, QuantityResolution, Reason, RunInput, Substitute,
 } from './types'
+import type { CalendarDay, CalendarEntry, CalendarLine, CalendarResponse, WeeklyMenu } from './calendarApi'
 
 const NOW = '2026-11-14T10:00:00+00:00'
 
@@ -353,6 +366,84 @@ function log(actor: string, buyer_id: string, text: string, d: Decision): string
 
 const orders = new Map<string, { buyer: string; res: OrderResponse; signedOffBy?: string }>()
 
+const CALENDAR_TODAY = '2026-11-14'
+const CALENDAR_PENDING_ID = 'mock-calendar-pending'
+const calendarRecurringPlaced = new Set<string>(['2026-11-06', '2026-11-13'])
+const calendarRecurringSkipped = new Set<string>()
+
+const CALENDAR_MENU: WeeklyMenu = {
+  weekday: 'fri',
+  name: 'Example: Lapland special — salmon soup and blueberry pie',
+  covers: 80,
+  active: true,
+  dishes: [
+    {
+      name: 'Creamy salmon soup',
+      recipe: 'Sweat onion and leek in butter. Add potatoes and fish stock, then simmer until tender. Add salmon and cream; cook gently until just done. Season with dill, salt and lemon.',
+    },
+    {
+      name: 'Blueberry quark pie',
+      recipe: 'Press the butter crust into a tin. Whisk quark, sugar and eggs until smooth, fold in blueberries, and bake until the centre is set. Cool before slicing.',
+    },
+  ],
+}
+let mockWeeklyMenus: WeeklyMenu[] = [structuredClone(CALENDAR_MENU)]
+
+const calendarLine = (name: string, quantity: number, unit: string): CalendarLine => ({ name, quantity, unit })
+
+function ensureCalendarPendingOrder() {
+  if (orders.has(CALENDAR_PENDING_ID)) return
+  const d = structuredClone(MILK.decision)
+  orders.set(CALENDAR_PENDING_ID, {
+    buyer: 'lapland-kitchen',
+    res: {
+      order_id: CALENDAR_PENDING_ID,
+      status: 'pending_approval',
+      audit_id: 'aud-calendar-pending',
+      total_cents: 156000,
+      lines: [{ product_id: '463335', name: 'Valio Eila 3 % milk drink 1 L lactose free', quantity: 1000, unit: 'ST', unit_price_cents: 156, line_total_cents: 156000 }],
+      decision: d,
+      rejected_options: [],
+      substitutes: [],
+      alternative_order: null,
+    },
+  })
+}
+
+function calendarDays(from: string, to: string): CalendarDay[] {
+  ensureCalendarPendingOrder()
+  const fridayMenu = mockWeeklyMenus.find((menu) => menu.weekday === 'fri' && menu.active)
+  const start = new Date(`${from}T12:00:00Z`)
+  const end = new Date(`${to}T12:00:00Z`)
+  const days: CalendarDay[] = []
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    const date = cursor.toISOString().slice(0, 10)
+    const entries: CalendarEntry[] = []
+    if (date === '2026-11-02') entries.push({ kind: 'delivery_confirmed', order_id: 'mock-calendar-1102', title: 'Monday pantry restock', lines: [calendarLine('Unsalted butter', 20, 'ST')], total_cents: 9700, status: 'confirmed' })
+    if (date === '2026-11-06') entries.push({ kind: 'delivery_confirmed', order_id: 'mock-calendar-1106', title: 'Friday service delivery', lines: [calendarLine('Whipping cream', 7, 'ST'), calendarLine('Milk', 12, 'ST')], total_cents: 5220, status: 'confirmed' })
+    if (date === '2026-11-09') entries.push({ kind: 'delivery_confirmed', order_id: 'mock-calendar-1109', title: 'Monday dairy delivery', lines: [calendarLine('Soft quark', 2, 'KI'), calendarLine('Unsalted butter', 4, 'ST')], total_cents: 3900, status: 'confirmed' })
+    if (date === '2026-11-13') entries.push({ kind: 'delivery_confirmed', order_id: 'mock-calendar-1113', title: 'Friday service delivery', lines: [calendarLine('Salmon', 12, 'kg')], total_cents: 18600, status: 'confirmed' })
+    if (date === '2026-11-16') {
+      const pending = orders.get(CALENDAR_PENDING_ID)?.res
+      const confirmed = pending?.status === 'confirmed'
+      entries.push(confirmed
+        ? { kind: 'delivery_confirmed', order_id: CALENDAR_PENDING_ID, title: 'Lactose-free milk delivery', lines: [calendarLine('Lactose-free milk', 1000, 'L')], total_cents: 156000, status: 'confirmed' }
+        : { kind: 'delivery_pending', order_id: CALENDAR_PENDING_ID, title: 'Lactose-free milk delivery', lines: [calendarLine('Lactose-free milk', 1000, 'L')], total_cents: 156000, status: 'pending_approval', reason: 'Waiting for your OK before the order is sent.' })
+    }
+    if (date === '2026-11-23') entries.push({ kind: 'delivery_confirmed', order_id: 'mock-calendar-1123', title: 'Monday pantry restock', lines: [calendarLine('Unsalted butter', 20, 'ST'), calendarLine('Milk', 12, 'ST')], total_cents: 28300, status: 'confirmed' })
+    if (date === '2026-11-30') entries.push({ kind: 'delivery_confirmed', order_id: 'mock-calendar-1130', title: 'Monday pantry restock', lines: [calendarLine('Whipping cream', 8, 'ST')], total_cents: 34800, status: 'confirmed' })
+    if (date === '2026-11-16' || date === '2026-11-17' || date === '2026-11-18') entries.push({ kind: 'guests_expected', value: 84, simulated: true })
+    if (date === CALENDAR_TODAY) entries.push({ kind: 'guests_expected', value: 84, simulated: true })
+    if (cursor.getUTCDay() === 5) {
+      if (!calendarRecurringSkipped.has(date)) entries.push({ kind: 'recurring_order', weekday: 'fri', lines: [calendarLine('Döner kebab meat', 20, 'kg'), calendarLine('Unsalted butter', 10, 'kg')], source: 'Friday rotisserie standing order', placed: calendarRecurringPlaced.has(date) })
+      if (fridayMenu) entries.push({ kind: 'weekly_menu', name: fridayMenu.name, dishes: fridayMenu.dishes.map((dish) => ({ name: dish.name, has_recipe: Boolean(dish.recipe?.trim()) })), covers: fridayMenu.covers })
+    }
+    const cutoff = date === '2026-11-16' ? { closing_time: '2026-11-15T13:00:00+02:00', passed: false } : undefined
+    days.push({ date, today: date === CALENDAR_TODAY, ...(cutoff ? { cutoff } : {}), entries })
+  }
+  return days
+}
+
 let mockProfile: BuyerProfile = {
   buyer_id: 'lapland-kitchen',
   dietary: [{ tag: 'gluten_free', label: 'Gluten-free kitchen', because: 'You told me during onboarding.' }],
@@ -371,6 +462,38 @@ let mockProfile: BuyerProfile = {
       source: 'answered_question', created_at: '2026-11-07T11:15:00+02:00', used_because: 'You confirmed this product for this order.', product_id: '464194',
     },
   ],
+}
+
+export async function interviewNext(answers: InterviewAnswer[]): Promise<InterviewNextResponse> {
+  await wait()
+  const answered = new Set(answers.map((answer) => answer.topic))
+  const next = INTERVIEW_QUESTIONS.find((question) => !answered.has(question.topic))
+  return next ? { done: false, topic: next.topic, question: next.question } : { done: true, preview: structuredClone(MOCK_INTERVIEW_PREVIEW) }
+}
+
+export async function confirmInterview(answers: Record<string, unknown>): Promise<Saved> {
+  await wait()
+  const business = typeof answers.business_type === 'string' ? answers.business_type : null
+  const dietary = Array.isArray(answers.dietary) ? answers.dietary.filter((value): value is string => typeof value === 'string') : []
+  const nextMemories = [...mockProfile.memories]
+  if (business) {
+    nextMemories.unshift({
+      id: 'memory-interview-business', kind: 'business_type', key: 'business_type', text: business, scope: 'always',
+      source: 'onboarding', created_at: new Date().toISOString(), used_because: null, product_id: null,
+    })
+  }
+  mockProfile = {
+    ...mockProfile,
+    dietary: dietary.length ? dietary.map((tag) => ({ tag, label: tag.replace(/_/g, '-'), because: 'You told me in the kitchen interview.' })) : mockProfile.dietary,
+    memories: nextMemories,
+  }
+  return {
+    stored: true,
+    saved: Object.keys(answers),
+    hints: [],
+    onboarding: { onboarded: true, questions: [] },
+    profile: mockKitchenProfile(),
+  }
 }
 
 const MOCK_KITCHEN_CONTEXT: KitchenContext = {
@@ -400,6 +523,88 @@ const MOCK_KITCHEN_CONTEXT: KitchenContext = {
   sources: ['demo seed (simulated door counter and POS export)', 'front door orders'],
   simulated: true,
 }
+
+const MOCK_KITCHEN_HISTORY: KitchenHistory = {
+  basis: 'example',
+  covers_by_weekday: { mon: 46, tue: 52, wed: 49, thu: 61, fri: 78, sat: 85, sun: null },
+  covers_source: { mon: 'example', tue: 'example', wed: 'example', thu: 'example', fri: 'example', sat: 'example', sun: 'example' },
+  standing_orders: [
+    {
+      weekday: 'fri',
+      lines: [
+        { text: '12 L lactose-free milk', quantity: 12, unit: 'L' },
+        { text: '20 packs unsalted butter', quantity: 20, unit: 'ST' },
+      ],
+      source: 'example',
+    },
+  ],
+  usual_products: [
+    { product_id: '463335', name: 'Valio Eila milk drink 1 l lactose free', source: 'example' },
+    { product_id: '464411', name: 'Valio butter 500 g unsalted', source: 'example' },
+  ],
+  labels: { example: 'Example history (simulated)' },
+}
+
+const mockKitchenHistory = structuredClone(MOCK_KITCHEN_HISTORY)
+
+function historyBasis(history: KitchenHistory): KitchenHistory['basis'] {
+  const hasExample = Object.values(history.covers_source).some((source) => source === 'example') ||
+    history.standing_orders.some((order) => order.source === 'example') ||
+    history.usual_products.some((product) => product.source === 'example')
+  const hasOwn = Object.values(history.covers_source).some((source) => source === 'own') ||
+    history.standing_orders.some((order) => order.source === 'own') ||
+    history.usual_products.some((product) => product.source === 'own')
+  return hasExample && hasOwn ? 'mixed' : hasExample ? 'example' : 'own'
+}
+
+function mockStandingOrders(): StandingOrder[] {
+  return mockKitchenHistory.standing_orders.map((order) => structuredClone(order))
+}
+
+function mockKitchenProfile(): KitchenProfile {
+  return {
+    buyer_id: 'lapland-kitchen',
+    dietary: mockProfile.dietary,
+    allergens: [],
+    delivery_days: [],
+    usual_product_ids: mockProfile.usual_product_ids,
+    standing_orders: mockStandingOrders().map((order) => ({ ...order, weekday: {
+      mon: 'monday', tue: 'tuesday', wed: 'wednesday', thu: 'thursday', fri: 'friday', sat: 'saturday', sun: 'sunday',
+    }[order.weekday] })),
+    notes: [],
+    usual_products: [],
+    onboarding_facts: [],
+    memories: mockProfile.memories,
+    suggested_questions: [],
+    recent_orders: [],
+    onboarded: true,
+  }
+}
+
+const MOCK_INTERVIEW_PREVIEW: InterviewPreview = {
+  stored: false,
+  proposed: [
+    { id: 'business_type', question: 'What kind of business do you run?', value: '60-seat bistro' },
+    { id: 'delivery_days', question: 'Which weekdays can you receive deliveries?', value: ['monday', 'friday'] },
+    { id: 'standing_orders', question: 'What do you order regularly, and on which days?', value: [{ weekday: 'friday', lines: [{ text: '12 L lactose-free milk', quantity: 12, unit: 'L' }] }] },
+    { id: 'dietary', question: 'Which diets does your whole kitchen always follow?', value: ['gluten_free'] },
+    { id: 'usual_products', question: 'Which products or brands do you reach for often?', value: ['Valio Eila milk drink', 'Valio butter'] },
+    { id: 'budget', question: 'What order total are you comfortable with on your own?', value: 1500 },
+  ],
+  unclear: [],
+  hints: [],
+}
+
+const EDIT_DAYS: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+const INTERVIEW_QUESTIONS: { topic: InterviewAnswer['topic']; question: string }[] = [
+  { topic: 'kitchen', question: 'What kind of kitchen is this, and how many seats or typical guests do you serve?' },
+  { topic: 'delivery_days', question: 'Which weekdays can you receive deliveries?' },
+  { topic: 'standing_orders', question: 'What do you order regularly, and on which days?' },
+  { topic: 'dietary_allergens', question: 'Which diets or allergens must your kitchen always avoid?' },
+  { topic: 'usual_products', question: 'Which products or brands do you reach for often?' },
+  { topic: 'budget', question: 'What order total are you comfortable with on your own?' },
+  { topic: 'anything_else', question: 'Is there anything else I should remember about your kitchen?' },
+]
 
 // Menu → cart (POST /api/agent/menu): two dishes for 80 covers. Amounts per cover are the agent's estimates.
 const menuLine = (
@@ -590,6 +795,100 @@ export const mockApi = {
   async kitchenContext(): Promise<KitchenContext> {
     await wait()
     return structuredClone(MOCK_KITCHEN_CONTEXT)
+  },
+
+  async kitchenHistory(): Promise<KitchenHistory> {
+    await wait()
+    return structuredClone(mockKitchenHistory)
+  },
+
+  async saveKitchenCovers(covers: Record<Weekday, number>): Promise<KitchenHistory> {
+    await wait()
+    for (const day of EDIT_DAYS) {
+      if (typeof covers[day] !== 'number' || !Number.isInteger(covers[day]) || covers[day] < 0) continue
+      mockKitchenHistory.covers_by_weekday[day] = covers[day]
+      mockKitchenHistory.covers_source[day] = 'own'
+    }
+    mockKitchenHistory.basis = historyBasis(mockKitchenHistory)
+    return structuredClone(mockKitchenHistory)
+  },
+
+  async clearExampleHistory(): Promise<KitchenHistory> {
+    await wait()
+    for (const day of EDIT_DAYS) {
+      if (mockKitchenHistory.covers_source[day] === 'example') {
+        mockKitchenHistory.covers_by_weekday[day] = null
+        mockKitchenHistory.covers_source[day] = 'own'
+      }
+    }
+    mockKitchenHistory.standing_orders = mockKitchenHistory.standing_orders.filter((order) => order.source !== 'example')
+    mockKitchenHistory.usual_products = mockKitchenHistory.usual_products.filter((product) => product.source !== 'example')
+    mockKitchenHistory.basis = 'own'
+    return structuredClone(mockKitchenHistory)
+  },
+
+  async saveStandingOrder(weekday: Weekday, lines: StandingOrderLine[]): Promise<KitchenProfile> {
+    await wait()
+    mockKitchenHistory.standing_orders = mockKitchenHistory.standing_orders.filter((order) => order.weekday !== weekday)
+    if (lines.length) mockKitchenHistory.standing_orders.push({ weekday, lines: structuredClone(lines), source: 'own' })
+    mockKitchenHistory.basis = historyBasis(mockKitchenHistory)
+    return mockKitchenProfile()
+  },
+
+  async deleteStandingOrder(weekday: Weekday): Promise<KitchenProfile> {
+    await wait()
+    mockKitchenHistory.standing_orders = mockKitchenHistory.standing_orders.filter((order) => order.weekday !== weekday)
+    mockKitchenHistory.basis = historyBasis(mockKitchenHistory)
+    return mockKitchenProfile()
+  },
+
+  async calendar(from: string, to: string): Promise<CalendarResponse> {
+    await wait()
+    return {
+      days: calendarDays(from, to),
+      legend: { delivery: 'delivery', pending: 'waiting for your OK', recurring: 'recurring order', menu: 'weekly menu', guests: 'guests expected' },
+    }
+  },
+
+  async weeklyMenus(): Promise<WeeklyMenu[]> {
+    await wait()
+    return structuredClone(mockWeeklyMenus)
+  },
+
+  async saveWeeklyMenu(weekday: Weekday, menu: WeeklyMenu): Promise<WeeklyMenu> {
+    await wait()
+    const next = { ...structuredClone(menu), weekday, active: true }
+    mockWeeklyMenus = [...mockWeeklyMenus.filter((item) => item.weekday !== weekday), next]
+    return structuredClone(next)
+  },
+
+  async deleteWeeklyMenu(weekday: Weekday): Promise<{ weekday: Weekday; deleted: boolean }> {
+    await wait()
+    mockWeeklyMenus = mockWeeklyMenus.filter((item) => item.weekday !== weekday)
+    return { weekday, deleted: true }
+  },
+
+  async planWeeklyMenu(weekday: Weekday, date: string): Promise<MenuRun> {
+    await wait()
+    const menu = mockWeeklyMenus.find((item) => item.weekday === weekday) ?? CALENDAR_MENU
+    return mockApi.menu({ menu_text: menu.name, covers: menu.covers ?? 80, requested_date: date })
+  },
+
+  async placeRecurring(weekday: Weekday, date: string): Promise<AskResponse> {
+    await wait()
+    if (weekday !== 'fri') throw new Error('This mock only has a Friday standing order.')
+    calendarRecurringPlaced.add(date)
+    calendarRecurringSkipped.delete(date)
+    return mockApi.ask({ text: '20 kg döner kebab meat for Friday', requested_date: date })
+  },
+
+  async skipRecurring(weekday: Weekday, date: string): Promise<{ weekday: string; date: string; skipped: boolean }> {
+    await wait()
+    calendarRecurringSkipped.add(date)
+    calendarRecurringPlaced.delete(date)
+    return { weekday: {
+      mon: 'monday', tue: 'tuesday', wed: 'wednesday', thu: 'thursday', fri: 'friday', sat: 'saturday', sun: 'sunday',
+    }[weekday], date, skipped: true }
   },
 
   // Pretend speech-to-text: the demo's example sentences, in turn.
@@ -793,26 +1092,41 @@ export const mockApi = {
   },
 
   // Talk: a scripted conversation, timed like the real one (the agent's audio is left out: captions only).
-  async live(h: Pick<LiveSocket, 'onEvent' | 'onClose'>): Promise<Pick<LiveSocket, 'send' | 'close'>> {
+  async live(
+    h: Pick<LiveSocket, 'onEvent' | 'onClose'> | { onEvent: (event: KitchenLiveEvent) => void; onClose: () => void },
+    mode: 'order' | 'interview' = 'order',
+  ): Promise<Pick<LiveSocket, 'send' | 'close'>> {
     let closed = false
     const timers: number[] = []
-    const at = (ms: number, e: LiveEvent) => timers.push(window.setTimeout(() => !closed && h.onEvent(e), ms))
-    const run = await mockApi.ask({ text: '1000 L lactose-free milk for Monday' })
-    at(300, { type: 'ready' })
-    at(1500, { type: 'transcript', role: 'user', text: 'I need lactose-free milk for Monday', final: false })
-    at(2300, { type: 'transcript', role: 'user', text: 'I need lactose-free milk for Monday, a thousand litres.', final: true })
-    at(2700, { type: 'transcript', role: 'agent', text: 'Give me a second to check Valio.', final: true })
-    at(3000, { type: 'tool', name: 'ask', status: 'running', label: 'Checking Valio prices…' })
-    at(5200, { type: 'tool', name: 'ask', status: 'done', label: 'Checked Valio prices' })
-    at(5300, { type: 'result', payload: run })
-    at(5600, { type: 'transcript', role: 'agent', text: 'That’s 1,560 euros, 60 over your limit, so it needs your OK. Approve it on screen.', final: true })
-    at(6200, { type: 'turn_complete' })
+    const handler = h as { onEvent: (event: KitchenLiveEvent) => void; onClose: () => void }
+    const at = (ms: number, e: KitchenLiveEvent) => timers.push(window.setTimeout(() => !closed && handler.onEvent(e), ms))
+    if (mode === 'interview') {
+      at(300, { type: 'ready' })
+      at(1000, { type: 'transcript', role: 'agent', text: 'What kind of kitchen is this, and how many guests do you serve?', final: true })
+      at(1900, { type: 'transcript', role: 'user', text: 'A 60-seat bistro in Lapland.', final: true })
+      at(2700, { type: 'transcript', role: 'agent', text: 'Which weekdays can you receive deliveries?', final: true })
+      at(3600, { type: 'transcript', role: 'user', text: 'Monday and Friday.', final: true })
+      at(4400, { type: 'interview_preview', preview: structuredClone(MOCK_INTERVIEW_PREVIEW) })
+      at(5000, { type: 'transcript', role: 'agent', text: "Here's what I'll remember. Check it on screen and confirm.", final: true })
+      at(5600, { type: 'turn_complete' })
+    } else {
+      const run = await mockApi.ask({ text: '1000 L lactose-free milk for Monday' })
+      at(300, { type: 'ready' })
+      at(1500, { type: 'transcript', role: 'user', text: 'I need lactose-free milk for Monday', final: false })
+      at(2300, { type: 'transcript', role: 'user', text: 'I need lactose-free milk for Monday, a thousand litres.', final: true })
+      at(2700, { type: 'transcript', role: 'agent', text: 'Give me a second to check Valio.', final: true })
+      at(3000, { type: 'tool', name: 'ask', status: 'running', label: 'Checking Valio prices…' })
+      at(5200, { type: 'tool', name: 'ask', status: 'done', label: 'Checked Valio prices' })
+      at(5300, { type: 'result', payload: run })
+      at(5600, { type: 'transcript', role: 'agent', text: 'That’s 1,560 euros, 60 over your limit, so it needs your OK. Approve it on screen.', final: true })
+      at(6200, { type: 'turn_complete' })
+    }
     return {
       send: () => {},
       close: () => {
         closed = true
         timers.forEach(clearTimeout)
-        h.onClose()
+        handler.onClose()
       },
     }
   },

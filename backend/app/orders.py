@@ -19,7 +19,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from trade_contracts import AuditEntry, AuditInput, Decision, Mandate, PurchaseRequest, RequestItem
 
-from . import catalogue, config, gate, mandates, signing
+from . import auth, catalogue, config, gate, mandates, signing
 from .auth import Principal
 
 # ponytail: JSON files on local disk (D8). Render's disk is ephemeral, so orders + audit vanish on redeploy and
@@ -302,7 +302,7 @@ def _busy() -> HTTPException:
 
 
 async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | None,
-                forced_reasons: list | None = None) -> dict:
+                forced_reasons: list | None = None, actor: Principal | None = None) -> dict:
     """`mandate` is the buyer's stored one (mandates.get), never the client's; None → refused (MANDATE_MISSING)."""
     oid = str(uuid4())
     for _ in range(MAX_RETRIES):
@@ -317,12 +317,14 @@ async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | N
             if mandate is not None and mandates.version(current := mandates.get(buyer_id)) != mandates.version(mandate):
                 mandate = current  # the rules were saved meanwhile (Codex audit #7): decide again under the new ones
                 continue
+            creator = actor or auth.CURRENT_AGENT.get()
             record = None if res.status == "refused" else {
                 "id": oid, "buyer_id": buyer_id, "status": res.status, "requested_date": requested_date.isoformat(),
                 "lines": res.lines, "total_cents": res.total_cents, "mandate": mandate.model_dump(mode="json"),
                 "mandate_version": res.mandate_version,
                 "decision": res.decision.model_dump(mode="json"), "signed_off_by": None,
-                "created_at": now.isoformat(), "updated_at": now.isoformat()}
+                "created_at": now.isoformat(), "updated_at": now.isoformat(),
+                "agent_key_id": creator.key_id if creator and creator.buyer_id == buyer_id else None}
             entry, fd = _entry(FRONT_DOOR, oid, buyer_id, requested_date.isoformat(), res.lines, mandate, res,
                                now=now, status=res.status)
             out = _signed(fd, _response(oid if res.status != "refused" else None, res.status, _view(res), entry.id))

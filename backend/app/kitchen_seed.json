@@ -11,6 +11,13 @@
       "sun": [70, 95]
     },
     "busiest_days": ["fri", "sat"],
+    "standing_orders": [
+      {"weekday": "mon", "lines": [{"text": "12 L milk", "product_id": "463335", "quantity": 12, "unit": "L"}]}
+    ],
+    "usual_products": [
+      {"product_id": "463335", "name": "Eila milk 1 l"},
+      {"product_id": "102", "name": "Butter block"}
+    ],
     "revenue_per_cover_eur": 38,
     "simulated_order_ledger": [
       {"date": "2026-09-25", "lines": [{"product_id": "463335", "quantity": 12, "spend_cents": 1680}, {"product_id": "102", "quantity": 4, "spend_cents": 720}]},
@@ -40,6 +47,37 @@
       "sun": [38, 44]
     },
     "busiest_days": ["sat", "sun"],
+    "standing_orders": [
+      {"weekday": "fri", "lines": [{"text": "8 L milk", "product_id": "463335", "quantity": 8, "unit": "L"}]}
+    ],
+    "usual_products": [
+      {"product_id": "463335", "name": "Eila milk 1 l"}
+    ],
+    "revenue_per_cover_eur": 95,
+    "leftovers": [
+      {"item": "salmon", "amount": [1, 3], "unit": "kg", "whole": false},
+      {"item": "bread", "amount": [1, 5], "unit": "loaves", "whole": true},
+      {"item": "cream", "amount": [1, 4], "unit": "L", "whole": false}
+    ]
+  },
+  "judge-kitchen": {
+    "seats": 40,
+    "covers": {
+      "mon": [25, 32],
+      "tue": [27, 34],
+      "wed": [28, 36],
+      "thu": [30, 38],
+      "fri": [35, 41],
+      "sat": [40, 45],
+      "sun": [38, 44]
+    },
+    "busiest_days": ["sat", "sun"],
+    "standing_orders": [
+      {"weekday": "fri", "lines": [{"text": "8 L milk", "product_id": "463335", "quantity": 8, "unit": "L"}]}
+    ],
+    "usual_products": [
+      {"product_id": "463335", "name": "Eila milk 1 l"}
+    ],
     "revenue_per_cover_eur": 95,
     "leftovers": [
       {"item": "salmon", "amount": [1, 3], "unit": "kg", "whole": false},

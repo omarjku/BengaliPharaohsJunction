@@ -83,7 +83,7 @@ def test_peanut_free_mandate_skips_the_may_contain_substitute(shop):
     subs = {s["product_id"]: s for s in res.substitutes}
     assert "101" not in subs and "100" not in subs  # contains / may contain peanuts: never offered
     skipped = {ro.product_id: [r.code.value for r in ro.reasons] for ro in res.rejected_options}
-    assert skipped["101"] == ["ALLERGEN_MAY_CONTAIN"]
+    assert skipped["101"] == ["ALLERGEN_MAY_CONTAIN", "DATA_MISSING"]
     assert all("neither containing nor 'may contain' peanuts" in s["why_safe"] for s in res.substitutes)
 
 
@@ -139,6 +139,17 @@ def test_zero_price_substitute_is_not_offered(shop):
         shop.products[pid]["category"] = "999"  # 476240 is the only candidate left
     res = run([("104", 1)])
     assert res.substitutes == [] and "476240" in {ro.product_id for ro in res.rejected_options}
+
+
+def test_alternatives_reject_cross_food_types_and_profile_avoided_allergens(shop):
+    shop.products["102"].update(name_en="Butter block", category="butter", substitutes=["peanut-butter", "ham"])
+    shop.products["peanut-butter"] = product("peanut-butter", "Peanut butter", category="butter", claims=(), contains=("AP",))
+    shop.products["ham"] = product("ham", "Ham", category="butter", claims=(), contains=("AM",))
+    shop.quotes["peanut-butter"] = quote("peanut-butter")
+    shop.quotes["ham"] = quote("ham")
+    mandate = Mandate(id="m1", buyer_id="chef", per_line_cap_cents=10**9)
+    alternatives = asyncio.run(gate._alternatives(["102"], set(), REQ, mandate, {"AM"}, NOW))
+    assert alternatives[2] == []
 
 
 def test_split_that_breaks_route_limits_is_not_proposed(shop):

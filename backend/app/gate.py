@@ -352,20 +352,27 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
         if lost:
             rs.append(_r(C.DATA_MISSING, ASK, f"{cat.get('name_en') or c} lacks {', '.join(lost)}.", c,
                          "Not offered as a substitute.", missing_claims=", ".join(lost)))
+        differs = _differs(old, cat)
+        added_allergens = [d.removeprefix("also contains ") for d in differs if d.startswith("also contains ")]
+        if added_allergens:
+            rs.append(_r(C.ALLERGEN_CONTAINS, ASK,
+                         f"{cat.get('name_en') or c} adds allergens ({'; '.join(added_allergens)}) compared with "
+                         f"{old.get('name_en') or replaces}.", c, "Not offered as a substitute.",
+                         added_allergens=", ".join(added_allergens)))
+        if not _same_kind_for_alternative(old, cat):
+            rs.append(_r(C.DATA_MISSING, ASK, f"{cat.get('name_en') or c} is not a similar kind of product.", c,
+                         "Not offered as a substitute."))
         if [r for r in rs if r.severity is not INFO]:
             bad.append(RejectedOption(product_id=c, reasons=_sorted(rs)))
         else:
-            ok.setdefault(replaces, []).append((not same_kind(old, cat), bool(_differs(old, cat)), _score(q, cat), c, q))
+            ok.setdefault(replaces, []).append((bool(_differs(old, cat)), _score(q, cat), c, q))
     alts, subs = [], []
     for replaces, ranked in ok.items():
         old = catalogue.get(replaces)
-        for i, (other, _, _, c, q) in enumerate(sorted(ranked, key=lambda x: (x[0], x[1], x[2], x[3]))[:len(TIERS)]):
+        for i, (_, _, c, q) in enumerate(sorted(ranked, key=lambda x: (x[0], x[1], x[2]))[:len(TIERS)]):
             cat = catalogue.get(c)
             differs = _differs(old, cat)
-            if other:  # a different kind of product: say so first, never "good" or better, never a split fill
-                differs = [f"a different kind of product (not {old.get('name_en') or old.get('name_fi') or replaces}): "
-                           "check it suits the dish"] + differs
-            tier = OTHER_KIND if other else "good" if differs else TIERS[i]  # full matches first
+            tier = "good" if differs else TIERS[i]
             name = cat.get("name_en") or cat.get("name_fi") or c
             amount = "unknown amount" if not q["quantity_known"] else f"{_qty(q['available_amount'])} {q['sales_unit']} available"
             why = _why_safe(cat, old, excluded, need) + (f" Differs: {'; '.join(differs)}." if differs else "")
@@ -397,6 +404,19 @@ def same_kind(old: dict, cat: dict) -> bool:
     if cat.get("id") in (old.get("substitutes") or []):
         return True
     return bool(_kind_words(old) & _kind_words(cat))
+
+
+_CROSS_TYPE_WORDS = {"peanut", "maapähkin", "ham", "kinkku", "bacon", "pekoni", "salad", "salaatti",
+                     "seasoning", "mauste"}
+
+
+def _same_kind_for_alternative(old: dict, cat: dict) -> bool:
+    """Strict offer check: same-category candidates also need a similar product name and food type."""
+    old_words, candidate_words = _kind_words(old), _kind_words(cat)
+    if not old_words & candidate_words:
+        return False
+    introduced = candidate_words - old_words
+    return not introduced & _CROSS_TYPE_WORDS
 
 
 def _differs(old: dict, cat: dict) -> list[str]:

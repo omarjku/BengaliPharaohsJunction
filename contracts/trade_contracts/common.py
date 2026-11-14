@@ -113,6 +113,7 @@ class ReasonCode(StrEnum):
     ENGINE_ERROR = "ENGINE_ERROR"
     # --- menu to cart
     MENU_ASSUMPTIONS = "MENU_ASSUMPTIONS"  # a cart proposed from a menu rests on per-cover recipe guesses
+    COVERAGE_LOW = "COVERAGE_LOW"  # fewer than 60% of menu ingredients are in the proposed cart
     # --- informational
     CONFIDENCE_OK = "CONFIDENCE_OK"  # INFO: the confidence check passed (LOW_CONFIDENCE is kept for asks)
     FRONT_DOOR = "FRONT_DOOR"  # INFO on the agent audit entry: the front door's verdict, order id and audit id

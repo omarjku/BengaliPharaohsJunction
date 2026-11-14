@@ -165,6 +165,30 @@ def get(product_id: str) -> dict | None:
 
 
 _WORD = re.compile(r"[\wäöåÄÖÅ]+")
+KITCHEN_SYNONYMS = {
+    "oat milk": ["oat drink", "kaurajuoma", "kauramaito"],
+    "oat drink": ["oat milk", "kaurajuoma", "kauramaito"],
+    "kaurajuoma": ["oat milk", "oat drink", "kauramaito"],
+    "kauramaito": ["oat milk", "oat drink", "kaurajuoma"],
+    "almond milk": ["almond drink", "mantelijuoma", "mantelimaito"],
+    "almond drink": ["almond milk", "mantelijuoma", "mantelimaito"],
+    "mantelijuoma": ["almond milk", "almond drink", "mantelimaito"],
+    "mantelimaito": ["almond milk", "almond drink", "mantelijuoma"],
+    "plant milk": ["plant drink", "kasvijuoma", "kasvimaito"],
+    "plant drink": ["plant milk", "kasvijuoma", "kasvimaito"],
+    "kasvijuoma": ["plant milk", "plant drink", "kasvimaito"],
+    "cream": ["kerma", "whipping cream", "cooking cream"],
+    "kerma": ["cream", "whipping cream", "ruokakerma"],
+    "sour cream": ["smetana", "kermaviili"],
+    "smetana": ["sour cream", "kermaviili"],
+    "kermaviili": ["sour cream", "smetana"],
+}
+
+
+def synonym_queries(query: str) -> list[str]:
+    """Small deterministic kitchen vocabulary; catalogue.search itself remains an every-term search."""
+    key = " ".join(str(query or "").lower().split())
+    return list(KITCHEN_SYNONYMS.get(key, []))
 
 
 def search(query: str = "", claims: list[str] | None = None, exclude_allergens: list[str] | None = None,

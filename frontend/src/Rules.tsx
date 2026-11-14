@@ -5,6 +5,7 @@ import { KitchenChip } from './KitchenChip'
 import './RulesProfile.css'
 import { useCopy } from './i18n'
 import type { CompileResult, Mandate, RuleCat } from './types'
+import { WeeklyMenus } from './WeeklyMenus'
 
 type Props = { refreshKey: number; onAction: () => void; onAnnounce: (text: string) => void; kitchen: string | null; onSwitch: () => void }
 
@@ -378,6 +379,9 @@ export function Rules({ refreshKey, onAction, onAnnounce, kitchen, onSwitch }: P
           )}
         </section>
       )}
+
+      {/* HOOK: weekly menus are maintained alongside the chef's ordering rules. */}
+      <WeeklyMenus />
     </>
   )
 }

@@ -372,6 +372,8 @@ main.roomy { padding-block-start: 96px; }
 .actions { display: flex; gap: var(--s2); flex-wrap: wrap; }
 .problem { margin-block-start: var(--s6); padding: var(--s4); border-radius: var(--radius); background: var(--warn-wash); }
 .problem strong { display: block; color: var(--warn); }
+.try-setup { min-height: 100svh; display: grid; place-items: center; padding: var(--s5); }
+.try-setup-line { color: var(--ink-2); font: var(--t-small); }
 
 /* --- History: an activity feed, grouped by day. */
 .feed-day { font: var(--t-small); font-weight: 600; color: var(--ink-2); margin-block: var(--s6) var(--s1); }

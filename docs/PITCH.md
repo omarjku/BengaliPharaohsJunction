@@ -138,8 +138,8 @@ written down, and the path to production is concrete: Postgres, then AP2-style s
 
 7. **"Why should a judge trust the 0.70 threshold?"**
    - It is per buyer and visible in the audit.
-   - We chose it from 30 hand-labelled cases with real Valio products. At 0.70, no wrong product was ordered and 93%
-     of the right lines went through alone (80% at 0.80). Every trap scored at most 0.37, so there's a wide margin
+   - We chose it from 33 hand-labelled cases with real Valio products. At 0.70, no wrong product was ordered and 93%
+     of the right lines went through alone (73% at 0.80). Every trap scored at most 0.26, so there's a wide margin
      (`docs/GEMINI.md`). Any buyer without a measured threshold keeps the stricter 0.80.
    - It is still a guess until it is calibrated against real orders. That is item 9 in `docs/NEXT-STEPS.md`.
 

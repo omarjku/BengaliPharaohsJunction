@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 560" width="1600" height="560" font-family="Segoe UI,Arial,sans-serif">
+<rect width="1600" height="560" fill="#fff"/>
+<text x="70" y="48" font-size="32" font-weight="700" fill="#1c1f23">Gemini Decisions confidence on 33 labelled cases</text>
+<line x1="70.0" x2="70.0" y1="120" y2="470" stroke="#e7e9ec"/><text x="70.0" y="500" font-size="24" fill="#5d6670" text-anchor="middle">0.0</text>
+<line x1="217.0" x2="217.0" y1="120" y2="470" stroke="#e7e9ec"/><text x="217.0" y="500" font-size="24" fill="#5d6670" text-anchor="middle">0.1</text>
+<line x1="364.0" x2="364.0" y1="120" y2="470" stroke="#e7e9ec"/><text x="364.0" y="500" font-size="24" fill="#5d6670" text-anchor="middle">0.2</text>
+<line x1="511.0" x2="511.0" y1="120" y2="470" stroke="#e7e9ec"/><text x="511.0" y="500" font-size="24" fill="#5d6670" text-anchor="middle">0.3</text>
+<line x1="658.0" x2="658.0" y1="120" y2="470" stroke="#e7e9ec"/><text x="658.0" y="500" font-size="24" fill="#5d6670" text-anchor="middle">0.4</text>
+<line x1="805.0" x2="805.0" y1="120" y2="470" stroke="#e7e9ec"/><text x="805.0" y="500" font-size="24" fill="#5d6670" text-anchor="middle">0.5</text>
+<line x1="952.0" x2="952.0" y1="120" y2="470" stroke="#e7e9ec"/><text x="952.0" y="500" font-size="24" fill="#5d6670" text-anchor="middle">0.6</text>
+<line x1="1099.0" x2="1099.0" y1="120" y2="470" stroke="#e7e9ec"/><text x="1099.0" y="500" font-size="24" fill="#5d6670" text-anchor="middle">0.7</text>
+<line x1="1246.0" x2="1246.0" y1="120" y2="470" stroke="#e7e9ec"/><text x="1246.0" y="500" font-size="24" fill="#5d6670" text-anchor="middle">0.8</text>
+<line x1="1393.0" x2="1393.0" y1="120" y2="470" stroke="#e7e9ec"/><text x="1393.0" y="500" font-size="24" fill="#5d6670" text-anchor="middle">0.9</text>
+<line x1="1540.0" x2="1540.0" y1="120" y2="470" stroke="#e7e9ec"/><text x="1540.0" y="500" font-size="24" fill="#5d6670" text-anchor="middle">1.0</text>
+<line x1="70" x2="1540" y1="470" y2="470" stroke="#5d6670" stroke-width="2"/>
+<text x="805.0" y="546" font-size="24" fill="#5d6670" text-anchor="middle">P(yes): Gemini probability that the product is what was asked for</text>
+<line x1="1099.0" x2="1099.0" y1="100" y2="470" stroke="#1c1f23" stroke-width="4" stroke-dasharray="10 6"/><text x="1111.0" y="116" font-size="26" font-weight="700" fill="#1c1f23">0.70 line: at or above, ordered alone</text>
+<polygon points="84.7,297.0 97.7,310.0 84.7,323.0 71.7,310.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="87.4,321.0 100.4,334.0 87.4,347.0 74.4,334.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="88.0,273.0 101.0,286.0 88.0,299.0 75.0,286.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="90.8,345.0 103.8,358.0 90.8,371.0 77.8,358.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="92.3,249.0 105.3,262.0 92.3,275.0 79.3,262.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="95.6,369.0 108.6,382.0 95.6,395.0 82.6,382.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="101.2,225.0 114.2,238.0 101.2,251.0 88.2,238.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="103.6,393.0 116.6,406.0 103.6,419.0 90.6,406.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="106.1,201.0 119.1,214.0 106.1,227.0 93.1,214.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="112.7,297.0 125.7,310.0 112.7,323.0 99.7,310.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="123.5,321.0 136.5,334.0 123.5,347.0 110.5,334.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="123.9,273.0 136.9,286.0 123.9,299.0 110.9,286.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="130.5,345.0 143.5,358.0 130.5,371.0 117.5,358.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="157.9,297.0 170.9,310.0 157.9,323.0 144.9,310.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="239.5,297.0 252.5,310.0 239.5,323.0 226.5,310.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="239.5,321.0 252.5,334.0 239.5,347.0 226.5,334.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="276.9,297.0 289.9,310.0 276.9,323.0 263.9,310.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<polygon points="447.1,297.0 460.1,310.0 447.1,323.0 434.1,310.0" fill="#b3261e" stroke="#fff" stroke-width="2"/>
+<circle cx="1052.2" cy="310.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="1131.4" cy="310.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="1173.9" cy="310.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="1230.3" cy="310.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="1275.1" cy="310.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="1307.3" cy="310.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="1329.6" cy="322.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="1345.4" cy="298.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="1388.2" cy="310.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="1398.7" cy="334.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="1403.4" cy="286.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="1461.6" cy="310.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="1487.7" cy="310.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="1489.4" cy="334.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="1490.4" cy="286.0" r="10" fill="#1e7a3c" stroke="#fff" stroke-width="2"/>
+<circle cx="830" cy="44" r="10" fill="#1e7a3c"/><text x="852" y="52" font-size="24" fill="#1c1f23">right product (circle)</text>
+<polygon points="1130,29 1145,44 1130,59 1115,44" fill="#b3261e"/><text x="1160" y="52" font-size="24" fill="#1c1f23">wrong product (diamond)</text>
+</svg>

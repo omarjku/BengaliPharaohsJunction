@@ -1,9 +1,13 @@
 """T15 menu → cart on the offline shop: Gemini faked, Valio faked (conftest.py), Decisions faked (test_agent)."""
-from conftest import REQ
+import asyncio
+from datetime import date
+
+import pytest
+from conftest import REQ, product, quote
 from fastapi.testclient import TestClient
 from test_agent import decisions, shop1  # noqa: F401 - pytest fixtures
 
-from app import agent, menu, orders
+from app import agent, conversation, menu, orders
 from app.main import app
 
 c = TestClient(app, raise_server_exceptions=False)
@@ -135,7 +139,8 @@ def test_menu_dietary_words_are_enforced_or_asked(shop1, monkeypatch):
     fake_gemini(monkeypatch, [cake])
     body = post("Nut-free, lactose-free cheesecake").json()
     msgs = " ".join(r["message"] for r in body["decision"]["reasons"])
-    assert "lactose-free for Cheesecake, but no ingredient" in msgs  # claim nobody carries → ask
+    milk = next(i for i in body["ingredients"] if i["query"] == "milk")
+    assert milk["claims"] == ["FREE_FROM_LACTOSE"] and "no ingredient in the cart carries" not in msgs
     assert all(i["exclude_allergens"] == ["AN", "AP"] for i in body["ingredients"])  # exclusion → every ingredient
     fake_gemini(monkeypatch, [PORRIDGE])
     body = post("Porridge with milk; everything vegan").json()  # a word no dish line owns
@@ -178,6 +183,36 @@ def test_order_lines_never_exceed_the_front_door_cap(shop1, monkeypatch):
     assert body["cart_total_cents"] == 1800 * 140
 
 
+def test_partial_menu_shows_cart_check_and_not_found_for_every_ingredient(shop1, monkeypatch, decisions):
+    cheese = product("407", "Plain cheese", claims=(), contains=())
+    cheese.update(base_unit="ST", units={"ST": 1.0}, volume={"unit": "LTR", "value": 1.0}, net_weight=None)
+    shop1.products["407"], shop1.quotes["407"] = cheese, quote("407", price=2.0)
+    dishes = [{"name": "Partial menu", "ingredients": [
+        {"name": "milk", "per_cover": 0.2, "unit": "L", "assumption": "200 ml", "dietary": []},
+        {"name": "cheese", "per_cover": 0.05, "unit": "kg", "assumption": "50 g", "dietary": ["vegan"]},
+        {"name": "unicorn spice", "per_cover": 0.01, "unit": "kg", "assumption": "10 g", "dietary": []},
+    ]}]
+
+    async def fake(system, prompt, schema, *_):
+        if schema is menu._MENU_SCHEMA:
+            return {"dishes": dishes}
+        return {"queries": []}
+
+    async def all_hits(item, hits):
+        return [p["id"] for p in hits]
+
+    monkeypatch.setattr(agent, "_gemini", fake)
+    monkeypatch.setattr(agent, "match", all_hits)
+    body = post("Partial menu with milk, cheese and unicorn spice").json()
+
+    coverage = body["cart_coverage"]
+    assert coverage["ingredients"] == 3 and coverage["in_cart"] == 1 and coverage["to_check"] == 1
+    assert coverage["not_found"] == ["unicorn spice"]
+    assert {line["status"] for line in body["check_lines"]} == {"check", "not_found"}
+    spoken = conversation.speak(body, "en")
+    assert "1 of 3" in spoken and "Cart ready" not in spoken
+
+
 def test_menu_steering_classifier_flags(shop1, monkeypatch, decisions):
     fake_gemini(monkeypatch, [PORRIDGE])
     decisions["scores"] = {"steering": 0.95}
@@ -196,6 +231,29 @@ def test_menu_assumptions_are_checked_and_flagged(shop1, monkeypatch, decisions)
     assert body["assumptions"][0]["flagged"] is False and body["assumptions"][0]["check"] == 0.95
 
 
+def test_menu_candidate_amounts_are_scored_in_one_batch_and_low_winner_is_not_kept(monkeypatch):
+    calls = []
+
+    async def fake_decisions(input_text, questions):
+        calls.append((input_text, questions))
+        return {key: {"type": "noul", "noul": (0.91 if key.endswith("_1") else 0.42)}
+                for key in questions}
+
+    monkeypatch.setattr(menu.agent, "_decisions", fake_decisions)
+    dishes = [{"name": "Pizza", "ingredients": [{
+        "name": "mozzarella", "per_cover": 0.15, "unit": "kg", "candidate_amounts": [0.1, 0.15],
+        "assumption": "150 g mozzarella per pizza", "dietary": [],
+    }]}]
+
+    result = asyncio.run(menu.score_candidate_amounts(dishes, 60, "chef"))
+
+    assert len(calls) == 1
+    assert set(calls[0][1]) == {"portion_0_0_0", "portion_0_0_1"}
+    assert result[0]["ingredients"][0]["per_cover"] == 0.15
+    assert result[0]["ingredients"][0]["p_yes"] == 0.91
+    assert result[0]["ingredients"][0]["kept"] is True
+
+
 def test_menu_parse_is_capped(shop1, monkeypatch, decisions):
     """Security review: a steered parse can't fan out hundreds of paid checks."""
     dish = {"name": "Porridge", "ingredients": [{"name": f"spice{n}", "per_cover": 1, "unit": "g", "assumption": "x",
@@ -204,3 +262,38 @@ def test_menu_parse_is_capped(shop1, monkeypatch, decisions):
     post("Porridge " + "; ".join(f"Porridge {n}" for n in range(30)))
     checks = [q for _, q in decisions["calls"] if "needed" in q]
     assert len(checks) <= menu.MAX_DISHES * menu.MAX_PER_DISH
+
+
+@pytest.mark.parametrize("menu_text, dish_name", [
+    ("vegan lasagna for 20 on Friday", "vegan lasagna"),
+    ("vegan pizza for 20 people, delivered by Tuesday", "vegan pizza"),
+])
+def test_low_coverage_is_held_and_says_what_is_missing(shop1, monkeypatch, menu_text, dish_name):
+    dishes = [{"name": dish_name, "ingredients": [
+        {"name": f"ingredient {n}", "per_cover": 1, "unit": "kg", "assumption": "x", "dietary": ["vegan"]}
+        for n in range(9)]}]
+    product = {"id": "found", "name_en": "Found ingredient", "name_fi": None}
+    quote = {"price": 2.0, "orderable": True}
+
+    async def fake_pipeline(_text, items, *_args):
+        line = {"item": 0, "product": product, "quote": quote,
+                "quantity": {"quantity": 1, "sales_unit": "kg", "requested": {"amount": 1, "unit": "kg"}},
+                "line_total_cents": 200, "chosen": True, "confidence": 0.95, "diet_checks": []}
+        return {"lines": [line], "chosen": [line], "alternatives": [], "rejected": [], "quotes": {},
+                "failed_items": set(), "item_reasons": [], "assumptions": [], "approval_reasons": []}
+
+    async def no_checks(_assumptions):
+        return []
+
+    monkeypatch.setattr(menu.agent, "_pipeline", fake_pipeline)
+    monkeypatch.setattr(menu, "check_assumptions", no_checks)
+    monkeypatch.setattr(menu.valio, "to_contract_quote", lambda _quote: None)
+    body = asyncio.run(menu.propose(menu_text, 20, date.today(), "chef",
+                                    dishes_task=asyncio.sleep(0, result=dishes), steer_score=0.0))
+
+    assert body["cart_coverage"]["in_cart"] == 1
+    assert body["cart_coverage"]["ingredients"] == 9
+    assert "COVERAGE_LOW" in [reason["code"] for reason in body["decision"]["reasons"]]
+    assert body["not_found"] == [f"ingredient {n}" for n in range(1, 9)]
+    assert "I found 1 of 9 ingredients; 8 need your look" in conversation.speak(body, "en")
+    assert "Cart ready" not in conversation.speak(body, "en")
