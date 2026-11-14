@@ -192,9 +192,12 @@ def test_ipv6_callers_share_a_slash_64():
     assert ratelimit._ip("203.0.113.9") == "203.0.113.9" and ratelimit._ip("testclient") == "testclient"
 
 
-def test_idempotency_store_is_bounded_oldest_first(shop, monkeypatch):
-    monkeypatch.setattr(orders, "IDEM_MAX", 3)
+def test_idempotency_quota_is_per_caller_and_never_evicts_another_buyers_keys(shop, monkeypatch):
+    monkeypatch.setattr(orders, "IDEM_PER_CALLER", 3)
+    post(1, key="theirs", agent="agent-other", buyer="other")
     for i in range(5):
-        post(1, key=f"k{i}")
-    assert list(orders._idem_store()) == [f"agent:chef:orders:k{i}" for i in (2, 3, 4)]
+        post(1, key=f"k{i}")  # chef floods its own quota
+    keys = list(orders._idem_store())
+    assert "agent:other:orders:theirs" in keys  # the other buyer's retry protection survives
+    assert [k for k in keys if k.startswith("agent:chef")] == [f"agent:chef:orders:k{i}" for i in (2, 3, 4)]
     assert json.loads(orders.IDEM_FILE.read_text()).keys() == orders._idem_store().keys()

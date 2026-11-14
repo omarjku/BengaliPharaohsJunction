@@ -3,8 +3,9 @@
 
 Reads AGENT_KEYS / APPROVER_KEYS (first entry of each) from the repo-root .env; never prints a key.
 Checks: health + catalogue ready, protected routes refuse no key (401), the milk run gives a held or confirmed
-order with a Gemini confidence, approve with the approver key (if held), the buyer's audit trail has the run,
-and the order's signature verifies (and fails once tampered). Exits 1 on any failure. Stdlib only.
+order with a Gemini confidence, the agent can read its own order, approve with the approver key (if held), the
+buyer's audit trail and Valio's admin audit (VALIO_ADMIN_KEYS) have the run, an Idempotency-Key retry replays
+instead of ordering twice, and the order's signature verifies (and fails once tampered). Exits 1 on any failure.
 """
 import copy
 import json
@@ -12,6 +13,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -29,19 +31,20 @@ def env_key(name: str) -> str:
     return ""
 
 
-def call(method: str, path: str, body=None, headers=None, timeout=90) -> tuple[int, dict | list | str]:
+def call(method: str, path: str, body=None, headers=None, timeout=90, with_headers=False):
     req = urllib.request.Request(BASE + path, method=method, headers={"Content-Type": "application/json",
                                  "User-Agent": "front-door-smoke/1", **(headers or {})},
                                  data=json.dumps(body).encode() if body is not None else None)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            status, raw = r.status, r.read()
+            status, raw, hdrs = r.status, r.read(), r.headers
     except urllib.error.HTTPError as e:
-        status, raw = e.code, e.read()
+        status, raw, hdrs = e.code, e.read(), e.headers
     try:
-        return status, json.loads(raw)
+        out = json.loads(raw)
     except ValueError:
-        return status, raw.decode(errors="replace")[:200]
+        out = raw.decode(errors="replace")[:200]
+    return (status, out, hdrs) if with_headers else (status, out)
 
 
 def check(name: str, ok: bool, detail: str = "") -> bool:
@@ -57,8 +60,8 @@ def next_monday() -> date:
 
 def main() -> int:
     print(f"Front-door smoke test against {BASE}")
-    agent_key, approver_key = env_key("AGENT_KEYS"), env_key("APPROVER_KEYS")
-    check("keys found in .env (values not shown)", bool(agent_key and approver_key), str(ENV))
+    agent_key, approver_key, admin_key = env_key("AGENT_KEYS"), env_key("APPROVER_KEYS"), env_key("VALIO_ADMIN_KEYS")
+    check("keys found in .env (values not shown)", bool(agent_key and approver_key and admin_key), str(ENV))
 
     for _ in range(12):  # a cold Render instance builds the catalogue first
         status, h = call("GET", "/api/health")
@@ -90,6 +93,10 @@ def main() -> int:
     if not order:
         return finish()
 
+    status, mine = call("GET", f"/api/orders/{order['order_id']}", headers={"X-Agent-Key": agent_key})
+    check("agent reads its own order", status == 200 and isinstance(mine, dict) and mine.get("id") == order["order_id"],
+          f"HTTP {status}, status {isinstance(mine, dict) and mine.get('status')}")
+
     if order["status"] == "pending_approval":
         status, ap = call("POST", f"/api/orders/{order['order_id']}/approve",
                           {"decided_at": order["decision"]["decided_at"]}, {"X-Approver-Key": approver_key}, timeout=120)
@@ -104,6 +111,22 @@ def main() -> int:
     status, trail = call("GET", "/api/audit", headers={"X-Approver-Key": approver_key})
     ids = {e.get("id") for e in trail} if isinstance(trail, list) else set()
     check("audit trail has the run", status == 200 and order.get("audit_id") in ids, f"HTTP {status}, {len(ids)} entries")
+
+    status, rows = call("GET", "/api/admin/audit?buyer_id=lapland-kitchen&limit=50", headers={"X-Valio-Admin-Key": admin_key})
+    check("Valio admin audit has the run", status == 200 and isinstance(rows, list)
+          and order.get("audit_id") in {e.get("id") for e in rows}, f"HTTP {status}")
+    status, _ = call("GET", "/api/admin/audit", headers={"X-Valio-Admin-Key": approver_key})
+    check("approver key is not an admin key", status == 401, f"HTTP {status}")
+
+    idem = {"X-Agent-Key": agent_key, "Idempotency-Key": f"smoke-{uuid.uuid4()}"}
+    body = {"requested_date": day, "lines": [line]}
+    s1, first, _ = call("POST", "/api/orders", body, idem, timeout=120, with_headers=True)
+    s2, again, h2 = call("POST", "/api/orders", body, idem, timeout=120, with_headers=True)
+    same = isinstance(first, dict) and isinstance(again, dict) and first.get("audit_id") == again.get("audit_id")
+    check("Idempotency-Key retry replays, one order", s1 == s2 == 200 and same and h2.get("Idempotent-Replayed") == "true",
+          f"HTTP {s1}/{s2}, status {isinstance(first, dict) and first.get('status')}, replayed {h2.get('Idempotent-Replayed')}")
+    s3, _ = call("POST", "/api/orders", {**body, "lines": [{**line, "quantity": 2}]}, idem)
+    check("same key, different body → 422", s3 == 422, f"HTTP {s3}")
 
     status, keys = call("GET", "/.well-known/front-door-keys.json")
     kids = [k.get("kid") for k in keys.get("keys", [])] if isinstance(keys, dict) else []
