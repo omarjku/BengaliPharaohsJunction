@@ -365,9 +365,14 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
 
 
 def _differs(old: dict, cat: dict) -> list[str]:
-    """Nutrition claims / organic the original has and the candidate lacks, in words for the chef."""
+    """What the candidate is that the original isn't, in words for the chef: allergens it ADDS (any of the 15
+    named ones, excluded by the mandate or not: QA round 2 N4, e.g. Nugatti for peanut butter), then nutrition
+    claims / organic it lacks. Any entry demotes a substitute: never "best", never a split fill."""
+    added = sorted(set((cat.get("allergens") or {}).get("contains") or []) & catalogue.ALLERGEN_NAMES.keys()
+                   - set((old.get("allergens") or {}).get("contains") or []))
+    out = ["also contains " + ", ".join(catalogue.ALLERGEN_NAMES[a] for a in added)] if added else []
     lost = sorted((set(old.get("claims") or []) & NUTRITION_CLAIMS) - set(cat.get("claims") or []))
-    out = [f"not {c}" for c in lost]
+    out += [f"not {c}" for c in lost]
     if set(old.get("labels") or []) & ORGANIC_LABELS and not set(cat.get("labels") or []) & ORGANIC_LABELS:
         out.append("not organic")
     return out

@@ -842,7 +842,11 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                 judged = await judge(canonical(it),
                                      [(catalogue.get(a.product_id) or {"id": a.product_id}, ["sub"]) for a in subs])
                 ranked = sorted(zip(subs, judged), key=lambda x: -(x[1][0] or 0))  # most acceptable first
-                alternatives += [a.model_copy(update={"summary": a.summary + (
+                def doubted(summary: str, conf) -> str:  # QA round 2 N4: below threshold = at most "good"
+                    if conf is None or conf >= threshold:
+                        return summary
+                    return re.sub(r"^(BEST|BETTER) ", "GOOD ", summary) + " Gemini doubts this substitute."
+                alternatives += [a.model_copy(update={"summary": doubted(a.summary, conf) + (
                     f" Gemini Decisions: {_pct(conf)} that it is an acceptable substitute"
                     + ("" if conf >= threshold else f", below your {threshold:.2f} threshold: check before accepting")
                     + "." if conf is not None else " Not checked by Gemini Decisions.")}) for a, (conf, *_) in ranked]

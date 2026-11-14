@@ -216,19 +216,26 @@ class OrderRequest(BaseModel):
         return self
 
 
-def _mandate_for(who: auth.Principal, req: OrderRequest) -> Mandate | None:
+def _cross_buyer(request: Request, who: auth.Principal, claimed: str) -> HTTPException:
+    """A key used for another buyer's data: audited (QA round 2 N14), then 403."""
+    orders.security_event("cross_buyer_attempt", f"{request.method} {request.url.path}", ratelimit.client_ip(request),
+                          buyer_id=None, caller_buyer_id=who.buyer_id, target_buyer_id=claimed)  # Valio-only
+    return HTTPException(403, detail="This key may only act for its own buyer")
+
+
+def _mandate_for(request: Request, who: auth.Principal, req: OrderRequest) -> Mandate | None:
     """The mandate this order is judged by: the key's buyer's, stored server-side. None → refused (MANDATE_MISSING)."""
     if (req.buyer_id or who.buyer_id) != who.buyer_id:
-        raise HTTPException(403, detail="This agent key may only order for its own buyer")
+        raise _cross_buyer(request, who, req.buyer_id)
     return mandates.get(who.buyer_id)
 
 
 @app.post("/api/orders")
-async def place_order(req: OrderRequest, who: Agent, response: Response, idempotency_key: IdemKey = None) -> dict:
+async def place_order(req: OrderRequest, who: Agent, request: Request, response: Response, idempotency_key: IdemKey = None) -> dict:
     """Valio's front door (D2): re-checks the order against hard rules with fresh quotes. AUTO → confirmed,
     ASK_HUMAN → pending_approval, a hard violation or something Valio can't deliver → refused (nothing stored),
     always with reasons, suggested fixes and alternatives. Every run is audited. Needs X-Agent-Key."""
-    mandate = _mandate_for(who, req)
+    mandate = _mandate_for(request, who, req)
 
     async def act():  # readiness only matters for a new action; a stored replay is served during catalogue startup
         _catalogue_ready()
@@ -272,11 +279,12 @@ async def reject_order(order_id: OrderId, who: Approver, response: Response, ide
 
 
 @app.get("/api/audit")
-def audit(who: Approver, buyer_id: BuyerId | None = None, limit: Annotated[int, Query(ge=1, le=1000)] = 100) -> list[dict]:
+def audit(who: Approver, request: Request, buyer_id: BuyerId | None = None,
+          limit: Annotated[int, Query(ge=1, le=1000)] = 100) -> list[dict]:
     """The approver's buyer's audit trail (contract AuditEntry objects), oldest first. buyer_id, if sent, must
     be that buyer. Needs X-Approver-Key."""
     if (buyer_id or who.buyer_id) != who.buyer_id:
-        raise HTTPException(403, detail="This approver key may only read its own buyer's audit trail")
+        raise _cross_buyer(request, who, buyer_id)
     return orders.audit_log(who.buyer_id, limit)
 
 
@@ -458,6 +466,12 @@ def save_mandate(req: SaveMandateRequest, who: Approver, response: Response,
     open questions remain; 409 for big loosenings unless confirm_large_change=true. Audited. Needs X-Approver-Key."""
     out = rules.save(req.mandate, req.confirm_large_change, who, _if_match(if_match))
     response.headers["ETag"] = f'"{out["version"]}"'
+    if if_match is None:  # QA round 2 N11: still accepted (scripts), but never silently
+        note = ("Saved without If-Match: a concurrent change could have been overwritten. Send the ETag from "
+                "GET /api/mandate as If-Match.")
+        logging.getLogger(__name__).warning("mandate for %s saved without If-Match", who.buyer_id)
+        response.headers["Warning"] = f'299 - "{note}"'
+        out = {**out, "warning": note}
     return out
 
 
