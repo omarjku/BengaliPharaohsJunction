@@ -1,37 +1,146 @@
-# Bengali Pharaohs: Junction 2026
+# Valio Aimo Trusted Trade Agents
 
-Team: Omar Kassem + Fathia Fairuz Zoha. Junction 2026, Espoo, 13–15 Nov 2026.
+> The buyer's agent is the visitor, and Valio wants a front door.
 
-**Status (Fri evening):** choosing our main challenge. We're entering the **Best Use of Gemini API** tech challenge either way.
+Junction 2026 submission for Valio Aimo's **Trusted Trade Agents** challenge.
+This is an agent-agnostic REST front door for purchasing from Valio's mock API.
 
-## Start here
-- `CLAUDE.md`: context and team rules. If you use Claude Code, it reads this automatically.
-- `docs/briefing.md`: deadlines, prizes, schedule, booth map.
-- `docs/challenges/INDEX.md`: all 38 challenges with judging weights.
-- `docs/challenge-board.html`: download and open in a browser to compare challenges visually.
-- `docs/action_items.md`: checklists.
+It turns a buyer's text request into catalogue matches, quantity conversions, live
+price and availability checks, a mandate decision, and an order or human hand-off.
+Gemini parses the request and ranks catalogue matches when configured. A simple
+parser and lexical search are the fallback. Money, stock, dates, quantities, and
+mandate checks stay in deterministic Python code. Every decision is auditable.
 
-## Deadlines
-Draft **Fri 23:55** · Final **Sun 10:00** · Peer review **Sun 10:30** (both of us must be there).
+The rule behind every answer (decision D6): when the data is uncertain, bring it to
+the human with the reason and alternatives. Never silently guess.
+
+## Try it
+
+- [Live UI](https://valio-front-door.onrender.com)
+- [API docs](https://valio-front-door-api.onrender.com/docs)
+
+The Render free tier wakes slowly. The first request can take about one minute.
+
+```mermaid
+flowchart LR
+    B["Buyer agent (Gemini)<br/>parse, match, quantity"] -->|"order + X-Agent-Key"| F["Valio front door<br/>gate, mandates, audit"]
+    F -->|"fresh price + availability"| V["Valio API (mock)"]
+    F -->|"pending_approval"| H["Human approver<br/>X-Approver-Key"]
+```
 
 ## Run locally
+
 ```bash
-cp .env.example .env    # then fill in VALIO_API_KEY and GEMINI_API_KEY
-./dev.sh                # backend http://localhost:8000 (API docs at /docs), frontend http://localhost:5173
+cp .env.example .env
+# Fill the values in .env. Never commit it.
+./dev.sh
 ```
-- `backend/`: Python FastAPI. The OpenAPI spec is generated at `/openapi.json`.
-- `frontend/`: Vite + React + TypeScript. In production it calls the backend at `VITE_API_URL`.
-- Calls to Valio's API must send a `User-Agent` header (see `docs/valio-api-notes.md`).
 
-## Front door auth (backend)
-The order routes need API keys from env (see `.env.example`), as comma-separated `key=buyer_id[:name]` lists:
-- `AGENT_KEYS`: the buyer's purchasing agent sends `X-Agent-Key` to `POST /api/orders`. The buyer comes from the key (a different body `buyer_id` is 403) and the order is judged by that buyer's mandate stored server-side (`backend/app/mandates.py`, demo buyer `lapland-kitchen`); a `mandate` in the body is a 422, and a buyer with no stored mandate is refused with `MANDATE_MISSING`. Approve re-checks against the buyer's current stored mandate.
-- `APPROVER_KEYS`: a human sends `X-Approver-Key` to `GET /api/orders/{id}`, `POST /api/orders/{id}/approve|reject` and `GET /api/audit`, for their own buyer only. `signed_off_by` is the key's name, never the body. Agent keys never approve.
-- Neither set: those routes answer 503 (the door is never open by default).
-- Run **one** uvicorn worker (`uvicorn app.main:app`, no `--workers N`): the order lock and store are in-process.
+`dev.sh` starts the backend at `http://localhost:8000` and the Vite UI at
+`http://localhost:5173`. API docs are at `http://localhost:8000/docs`.
+Run the backend with one Uvicorn worker. The order store and lock are
+process-local.
 
-## Agent message board
-We coordinate through the pinned **Message Board** issue. Each person's Claude reads it before starting work and posts claims, PRs and review requests there. Run `./board.sh` for usage.
+Set the variables from `.env.example`:
 
-## Secrets
-Never commit keys. Copy `.env.example` to `.env` (gitignored) and fill in `VALIO_API_KEY` / `GEMINI_API_KEY` locally.
+| Variable | Purpose |
+| --- | --- |
+| `VALIO_API_KEY` | Key for Valio's mock API. |
+| `VALIO_BASE_URL` | Valio API base URL. |
+| `GEMINI_API_KEY` | Enables Gemini parsing and catalogue ranking. |
+| `FRONTEND_ORIGINS` | Comma-separated browser origins allowed by CORS. |
+| `AGENT_KEYS` | Comma-separated `key=buyer_id[:name]` entries for purchasing agents. |
+| `APPROVER_KEYS` | Comma-separated `key=buyer_id[:name]` entries for human approvers. |
+
+Use long random values for the front-door keys. `AGENT_KEYS` authenticates
+`X-Agent-Key`; `APPROVER_KEYS` authenticates `X-Approver-Key`. If either key
+set is empty, its protected routes return `503`; an agent key cannot approve.
+
+## API surface
+
+Public routes use the server-side Valio and Gemini keys where needed. Protected
+routes derive the buyer identity from the key, not from a trusted request body.
+
+| Method and route | What it does | Header |
+| --- | --- | --- |
+| `POST /api/agent/run` | Runs the buyer-agent flow end to end; the mandate is loaded server-side. | `X-Agent-Key` |
+| `POST /api/orders` | Places an order through the front door. | `X-Agent-Key` |
+| `GET /api/orders/{id}` | Reads one buyer's order. | `X-Approver-Key` |
+| `POST /api/orders/{id}/approve`<br>`POST /api/orders/{id}/reject` | Human sign-off or refusal. | `X-Approver-Key` |
+| `GET /api/audit` | Reads that buyer's audit trail. | `X-Approver-Key` |
+| `POST /api/quotes` | Gets price and availability for product IDs. | None |
+| `GET /api/products/search` | Searches the static catalogue with filters. | None |
+| `POST /api/quantity/resolve` | Converts a buyer amount to sales units. | None |
+| `GET /api/health` | Reports service and catalogue status. | None |
+
+The order path returns `confirmed`, `pending_approval`, `refused`, or
+`rejected`. It re-reads price and availability from Valio; clients cannot set
+the price or stock.
+
+## Valio judging criteria
+
+### J1 — Working end-to-end demo
+
+The live run in [`docs/m1-e2e.md`](docs/m1-e2e.md) and `POST /api/agent/run`
+show request → Gemini or fallback parse → catalogue → Valio quote → quantity
+→ decision → order or human hand-off → audit.
+
+### J2 — Matching the buyer's need
+
+`backend/app/agent.py` keeps the buyer's text, applies dietary claims and
+allergen exclusions, and uses Gemini to distinguish the requested product from
+keyword neighbours. `backend/app/quantity.py` converts amounts without silently
+guessing. The milk request and chosen alternatives are shown in
+[`docs/m1-e2e.md`](docs/m1-e2e.md).
+
+### J3 — Autonomy and controls
+
+`backend/app/mandates.py` defines the demo buyer's rules. `backend/app/gate.py`
+checks hard rules, spend limits, budgets, stock, cut-offs, and prices.
+`backend/app/orders.py` separates automatic orders from pending approval and
+re-checks fresh data at approval. `backend/app/auth.py`, `/api/audit`, and the
+`AuditEntry` contract scope and record the actors, reasons, quotes, and rejected
+options.
+
+### J4 — Robustness to exceptions
+
+`backend/app/valio.py` makes cut-offs, sales blocks, undeliverable products,
+out-of-stock items, and Terminal quantity `999999` explicit. `backend/app/gate.py`
+checks partial stock and returns reasons and alternatives. The quantity resolver
+returns `needs_confirmation` when data cannot support a conversion.
+The traps and live responses are documented in
+[`docs/valio-api-notes.md`](docs/valio-api-notes.md) and
+[`docs/m1-e2e.md`](docs/m1-e2e.md).
+
+### J5 — Openness and path to production
+
+`contracts/` defines versioned Pydantic contracts and exported JSON Schemas for
+requests, mandates, quotes, product facts, decisions, and audit entries.
+The contracts make assumptions visible: money is integer net cents, unknown
+quantity is distinct from unlimited, and unknown fields are rejected.
+[`docs/schemas/openapi.json`](docs/schemas/openapi.json) is the exported
+OpenAPI 3.1 interface, produced by `docs/export_schemas.py`. The design choice
+and production direction are recorded in [`docs/DECISIONS.md`](docs/DECISIONS.md):
+REST/OpenAPI and JSON files first, with a database plus stronger identity and
+multi-process coordination as the production path. Every assumption and data
+trap is listed in [`docs/ASSUMPTIONS.md`](docs/ASSUMPTIONS.md), the standards
+mapping (GS1, Peppol BIS / UBL) in [`docs/STANDARDS.md`](docs/STANDARDS.md), and
+the prioritised path to production in [`docs/NEXT-STEPS.md`](docs/NEXT-STEPS.md).
+
+## Read deeper
+
+- [`docs/ASSUMPTIONS.md`](docs/ASSUMPTIONS.md)
+- [`docs/STANDARDS.md`](docs/STANDARDS.md)
+- [`docs/NEXT-STEPS.md`](docs/NEXT-STEPS.md)
+- [`docs/m1-e2e.md`](docs/m1-e2e.md)
+- [`contracts/README.md`](contracts/README.md)
+
+## Team and tools
+
+Omar Kassem · Fathia Fairuz Zoha
+
+Claude Code · Codex · Gemini
+
+## License
+
+[MIT](LICENSE)

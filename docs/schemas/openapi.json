@@ -1,0 +1,1071 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Valio Aimo Front Door",
+    "description": "Open interface for external purchasing agents ordering from Valio Aimo (Junction 2026).",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Health",
+        "description": "Liveness check; reports which keys are configured (never their values).",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Health Api Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/quotes": {
+      "post": {
+        "summary": "Quotes",
+        "description": "Live price + availability from Valio for specific products, merged into one quote each,\nwith explicit trap flags (cutoff_passed, quantity_unknown, undeliverable, out_of_stock, unknown_product).",
+        "operationId": "quotes_api_quotes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Quotes Api Quotes Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/products/search": {
+      "get": {
+        "summary": "Search Products",
+        "description": "Keyword search (English + Finnish names, brand) with hard filters.\nclaims: all must be present (e.g. FREE_FROM_LACTOSE). exclude_allergens: GS1 codes (e.g. AM milk, AW gluten)\nthe product must not CONTAIN (nor MAY_CONTAIN when strict_may_contain=true).\nNote: lactose-free milk still CONTAINS milk (AM); use the FREE_FROM_LACTOSE claim for lactose intolerance.",
+        "operationId": "search_products_api_products_search_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "claims",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Z0-9_]{1,40}$"
+              },
+              "maxItems": 20,
+              "default": [],
+              "title": "Claims"
+            }
+          },
+          {
+            "name": "exclude_allergens",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Z0-9_]{1,40}$"
+              },
+              "maxItems": 20,
+              "default": [],
+              "title": "Exclude Allergens"
+            }
+          },
+          {
+            "name": "strict_may_contain",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Strict May Contain"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 20
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Search Products Api Products Search Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/products/{product_id}": {
+      "get": {
+        "summary": "Get Product",
+        "operationId": "get_product_api_products__product_id__get",
+        "parameters": [
+          {
+            "name": "product_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{1,12}$",
+              "title": "Product Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Product Api Products  Product Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/quantity/resolve": {
+      "post": {
+        "summary": "Resolve Quantity",
+        "description": "Human amount (\"1000 L\", \"40 kg\", \"12 pcs\", \"3 KI\") → sales units to order, rounded up to whole units and\nthe lot size, with over-delivery. Never guesses: missing or contradictory data gives quantity=null and\nneeds_confirmation=true; a conversion that rests on an assumption gives an answer with needs_confirmation=true.",
+        "operationId": "resolve_quantity_api_quantity_resolve_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuantityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Resolve Quantity Api Quantity Resolve Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orders": {
+      "post": {
+        "summary": "Place Order",
+        "description": "Valio's front door (D2): re-checks the order against hard rules with fresh quotes. AUTO → confirmed,\nASK_HUMAN → pending_approval, a hard violation or something Valio can't deliver → refused (nothing stored),\nalways with reasons, suggested fixes and alternatives. Every run is audited. Needs X-Agent-Key.",
+        "operationId": "place_order_api_orders_post",
+        "parameters": [
+          {
+            "name": "x-agent-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Agent-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Place Order Api Orders Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orders/{order_id}": {
+      "get": {
+        "summary": "Get Order",
+        "description": "One of the approver's buyer's orders. Needs X-Approver-Key.",
+        "operationId": "get_order_api_orders__order_id__get",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f-]{36}$",
+              "title": "Order Id"
+            }
+          },
+          {
+            "name": "x-approver-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Approver-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Order Api Orders  Order Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orders/{order_id}/approve": {
+      "post": {
+        "summary": "Approve Order",
+        "description": "Human sign-off as the key's owner; re-runs the gate first (cut-offs pass, prices and stock change).\nNeeds X-Approver-Key; a request body is ignored.",
+        "operationId": "approve_order_api_orders__order_id__approve_post",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f-]{36}$",
+              "title": "Order Id"
+            }
+          },
+          {
+            "name": "x-approver-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Approver-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Approve Order Api Orders  Order Id  Approve Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orders/{order_id}/reject": {
+      "post": {
+        "summary": "Reject Order",
+        "description": "Human refusal as the key's owner. Needs X-Approver-Key; a request body is ignored.",
+        "operationId": "reject_order_api_orders__order_id__reject_post",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f-]{36}$",
+              "title": "Order Id"
+            }
+          },
+          {
+            "name": "x-approver-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Approver-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Reject Order Api Orders  Order Id  Reject Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/audit": {
+      "get": {
+        "summary": "Audit",
+        "description": "The approver's buyer's audit trail (contract AuditEntry objects), oldest first. buyer_id, if sent, must\nbe that buyer. Needs X-Approver-Key.",
+        "operationId": "audit_api_audit_get",
+        "parameters": [
+          {
+            "name": "buyer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.:-]{1,64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Buyer Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "x-approver-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Approver-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Audit Api Audit Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/run": {
+      "post": {
+        "summary": "Agent Run",
+        "description": "The buyer's agent end to end. The mandate is loaded server-side for buyer_id (never from the client).\nReturns {request, lines, decision, order, audit_id}: every candidate quoted (chosen or not, with why), a contract\nDecision, the front door's order response when an order was placed (else null), and the audit entry id.",
+        "operationId": "agent_run_api_agent_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Agent Run Api Agent Run Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AgentRunRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "examples": [
+              "1000 L lactose-free milk for Monday"
+            ]
+          },
+          "requested_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Requested Date",
+            "examples": [
+              "2026-11-16"
+            ]
+          },
+          "buyer_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,64}$",
+            "title": "Buyer Id",
+            "examples": [
+              "lapland-kitchen"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text",
+          "requested_date",
+          "buyer_id"
+        ],
+        "title": "AgentRunRequest"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HardRule": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RuleKind"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Value",
+            "description": "Allergen/claim name, or a number (cents for *_cents kinds), depending on kind."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PreferenceScope",
+            "default": "always"
+          },
+          "source_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Text",
+            "description": "The buyer's own words."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "value"
+        ],
+        "title": "HardRule",
+        "description": "A check that is either met or not. Breaking one is a hard violation\n(except AUTO_APPROVE_LIMIT_CENTS, which only decides who signs off)."
+      },
+      "Mandate": {
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "0.2",
+            "title": "Contract Version",
+            "default": "0.2"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "buyer_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Buyer Id"
+          },
+          "hard_rules": {
+            "items": {
+              "$ref": "#/components/schemas/HardRule"
+            },
+            "type": "array",
+            "title": "Hard Rules"
+          },
+          "uncertainty_policy": {
+            "$ref": "#/components/schemas/UncertaintyPolicy",
+            "default": "ask"
+          },
+          "guidance": {
+            "items": {
+              "$ref": "#/components/schemas/Preference"
+            },
+            "type": "array",
+            "title": "Guidance"
+          },
+          "open_questions": {
+            "items": {
+              "$ref": "#/components/schemas/OpenQuestion"
+            },
+            "type": "array",
+            "title": "Open Questions"
+          },
+          "blocklist": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Blocklist",
+            "description": "Product ids that may never be ordered."
+          },
+          "per_line_cap_cents": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Per Line Cap Cents",
+            "description": "Max net cents for one order line (default EUR 300).",
+            "default": 30000
+          },
+          "weekly_budget_cents": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weekly Budget Cents",
+            "description": "Optional net-cents budget for a rolling 7 days."
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At",
+            "description": "After this the mandate is expired (decisions ask a human)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "buyer_id"
+        ],
+        "title": "Mandate"
+      },
+      "OpenQuestion": {
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Question"
+          },
+          "why": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Why"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "title": "OpenQuestion",
+        "description": "Something the compiler could not resolve; asked, not guessed."
+      },
+      "OrderLine": {
+        "properties": {
+          "product_id": {
+            "type": "string",
+            "pattern": "^\\d{1,12}$",
+            "title": "Product Id"
+          },
+          "quantity": {
+            "type": "number",
+            "maximum": 100000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Quantity",
+            "description": "In the product's sales unit (see the quote's sales_unit)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "product_id",
+          "quantity"
+        ],
+        "title": "OrderLine"
+      },
+      "OrderRequest": {
+        "properties": {
+          "buyer_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_.:-]{1,64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Buyer Id"
+          },
+          "requested_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Requested Date",
+            "examples": [
+              "2026-11-16"
+            ]
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/OrderLine"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Lines"
+          },
+          "mandate": {
+            "$ref": "#/components/schemas/Mandate"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "requested_date",
+          "lines",
+          "mandate"
+        ],
+        "title": "OrderRequest",
+        "description": "An order at fixed prices. Price and stock are re-read from Valio here; the client can't set them.\nThe buyer is the one the X-Agent-Key belongs to; buyer_id is optional and must match it if sent."
+      },
+      "Preference": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Text"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PreferenceScope"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text",
+          "scope"
+        ],
+        "title": "Preference",
+        "description": "Soft guidance that is not a clean check; shapes ranking, never blocks."
+      },
+      "PreferenceScope": {
+        "type": "string",
+        "enum": [
+          "this_order",
+          "always"
+        ],
+        "title": "PreferenceScope",
+        "description": "How long a preference lasts (D5: don't over-generalise)."
+      },
+      "QuantityRequest": {
+        "properties": {
+          "product_id": {
+            "type": "string",
+            "pattern": "^\\d{1,12}$",
+            "title": "Product Id",
+            "examples": [
+              "463335"
+            ]
+          },
+          "amount": {
+            "type": "number",
+            "maximum": 1000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount",
+            "examples": [
+              1000
+            ]
+          },
+          "unit": {
+            "type": "string",
+            "maxLength": 5,
+            "title": "Unit",
+            "examples": [
+              "L"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "product_id",
+          "amount",
+          "unit"
+        ],
+        "title": "QuantityRequest"
+      },
+      "QuoteRequest": {
+        "properties": {
+          "product_ids": {
+            "items": {
+              "type": "string",
+              "pattern": "^\\d{1,12}$"
+            },
+            "type": "array",
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Product Ids",
+            "examples": [
+              [
+                "463335",
+                "463038"
+              ]
+            ]
+          },
+          "requested_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Requested Date",
+            "examples": [
+              "2026-11-16"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "product_ids",
+          "requested_date"
+        ],
+        "title": "QuoteRequest"
+      },
+      "RuleKind": {
+        "type": "string",
+        "enum": [
+          "excluded_allergen",
+          "required_claim",
+          "max_unit_price_cents",
+          "min_delivery_reliability",
+          "auto_approve_limit_cents"
+        ],
+        "title": "RuleKind",
+        "description": "Closed list of checks a hard rule may express. Money values are net cents."
+      },
+      "UncertaintyPolicy": {
+        "type": "string",
+        "enum": [
+          "ask",
+          "decline",
+          "approve"
+        ],
+        "title": "UncertaintyPolicy",
+        "description": "What the agent does when it cannot verify something."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
