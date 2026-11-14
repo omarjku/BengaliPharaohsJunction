@@ -1,45 +1,76 @@
-# How Codex built, iterated and shipped Front Door
+# How Codex built, attacked, and shipped Front Door
 
-Codex BUILT the Saturday core: engine v2, the Gemini function-calling text agent, kitchen/calendar flows, and safety fixes.
-It worked in parallel git worktrees, using real Gemini acceptance loops to edit, run, measure, and fix.
-Claude was the control room: it wrote briefs, reviewed diffs, merged branches, and ran the test gate for every merge.
-The main shipment is PR #114; PR #115 adds the agent-cancel/change security fix.
-CRACI provenance is open as PR #116 (CRACI's API answers 403 to calls from CRACI runners, so its live evidence isn't flowing yet); same-brain voice is built and being finished.
+Codex built the engine v2, the Gemini function-calling chat agent, kitchen and
+calendar flows, voice-on-one-brain, CRACI evidence, and the safety fixes. It worked
+in parallel worktrees with real Gemini loops: edit, run, measure, fix, and add a
+regression. The current split is: **Codex built and attacked; Claude ran the room:
+briefs, review, merge, test gate.**
 
-## Tonight's Codex runs
+PR #114 shipped the core and chat agent; PR #115 shipped agent cancel/change safety;
+PR #116 shipped live CRACI evidence; and PR #117 merged voice-on-one-brain, voice
+security, chat round 3, and the CRACI live-evidence plumbing. PRs #116 and #117 are
+merged into `origin/main` and live. PR #118 then merged the audit fixes, Helsinki-time
+date fix, and the J2 chat evaluation.
 
-The table groups closely related logs so it stays readable. The model, effort, and sandbox values come from each log header; test counts and timings are copied from the final reports. Git verifies the PR status.
+## Later Codex runs
 
-| Time (Helsinki) | Run / model / effort / sandbox | Ask | Result | Shipped + PR |
-|---|---|---|---|---|
-| ~15:12–20:12 | Engine v2 set (`brain`, `brain2`, `resolve`, `resolve2`, `jobA/B`, `calU/B`, `kA/B/C`, `try`, `flows`, `bench`); `gpt-reserve` / max / workspace-write | Make every chef turn one-brain; resolve diet, standing orders, kitchen interview/history, calendar, QR sandbox, acceptance flows and speed checks | One-brain follow-ups, deterministic diet evidence, standing orders, calendar, interview, history, sandbox and acceptance tooling were implemented. Individual gates reported 547–591 backend tests; the merge-resolution pass reported 655 passed, 1 skipped. | The final engine/chat merge is PR #114 (`cddd2b1`); its git diff contains 107 changed files, including `understand.py`, `chat_agent.py`, `calendar.py`, `interview.py`, `sandbox.py`, tests and scripts. |
-| ~17:26–18:22 | `diet-review` / `gate`; `gpt-5.6-terra` / ultra / read-only review, then `gpt-reserve` / max / workspace-write fix | Attack diet suitability and allergen evidence; fix the per-allergen fail-open case | Review tested unverified and injected product data. The gate fix added per-allergen declaration checks; `517 passed, 1 skipped`. | Safety findings fed the safety merge and PR #114; the allergen-proof change is PR #106. |
-| ~18:54–22:01 | `loop-agent`; `gpt-reserve` / high / danger-full-access | Run the engine against real Gemini conversations, then add regressions for the observed failures | Real conversations c1–c5 were rerun; the final offline suite was `689 passed, 1 skipped`. The run made no commit; the control room merged the resulting fixes into the engine shipment. | Folded into PR #114; the accepted artifacts include `docs/testing/acceptance-brain-1.md`, `acceptance-brain-2.md`, and the real-Gemini fix notes. |
-| ~21:10 | `zoha-transcript-review`; `gpt-5.6-terra` / high / read-only | Adversarially review Talk transcript merging under interleaving, empty finals, tag splits and React StrictMode | Produced concrete event sequences and one remaining client-side ID nit; it was a review, not an automatic authority. | Review evidence was used around PR #111; no separate ship claim. |
-| ~21:28 | Research `r1–r5`; `gpt-reserve` / high / read-only | Research function-calling history, typed pending state, Decisions batching, latency and agent evaluation | Returned implementation constraints: preserve Gemini content/signatures, send all function responses together, keep pending slots typed, do not batch competing products, and measure real conversations. | No direct code ship; these briefs shaped chat rounds 2–3. |
-| ~21:46 | Chat round 1; `gpt-reserve` / high / danger-full-access | Replace template replies with a Gemini function-calling text agent over the deterministic engine | Added `chat_agent.py`, tools, `/api/agent/chat`, CLI mode, frontend wiring and fake-Gemini tests. Real turns measured 19.2, 3.7, 4.9, 6.9, 17.1, 4.4, 8.9, 17.5, 20.1, 29.0, 8.0, 6.2 and 6.7 seconds; `684 passed, 1 skipped`. The 29.0-second change follow-up remained over budget. | Shipped in PR #114. |
-| ~22:05 | Chat round 2; `gpt-reserve` / high / danger-full-access | Add batched Decisions scoring, typed pending state, loud canary failures and traceable quantity conversion | Decisions batching and threshold handling were added. Real loops: rice 7.7 s (`0.768` kept; `0.120/0.656/0.452` checked), menu 8.0 s (`0.509` checked), pizza 6.9 s (`0.628` checked); function-calling + Decisions canary passed; `690 passed, 1 skipped`. | Shipped in PR #114. |
-| ~22:17 | Cancel-fix; `gpt-reserve` / high / workspace-write | Prevent the agent from cancelling or changing confirmed orders; make withdrawals auditable | Pending orders can be withdrawn only by their creating agent; confirmed orders remain unchanged; chat tools use the same rules; `695 passed, 1 skipped`. | PR #115 (`a70ed9a` merge). |
-| ~22:43 | Chat round 3; `gpt-reserve` / high / danger-full-access | Fix context bleed, delegation answers, numeric pending choices and the 20-second turn budget | Replay timings were 5.90, 5.30, 15.00 and 4.20 s; final pasta stayed at 6 kg / 12 bags. `/new` replay was 2.98 s, then a new conversation was 6.12 s with no bleed; `703 passed, 1 skipped`, frontend build passed. | Committed `612b680` and merged into the integration branch (tests 704 passed, build and lint pass); ships to main in tonight's next batch. |
-| ~21:50–22:49 | CRACI provenance; `gpt-reserve` / high / danger-full-access | Use CRACI's SBOM, vulnerability, network-trace and API evidence to bind a build to the signed-order story | Added `scripts/craci_sbom.py`, SBOM hashing, network summaries, a provenance route, CI job and tests; the log reports SBOM tests `6 passed`, backend `520 passed, 1 skipped`, YAML parsed. The live CRACI API remained unverified locally because the token is CI-only. | Open branch / PR #116 (`origin/craci-provenance`); not on `origin/main` as of this log. |
-| ~22:12–22:55 | Same-brain Talk; `gpt-reserve` / high / danger-full-access | Make Gemini Live use the text agent's tools and knowledge block, keep spoken orders held for a tap, then measure audio and tool latency | Final report: Live reuses `chat_agent.TOOLS`/`_dispatch_tool`; a spoken butter order was held correctly with first audio at 1.17 s, the card at 6.87 s and the spoken result at 7.41 s (before: no card); the current-order lookup answered in 4.02 s; `691 passed, 1 skipped`. iPhone audio not yet verified. A follow-up (transcript protocol, per-kitchen threshold in responses, echo) is running. | Branch `talk-one-brain`; not merged yet. |
-| not stated | Pitch draft A; `gpt-5.6-terra` / ultra / read-only | Turn the evidence into a two-minute public pitch and judge-facing story | Drafted a clear architecture and evidence narrative, including the honest CRACI and Talk caveats. | Submission material only; no code PR. |
+The run names, model, and effort below come from the requested log headers; results
+come from each `*-out.md`, the resulting git history, or are explicitly marked
+incomplete. All these runs used `gpt-reserve` at high reasoning effort. Sandbox modes
+were `danger-full-access` for `craci-live`, `j2-eval`, `vuln-fix`, `coffee-fix`, and
+`j2-assume`; the others used `workspace-write`.
 
-## How we work with Codex
+| Run | Result from the final report | Commit / status |
+|---|---|---|
+| `craci-live` | Live CRACI evidence fetch, cache/fallback, signing-key linkage; backend 714 passed + 1 skipped, scripts 55 passed. | `345084c`; merged by PR #117, live. |
+| `voice-sec` | Spoken changes are held for a tap, voice cannot cancel, and transcript guards handle empty/stale input; backend 709 + 1 skipped, frontend 16 passed. | `dfdf0ce`; merged by PR #117, live. |
+| `audit-fixes` | All eight requested audit fixes were implemented; 725 backend tests passed + 1 skipped. | `59b6fb9`; merged by PR #118, live. |
+| `sunday-fix` | Helsinki-time past-date gate and date-independent tests; real Sunday and frozen Sat/Sun/Mon each reported 721 passed + 1 skipped. | `7b069ab`; merged by PR #118, live. |
+| `j2-eval` | `/api/agent/chat` scored 97/164 (59.1%), median 3.85 s/turn, with 0 unsafe auto-orders; evaluator 18 passed. | `4387aef`; merged by PR #118, live. |
+| `vuln-fix` | Upgraded FastAPI, Starlette, and cryptography; local report: 0 HIGH/CRITICAL, with remaining medium/moderate findings named. | `0e15435`; **next deploy**. |
+| `readme-v2` | Rewrote the judge README, moved the reference, and added the CRACI slide; Markdown and 12-slide checks passed. | `e2ce472`; **next deploy**. |
+| `craci-sign` | Added signed build provenance, build-bound `kid`, tamper coverage, and the order-card build line; backend 739 + 1 skipped and frontend build passed. | `1664f12`; **next deploy**. |
+| `coffee-fix` | The requested `coffee-fix-out.md` is empty and its log has no final result; no shipped result is claimed. | No commit/result to map. |
+| `j2-assume` | The log stopped during the 164-case rerun at 151/164; its `*-out.md` is empty, so no final score or shipped result is claimed. | No commit/result to map. |
+| `docs-refresh` | Documentation-only run requested here; its `*-out.md` is empty until this refresh is finished. | No code ship; worktree only. |
 
-- Claude writes a narrow brief and acceptance criteria. Codex works only inside its assigned worktree; parallel agents do not share a working tree.
-- The implementation loop is real, not synthetic: edit → run `scripts/chat.py`, acceptance flows, or a live service against Gemini → record latency, tool path and card state → fix the root cause → add a regression.
-- Gemini interprets the chef's language. Deterministic code remains authoritative for catalogue facts, unit conversion, diet/allergen evidence, quotes, mandates, approval and order state.
-- Claude reviews the diff, merges it, and runs the project gate. Codex never has an approval tool and never blocks shipping; unresolved findings are named and time-boxed.
-- Safety guardrails stay in the loop: assumptions are held for the chef, agent keys cannot approve, questions do not trigger duplicate-order guards, provider/canary failures are loud, and keys stay out of logs.
-- Every number above has a source in a run log, a committed artifact, or the git history. “Passed” means the exact reported command exited 0; it does not mean every live latency target passed.
+The later audit was a five-worker Codex team (`w1`–`w5`) covering API compliance,
+dataset/allergen and unit handling, scenario coverage, J2 safety, and documentation
+truth. Its fixed production findings are represented by `59b6fb9` and the PR #118
+merge; findings that were not built remain named in the audit notes.
 
-## Earlier Codex evidence that still holds
+## File → commit → Codex run
 
-Before tonight, Codex was already used for drafts, design attacks and adversarial reviews. In the earlier 28-run record, the independent review of Zoha's PR #8 found four issues; three matched Claude independently, including an unsafe sales-blocked order, a fail-closed timezone crash, and a false decline of ordinary chef text. The older review ledger records 112 findings across its numeric review runs, with kept, rejected and deferred statuses checked against code.
+This map is the compact provenance view from `git log --format='%h %s' -- <file>` on
+the integration branch. Entries marked **next deploy** are on integration, not
+`origin/main`.
 
-The useful operating lessons also survived tonight: start from an immutable commit, close stdin for `codex exec`, treat a review as a hypothesis until a live measurement or regression test confirms it, and run the documentation fact-check after the last code merge.
+| Main shipped file | Commit | Codex run |
+|---|---|---|
+| `backend/app/chat_agent.py` | `0815e33`, `612b680`, `59b6fb9` | chat rounds 1/3, `audit-fixes` |
+| `backend/app/live.py` | `69ff7c5`, `dfdf0ce` | same-brain Talk, `voice-sec` |
+| `backend/app/craci_evidence.py` | `345084c`, `37af1c1` | `craci-live`, CRACI security follow-up |
+| `backend/app/signing.py` | `4e2ef93`, `345084c`, `1664f12` | signed front door, `craci-live`, `craci-sign` (**next deploy** for the last commit) |
+| `backend/app/orders.py` | `59b6fb9`, `1664f12` | `audit-fixes`, `craci-sign` (**next deploy** for the last commit) |
+| `backend/app/catalogue.py` / `backend/app/gate.py` | `59b6fb9`, `7b069ab` | `audit-fixes`, `sunday-fix` |
+| `backend/requirements.txt` | `0e15435` | `vuln-fix` (**next deploy**) |
 
-## The old split is retired
+From the Sun 15 Nov 01:50 Codex-built commit convention onward, Codex-built commits
+carry a `Co-Authored-By: OpenAI Codex` trailer; earlier ones say **Built by Codex**
+in the commit message. `git log --grep="OpenAI Codex"` and the earlier message search
+are the direct history checks.
 
-“Claude builds, Codex attacks” described the first phase. It is no longer accurate. Tonight Codex wrote core production code, tests, scripts, docs and CI; Claude supplied the control-room coordination and merge gate. The honest summary is: Codex built and attacked, Claude integrated and verified, and the git history shows which parts shipped.
+## How the collaboration worked
+
+- Claude wrote narrow briefs and acceptance criteria; Codex worked only in its assigned
+  worktree, and parallel agents did not share a working tree.
+- The loop was real: run the chat/acceptance tools or a live service against Gemini,
+  record latency, tool path, and card state, fix the root cause, and add a regression.
+- Gemini interpreted chef language; deterministic code remained authoritative for
+  catalogue facts, unit conversion, diet/allergen evidence, quotes, mandates,
+  approval, and order state.
+- Claude reviewed diffs, merged branches, and ran the test gate. Codex had no approval
+  tool; unresolved findings were named and time-boxed.
+
+“Claude builds, Codex attacks” described the first phase. It is retired: Codex built
+and attacked, while Claude ran the room and the history shows which commits shipped.
