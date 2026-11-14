@@ -103,7 +103,9 @@ Files are in `frontend/src/`. "App" is the `Screen` component in `App.tsx`.
 | Read-back | The backend's `speak` sentence spoken in the request's language (unlocked by the first tap on iOS); "Read aloud. Mute" | `useReadBack.speak`, `unlockSpeech` | none |
 | A spoken question | It's spoken, then the mic opens by itself: "Listening for your answer… tap the mic to send. Cancel" | App effect → `voice.start(true, true)` | follow_up |
 | Voice failures | "The microphone is blocked. You can type instead…", "I didn't hear any words…", "Couldn't start the microphone…" | `VoiceStatus` | — |
+| One voice button (for the order box) | `<VoiceButton voice={voice} talk={{ available: caps.talk, open: talk.open }} disabled={…} />`: opens Talk when /api/health says talk: true, else it is the push-to-talk mic | `VoiceButton` (`Voice.tsx`) | as Talk / as the mic |
 | Talk | "Talk" opens a full-screen conversation: a circle (listening / checking / speaking), captions, "Checking Valio prices…", the result card (approve on screen), **End** | App `openTalk` → `Talk` | WebSocket `/api/live` (auth message first; PCM16 audio both ways) |
+| Photo (inside the box) | `<PhotoButton variant="icon" …/>`: a round 44 px camera button like the mic; what was read floats under the box with a close button | `PhotoButton` | as Photo |
 | Photo | "Photo" (camera or library) → "Reading your photo…" with a thumbnail → what was read and what couldn't be → the text goes into the box and is asked | `PhotoButton` → `onRead` → App `ask(text)` | `POST /api/vision/read` (multipart `image`, X-Agent-Key) |
 
 ## How to check it

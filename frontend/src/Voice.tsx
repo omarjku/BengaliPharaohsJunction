@@ -1,6 +1,7 @@
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react'
 import { useCopy } from './i18n'
 import { unlockSpeech, type useVoice } from './useVoice'
+import './Voice.css'
 
 const HOLD_MS = 300 // shorter than this is a tap (toggle), longer is push-to-talk
 
@@ -117,3 +118,29 @@ export function VoiceStatus({ voice }: { voice: ReturnType<typeof useVoice> }) {
   )
 }
 
+
+// The one voice button for the order box: opens Talk (the spoken conversation) when the backend offers it, and is
+// the push-to-talk mic otherwise. Same size and place as the mic, inside the text box.
+export function VoiceButton({ voice, talk, disabled }: {
+  voice: ReturnType<typeof useVoice>
+  talk: { available: boolean; open: () => void } // from useTalkPhotoAvailable().talk and useTalk().open
+  disabled: boolean
+}) {
+  const t = useCopy().UI.talk
+  if (!talk.available) return <MicButton voice={voice} disabled={disabled} />
+  return (
+    <button
+      type="button"
+      className="mic talk-mic"
+      aria-label={t.title}
+      title={t.title}
+      disabled={disabled}
+      onClick={() => {
+        unlockSpeech()
+        talk.open() // inside the tap: the audio and the mic start here (iOS)
+      }}
+    >
+      <span className="talk-mic-dot" aria-hidden="true" />
+    </button>
+  )
+}

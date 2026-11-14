@@ -496,6 +496,7 @@ export const UI = {
     read: 'Read',
     unreadable: (what: string) => `Couldn’t read: ${what}`,
     nothing: 'No words could be read from that photo. Try a sharper one, or type it.',
+    close: 'Close',
   },
   valio: {
     nav: 'Valio',
