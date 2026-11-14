@@ -150,7 +150,7 @@ async def limit_body(request: Request, call_next):
         if size is None and request.headers.get("transfer-encoding"):
             return JSONResponse({"detail": "Content-Length required"}, status_code=411)
         cap = voice.MAX_BYTES if request.url.path == "/api/voice/transcribe" else MAX_BODY_BYTES  # audio clips
-        if size is not None and (not size.isdigit() or int(size) > cap):
+        if size is not None and (not size.isdigit() or len(size) > 12 or int(size) > cap):  # no 5,000-digit int()
             return JSONResponse({"detail": f"Request body over {cap} bytes"}, status_code=413)
     return await call_next(request)
 
@@ -508,10 +508,16 @@ async def voice_transcribe(request: Request, who: Agent) -> dict:
     """Body: the raw recording (Content-Type audio/webm, audio/ogg, audio/mp4, audio/wav...; at most 1 MB / 30 s).
     → {text, seconds, model}. The UI shows the text and sends it to POST /api/agent/ask; nothing is ordered here.
     Needs X-Agent-Key; rate-limited like agent runs."""
-    return await voice.transcribe(await request.body(), request.headers.get("content-type", ""))
+    body = bytearray()
+    async for chunk in request.stream():  # bounded read: a body without a length header can't grow past the cap
+        body += chunk
+        if len(body) > voice.MAX_BYTES:
+            raise HTTPException(413, detail=f"Recordings may be at most {voice.MAX_BYTES // 1000} KB.")
+    return await voice.transcribe(bytes(body), request.headers.get("content-type", ""))
 
 
 _STREAM_TASKS: set = set()
+MAX_STREAMS_PER_BUYER = 3  # disconnected streams keep working to the end, so cap them (Codex #10)
 
 
 @app.post("/api/agent/ask/stream")
@@ -521,6 +527,8 @@ async def agent_ask_stream(req: AskRequest, who: Agent) -> StreamingResponse:
     then one `event: result` with exactly the /api/agent/ask body, or `event: error` {status, detail}.
     Needs X-Agent-Key."""
     _catalogue_ready()
+    if sum(1 for t in _STREAM_TASKS if getattr(t, "buyer_id", None) == who.buyer_id) >= MAX_STREAMS_PER_BUYER:
+        raise HTTPException(429, detail="Too many requests still running for this kitchen; wait for them to finish.")
     queue: asyncio.Queue = asyncio.Queue()
 
     async def work():
@@ -531,13 +539,15 @@ async def agent_ask_stream(req: AskRequest, who: Agent) -> StreamingResponse:
             queue.put_nowait(("error", {"status": e.status_code, "detail": e.detail}))
         except Exception:  # noqa: BLE001 - details stay in the server log
             logging.getLogger(__name__).exception("ask stream failed")
-            queue.put_nowait(("error", {"status": 500, "detail": "Something went wrong; nothing was ordered."}))
+            queue.put_nowait(("error", {"status": 500, "detail": "Something went wrong. Check your orders before "
+                                                                 "trying again."}))  # it may have got as far as an order
 
     async def events():
         # A disconnect never cancels the work: cancelling mid-order could store an order without its audit entry.
         # The task finishes on its own (bounded like any /ask); the stream just stops forwarding. It is held in
         # _STREAM_TASKS until done, so it can't be garbage-collected mid-run.
         task = asyncio.create_task(work())
+        task.buyer_id = who.buyer_id
         _STREAM_TASKS.add(task)
         task.add_done_callback(_STREAM_TASKS.discard)
         while True:

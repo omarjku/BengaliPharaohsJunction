@@ -118,3 +118,30 @@
 ## 10. Independent black-box QA (control room, 50 live cases): Room 3 items
 - HP-01 root cause measured: the Decisions API is deterministic; raw chef wording in the judge input moved scores
   (and an authority claim raised them). Fixed with canonical judge input. See docs/GEMINI.md.
+
+## 11. Adversarial review of /ask, the stream, voice, urgent options and the speed path: gpt-reserve, effort max
+- **Asked** (stdin closed, background, read-only, on 1b85ada): orders the chef's words don't support or guard
+  bypasses; menu/order mix-ups; invented dates/covers; invented urgent facts; voice SSRF/bombs/leaks; SSE leakage and
+  cancellation; budget; 500s instead of 4xx.
+- **Result:** no CRITICAL, 17 findings. Confirmed NOT real: SSRF/file reads via PyAV, key leakage, pickup placed by the
+  agent, cross-request SSE leakage, an unbounded Live wait, a total Decisions outage bypassing confidence.
+- **Kept and fixed** (room3-followup, one test each where testable):
+  - #1: the matcher stopped at a weak first-batch hit (coffee milk 0.71) before a strong later one; it now judges
+    on until a match ≥ 0.85 is in hand.
+  - #2, #3, #4: plausibility, steering and date-intent answers that are missing (timeout, budget) now go through the
+    mandate's uncertainty policy (ask), never a silent pass. "The Monday after next" isn't guessed; it asks.
+  - #5: menu markers (guest counts, "menu"/"ruokalista") route to the proposal-only menu path even if the model says
+    order.
+  - #6: covers count only when written as a guest count ("80 kg flour" is not 80 guests).
+  - #7: "next delivery" only from orderable quotes whose cut-off is still ahead.
+  - #8: duplicate check and placing are one step per buyer (lock).
+  - #9: the duplicate guard compares the delivery day too.
+  - #10: at most 3 in-flight streams per buyer (429).
+  - #12: Live frames ≤ 1 MB, transcript ≤ 4,000 characters.
+  - #13: the voice body is read with a bounded stream (no-length bodies can't pass 1 MB).
+  - #14: a 5,000-digit Content-Length is a 413, not a 500.
+  - #15: malformed signature base64 is a 401 (two lines in Room 2's httpsig.py).
+  - #16: a non-object Gemini JSON is treated as no answer.
+  - #17: /ask opens the Decisions budget before its preflight calls.
+- **Reported, not fixed here:** #11, order + audit atomicity in orders.py (Room 2's file). The stream's error text no
+  longer claims "nothing was ordered" when it may have got that far.
