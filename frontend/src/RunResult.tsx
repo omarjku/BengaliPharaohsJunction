@@ -244,6 +244,19 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
       setRememberError(errorText(err))
     }
   }
+  // Kitchen loss on a direct order: one tap of spare, offered with its cost, never added silently. Before anything is
+  // ordered it re-asks with the larger amount; after a confirmed order it asks for just the extra (no second full order).
+  const spareTip = chosen.length === 1 ? (chosen[0].spare_suggestion ?? null) : null
+  function addSpare() {
+    if (!spareTip || !onAskFor) return
+    const asked = chosen[0].quantity?.requested
+    const name = query ?? productName(chosen[0])
+    const extra = spareTip.extra_quantity
+    const unit = spareTip.unit ?? asked?.unit ?? ''
+    if (order?.status === 'confirmed' || !asked) onAskFor(`${extra} ${unit} ${name}`.replace(/\s+/g, ' ').trim())
+    else onAskFor(`${Math.round((asked.amount + extra) * 1000) / 1000} ${unit} ${name}`.replace(/\s+/g, ' ').trim())
+  }
+
   // Change quantity: the same request with the new amount, asked again (same delivery day).
   const asked = held?.quantity?.requested ?? null
   function changeQuantity(e: FormEvent) {
@@ -343,6 +356,16 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
             </p>
           )}
           {chosen.length === 1 && chosen[0].usual && <p className="quiet small">{t.usual}.</p>}
+          {spareTip && (
+            <p className="quiet small">
+              {spareTip.extra_quantity > 0 && onAskFor && order?.status !== 'pending_approval' ? (
+                <button type="button" className="btn plain accent-text" onClick={addSpare} disabled={busy !== null}>
+                  {t.addSpare(`${c.count(spareTip.extra_quantity)} ${spareTip.unit ?? ''}`.trim(), c.money(spareTip.extra_cost_cents))}
+                </button>
+              ) : null}{' '}
+              {spareTip.reason}
+            </p>
+          )}
           {sentToDoor && (
             <p className="quiet small">
               {t.frontDoor(sentToDoor)}{' '}
