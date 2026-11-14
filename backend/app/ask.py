@@ -12,6 +12,7 @@ import asyncio
 import logging
 import re
 import time
+from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -22,6 +23,7 @@ from . import agent, catalogue, conversation, gate, kitchen, menu, progress, und
 
 TZ = ZoneInfo("Europe/Helsinki")
 log = logging.getLogger(__name__)
+_DUPLICATE_GUARD_BYPASS = ContextVar("duplicate_guard_bypass", default=False)
 INTENT_PROMPT = agent.UNTRUSTED + """
 You route a food buyer's message for a wholesaler's ordering agent. Classify it:
 - "order": one or more products to buy, WITH OR WITHOUT an amount (e.g. "20 kg döner kebab meat", "milk and 30
@@ -184,38 +186,42 @@ async def ask(text: str, requested: date | None, buyer_id: str, follow_up: dict 
     continue, `conversation_id`."""
     menu.HAVE.set(have)  # what the kitchen has (this request only): a menu cart leaves it out; orders ignore it
     agent.start_budget()  # order-sized, before the preflight calls (Codex #17); menu.propose raises it to menu size
-    if follow_up:
-        answer = follow_up["answer"]
-        entry = conversation.peek(follow_up["to"], buyer_id)
-        today = datetime.now(TZ).date()
-        supersedes = _pending_change(answer, entry)
-        try:
-            reading = await understand.understand(answer, buyer_id, conversation.turns(buyer_id),
-                                                  conversation.last_card(buyer_id), today,
-                                                  pending=None if supersedes else _pending_context(entry))
-        except Exception:
-            log.exception("pending understanding failed; using offline answer fallback")
-            reading = None
-        actions = reading.get("actions") if isinstance(reading, dict) else None
-        if supersedes:
-            if entry:
-                conversation.take(follow_up["to"], buyer_id)
-            out = await _flow(answer, requested, buyer_id, reading=reading)
-            text = answer
-        elif isinstance(reading, dict) and reading.get("source") == "gemini" and actions:
-            follow_up_actions = {"confirm", "answer", "reject", "cancel"}
-            if all(action.get("intent") in follow_up_actions for action in actions):
-                entry = conversation.take(follow_up["to"], buyer_id)
-                out, text, requested = await _primary_follow_up(entry, actions[0], answer, buyer_id)
-            else:
-                # A new request must not consume the question it interrupted.
+    duplicate_guard_token = _DUPLICATE_GUARD_BYPASS.set(follow_up is not None)
+    try:
+        if follow_up:
+            answer = follow_up["answer"]
+            entry = conversation.peek(follow_up["to"], buyer_id)
+            today = datetime.now(TZ).date()
+            supersedes = _pending_change(answer, entry)
+            try:
+                reading = await understand.understand(answer, buyer_id, conversation.turns(buyer_id),
+                                                      conversation.last_card(buyer_id), today,
+                                                      pending=None if supersedes else _pending_context(entry))
+            except Exception:
+                log.exception("pending understanding failed; using offline answer fallback")
+                reading = None
+            actions = reading.get("actions") if isinstance(reading, dict) else None
+            if supersedes:
+                if entry:
+                    conversation.take(follow_up["to"], buyer_id)
                 out = await _flow(answer, requested, buyer_id, reading=reading)
                 text = answer
+            elif isinstance(reading, dict) and reading.get("source") == "gemini" and actions:
+                follow_up_actions = {"confirm", "answer", "reject", "cancel"}
+                if all(action.get("intent") in follow_up_actions for action in actions):
+                    entry = conversation.take(follow_up["to"], buyer_id)
+                    out, text, requested = await _primary_follow_up(entry, actions[0], answer, buyer_id)
+                else:
+                    # A new request must not consume the question it interrupted.
+                    out = await _flow(answer, requested, buyer_id, reading=reading)
+                    text = answer
+            else:
+                entry = conversation.take(follow_up["to"], buyer_id)
+                out, text, requested = await _answer(entry, answer, buyer_id)
         else:
-            entry = conversation.take(follow_up["to"], buyer_id)
-            out, text, requested = await _answer(entry, answer, buyer_id)
-    else:
-        out = await _flow(text, requested, buyer_id)
+            out = await _flow(text, requested, buyer_id)
+    finally:
+        _DUPLICATE_GUARD_BYPASS.reset(duplicate_guard_token)
     result = _finish(out, text, requested, buyer_id)
     conversation.record_turn(buyer_id, "user", follow_up["answer"] if follow_up else text)
     conversation.record_turn(buyer_id, "assistant", result.get("reply") or result.get("speak", ""), card=result)
@@ -693,6 +699,10 @@ def _legacy_intent(intent: str) -> str:
             "ask_about_cart": "cart", "change_cart": "order"}.get(intent, intent)
 
 
+def _duplicate_safe_text(text: str, force: bool = False) -> str:
+    return text if agent._AGAIN.search(text) or not (force or _DUPLICATE_GUARD_BYPASS.get()) else f"{text} (again)"
+
+
 def _action_date(action: dict, requested: date | None, today: date) -> tuple[date | None, str | None]:
     value = (action.get("slots") or {}).get("date")
     stated = None
@@ -1017,10 +1027,11 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
             return _merge_changed_card(last_card, {"intent": "order", "requested_date": when.isoformat(),
                                                    "lines": [], "cart_total_cents": 0}, set(), removed)
         parsed, parsed_by_gemini = _parsed_action({"slots": slots}, source, text)
-        fresh = await agent.run(text, when, buyer_id, pre={"parsed": (parsed, parsed_by_gemini), "steer": steer,
-                                                           "steer_checked": steer is not None, "meant": meant,
-                                                           "meant_checked": meant is not None, "request_note": request_note,
-                                                           "request_hold": bool(request_note)})
+        fresh = await agent.run(_duplicate_safe_text(text, force=intent == "change_cart"), when, buyer_id,
+                                pre={"parsed": (parsed, parsed_by_gemini), "steer": steer,
+                                     "steer_checked": steer is not None, "meant": meant,
+                                     "meant_checked": meant is not None, "request_note": request_note,
+                                     "request_hold": bool(request_note)})
         return _merge_changed_card(last_card, fresh | {"intent": "order", "requested_date": when.isoformat()}, changed, set())
 
     when, date_source = _action_date(action, requested, today)
@@ -1085,10 +1096,11 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
         return body
     request_text = action.get("_expanded_text") or text
     parsed, parsed_by_gemini = _parsed_action(action, source, request_text)
-    body = await agent.run(request_text, when, buyer_id, pre={"parsed": (parsed, parsed_by_gemini), "steer": steer,
-                                                       "steer_checked": steer is not None, "meant": meant,
-                                                       "meant_checked": meant is not None, "request_note": request_note,
-                                                       "request_hold": bool(request_note)})
+    body = await agent.run(_duplicate_safe_text(request_text), when, buyer_id,
+                           pre={"parsed": (parsed, parsed_by_gemini), "steer": steer,
+                                "steer_checked": steer is not None, "meant": meant,
+                                "meant_checked": meant is not None, "request_note": request_note,
+                                "request_hold": bool(request_note)})
     if date_assumed:
         available_dates = []
         for line in body.get("lines") or []:
@@ -1106,7 +1118,7 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
             refresh_action = dict(action, _delivery_assumption=next_assumption)
             refreshed, refreshed_by_gemini = _parsed_action(refresh_action, source, request_text)
             try:
-                later = await agent.run(request_text, next_delivery, buyer_id,
+                later = await agent.run(_duplicate_safe_text(request_text), next_delivery, buyer_id,
                                         pre={"parsed": (refreshed, refreshed_by_gemini), "steer": steer,
                                              "steer_checked": steer is not None, "meant": meant,
                                              "meant_checked": meant is not None, "request_note": request_note,

@@ -369,6 +369,38 @@ def test_pending_change_supersedes_the_question_and_drops_it(monkeypatch):
     assert cid not in json.loads(conversation.STORE.read_text())
 
 
+def test_pending_follow_up_rerun_skips_recent_duplicate_guard(monkeypatch):
+    captured = {}
+
+    cid = conversation.save("chef", "amount", {
+        "text": "10 L milk", "requested": "2026-11-20", "question": "How much milk?",
+        "request": {"summary": "milk", "items": [{"query": "milk", "amount": None, "unit": "L"}]},
+        "item": 0, "options": [], "unit": "L", "line_only": False,
+    })
+
+    async def fake_understand(*_args, **_kwargs):
+        return {"source": "gemini", "actions": [{"intent": "answer", "slots": {},
+                                                    "answer": {"slot": "amount", "value": "10 L"}}]}
+
+    async def fake_run(text, *_args, **_kwargs):
+        captured["text"] = text
+        return {"lines": [], "order": None, "decision": {"reasons": []}}
+
+    async def no_steering(*_args):
+        return 0.0
+
+    async def no_date_intent(*_args):
+        return None
+
+    monkeypatch.setattr(ask.agent, "run", fake_run)
+    monkeypatch.setattr(ask.agent, "steering", no_steering)
+    monkeypatch.setattr(ask.agent, "date_intent", no_date_intent)
+    monkeypatch.setattr(ask.understand, "understand", fake_understand)
+    asyncio.run(ask.ask("", None, "chef", {"to": cid, "answer": "10 L"}))
+
+    assert "again" in captured["text"]
+
+
 def test_change_cart_replaces_the_current_milk_line_instead_of_keeping_cow_milk(monkeypatch):
     async def fake_run(*_args, **_kwargs):
         return {"lines": [{"name": "Oat drink 1 l", "chosen": True}], "order": None,
