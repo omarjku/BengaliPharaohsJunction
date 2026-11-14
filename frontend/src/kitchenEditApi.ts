@@ -1,5 +1,5 @@
 import { ApiError, getKeys, MOCK } from './api'
-import type { AnswerValue, Saved } from './onboardingApi'
+import type { AnswerValue, Saved, StandingOrderAnswer } from './onboardingApi'
 import type { LiveEvent, LiveSocket } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
@@ -29,6 +29,22 @@ export type KitchenHistory = {
   labels: { example: string }
 }
 
+export type KitchenProfile = {
+  buyer_id: string
+  dietary: { tag: string; label: string; because: string }[]
+  allergens: string[]
+  delivery_days: string[]
+  usual_product_ids: string[]
+  standing_orders: { weekday: string; lines: StandingOrderLine[]; key?: string; source?: string; source_detail?: string }[]
+  notes: { text: string; source: string; source_detail: string }[]
+  usual_products: { text: string; source: string; source_detail: string }[]
+  onboarding_facts: { key: string; value: unknown; source: string; source_detail: string }[]
+  memories: unknown[]
+  suggested_questions: string[]
+  recent_orders: unknown[]
+  onboarded: boolean
+}
+
 export type InterviewTopic =
   | 'kitchen'
   | 'delivery_days'
@@ -39,7 +55,7 @@ export type InterviewTopic =
   | 'anything_else'
 
 export type InterviewAnswer = { topic: InterviewTopic; text: string }
-export type InterviewValue = AnswerValue | { weekday: Weekday; lines: StandingOrderLine[] }[]
+export type InterviewValue = AnswerValue | StandingOrderAnswer[]
 export type InterviewPreview = {
   stored: false
   proposed: { id: string; question: string; value: InterviewValue }[]
@@ -50,7 +66,7 @@ export type InterviewNextResponse =
   | { done: false; topic: InterviewTopic; question: string }
   | { done: true; preview: InterviewPreview }
 
-export type StandingOrderUpdate = { standing_orders: StandingOrder[] }
+export type StandingOrderUpdate = KitchenProfile
 export type KitchenLiveEvent = LiveEvent | { type: 'interview_preview'; preview: InterviewPreview }
 export type KitchenLiveHandlers = { onEvent: (event: KitchenLiveEvent) => void; onClose: () => void }
 
@@ -63,9 +79,20 @@ function keyFor(header: AuthHeader): string {
 async function detail(response: Response): Promise<string> {
   try {
     const body = (await response.json()) as { detail?: unknown }
-    if (typeof body.detail === 'string') return body.detail
-    if (body.detail && typeof body.detail === 'object' && 'error' in body.detail && typeof body.detail.error === 'string')
-      return body.detail.error
+    const value = body.detail
+    if (typeof value === 'string') return value
+    if (Array.isArray(value)) {
+      const messages = value.map((item) => item && typeof item === 'object' && 'msg' in item && typeof item.msg === 'string' ? item.msg : null).filter(Boolean)
+      if (messages.length) return messages.join('; ')
+    }
+    if (value && typeof value === 'object') {
+      if ('error' in value && typeof value.error === 'string') return value.error
+      if ('errors' in value && value.errors && typeof value.errors === 'object') {
+        return Object.entries(value.errors as Record<string, unknown>)
+          .map(([key, message]) => `${key}: ${String(message)}`)
+          .join('; ')
+      }
+    }
   } catch {
     // The status text is the only useful detail when the server did not return JSON.
   }
@@ -101,15 +128,15 @@ export const getKitchenHistory = (): Promise<KitchenHistory> =>
     ? import('./mock').then((m) => m.mockApi.kitchenHistory())
     : fetchJson<KitchenHistory>('/api/kitchen/history', { method: 'GET' }, 'X-Agent-Key')
 
-export const saveKitchenCovers = (covers: Record<Weekday, number>): Promise<void> =>
+export const saveKitchenCovers = (covers: Record<Weekday, number>): Promise<KitchenHistory> =>
   MOCK
     ? import('./mock').then((m) => m.mockApi.saveKitchenCovers(covers))
-    : fetchJson<unknown>('/api/kitchen/history/covers', { method: 'PUT', body: JSON.stringify(covers) }, 'X-Approver-Key').then(() => undefined)
+    : fetchJson<KitchenHistory>('/api/kitchen/history/covers', { method: 'PUT', body: JSON.stringify(covers) }, 'X-Approver-Key')
 
-export const clearExampleHistory = (): Promise<void> =>
+export const clearExampleHistory = (): Promise<KitchenHistory> =>
   MOCK
     ? import('./mock').then((m) => m.mockApi.clearExampleHistory())
-    : fetchJson<unknown>('/api/kitchen/history/clear-example', { method: 'POST' }, 'X-Approver-Key').then(() => undefined)
+    : fetchJson<KitchenHistory>('/api/kitchen/history/clear-example', { method: 'POST' }, 'X-Approver-Key')
 
 export const saveStandingOrder = (weekday: Weekday, lines: StandingOrderLine[]): Promise<StandingOrderUpdate> =>
   MOCK

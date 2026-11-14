@@ -4,10 +4,10 @@ import type {
   InterviewNextResponse,
   InterviewPreview,
   KitchenHistory,
+  KitchenProfile,
   KitchenLiveEvent,
   StandingOrder,
   StandingOrderLine,
-  StandingOrderUpdate,
   Weekday,
 } from './kitchenEditApi'
 import type { Saved } from './onboardingApi'
@@ -487,7 +487,13 @@ export async function confirmInterview(answers: Record<string, unknown>): Promis
     dietary: dietary.length ? dietary.map((tag) => ({ tag, label: tag.replace(/_/g, '-'), because: 'You told me in the kitchen interview.' })) : mockProfile.dietary,
     memories: nextMemories,
   }
-  return { stored: true, saved: Object.keys(answers), hints: [], onboarding: { onboarded: true, questions: [] } }
+  return {
+    stored: true,
+    saved: Object.keys(answers),
+    hints: [],
+    onboarding: { onboarded: true, questions: [] },
+    profile: mockKitchenProfile(),
+  }
 }
 
 const MOCK_KITCHEN_CONTEXT: KitchenContext = {
@@ -555,12 +561,32 @@ function mockStandingOrders(): StandingOrder[] {
   return mockKitchenHistory.standing_orders.map((order) => structuredClone(order))
 }
 
+function mockKitchenProfile(): KitchenProfile {
+  return {
+    buyer_id: 'lapland-kitchen',
+    dietary: mockProfile.dietary,
+    allergens: [],
+    delivery_days: [],
+    usual_product_ids: mockProfile.usual_product_ids,
+    standing_orders: mockStandingOrders().map((order) => ({ ...order, weekday: {
+      mon: 'monday', tue: 'tuesday', wed: 'wednesday', thu: 'thursday', fri: 'friday', sat: 'saturday', sun: 'sunday',
+    }[order.weekday] })),
+    notes: [],
+    usual_products: [],
+    onboarding_facts: [],
+    memories: mockProfile.memories,
+    suggested_questions: [],
+    recent_orders: [],
+    onboarded: true,
+  }
+}
+
 const MOCK_INTERVIEW_PREVIEW: InterviewPreview = {
   stored: false,
   proposed: [
     { id: 'business_type', question: 'What kind of business do you run?', value: '60-seat bistro' },
     { id: 'delivery_days', question: 'Which weekdays can you receive deliveries?', value: ['monday', 'friday'] },
-    { id: 'standing_orders', question: 'What do you order regularly, and on which days?', value: [{ weekday: 'fri', lines: [{ text: '12 L lactose-free milk', quantity: 12, unit: 'L' }] }] },
+    { id: 'standing_orders', question: 'What do you order regularly, and on which days?', value: [{ weekday: 'friday', lines: [{ text: '12 L lactose-free milk', quantity: 12, unit: 'L' }] }] },
     { id: 'dietary', question: 'Which diets does your whole kitchen always follow?', value: ['gluten_free'] },
     { id: 'usual_products', question: 'Which products or brands do you reach for often?', value: ['Valio Eila milk drink', 'Valio butter'] },
     { id: 'budget', question: 'What order total are you comfortable with on your own?', value: 1500 },
@@ -776,7 +802,7 @@ export const mockApi = {
     return structuredClone(mockKitchenHistory)
   },
 
-  async saveKitchenCovers(covers: Record<Weekday, number>): Promise<void> {
+  async saveKitchenCovers(covers: Record<Weekday, number>): Promise<KitchenHistory> {
     await wait()
     for (const day of EDIT_DAYS) {
       if (typeof covers[day] !== 'number' || !Number.isInteger(covers[day]) || covers[day] < 0) continue
@@ -784,9 +810,10 @@ export const mockApi = {
       mockKitchenHistory.covers_source[day] = 'own'
     }
     mockKitchenHistory.basis = historyBasis(mockKitchenHistory)
+    return structuredClone(mockKitchenHistory)
   },
 
-  async clearExampleHistory(): Promise<void> {
+  async clearExampleHistory(): Promise<KitchenHistory> {
     await wait()
     for (const day of EDIT_DAYS) {
       if (mockKitchenHistory.covers_source[day] === 'example') {
@@ -797,21 +824,22 @@ export const mockApi = {
     mockKitchenHistory.standing_orders = mockKitchenHistory.standing_orders.filter((order) => order.source !== 'example')
     mockKitchenHistory.usual_products = mockKitchenHistory.usual_products.filter((product) => product.source !== 'example')
     mockKitchenHistory.basis = 'own'
+    return structuredClone(mockKitchenHistory)
   },
 
-  async saveStandingOrder(weekday: Weekday, lines: StandingOrderLine[]): Promise<StandingOrderUpdate> {
+  async saveStandingOrder(weekday: Weekday, lines: StandingOrderLine[]): Promise<KitchenProfile> {
     await wait()
     mockKitchenHistory.standing_orders = mockKitchenHistory.standing_orders.filter((order) => order.weekday !== weekday)
     if (lines.length) mockKitchenHistory.standing_orders.push({ weekday, lines: structuredClone(lines), source: 'own' })
     mockKitchenHistory.basis = historyBasis(mockKitchenHistory)
-    return { standing_orders: mockStandingOrders() }
+    return mockKitchenProfile()
   },
 
-  async deleteStandingOrder(weekday: Weekday): Promise<StandingOrderUpdate> {
+  async deleteStandingOrder(weekday: Weekday): Promise<KitchenProfile> {
     await wait()
     mockKitchenHistory.standing_orders = mockKitchenHistory.standing_orders.filter((order) => order.weekday !== weekday)
     mockKitchenHistory.basis = historyBasis(mockKitchenHistory)
-    return { standing_orders: mockStandingOrders() }
+    return mockKitchenProfile()
   },
 
   async calendar(from: string, to: string): Promise<CalendarResponse> {
@@ -834,9 +862,10 @@ export const mockApi = {
     return structuredClone(next)
   },
 
-  async deleteWeeklyMenu(weekday: Weekday): Promise<void> {
+  async deleteWeeklyMenu(weekday: Weekday): Promise<{ weekday: Weekday; deleted: boolean }> {
     await wait()
     mockWeeklyMenus = mockWeeklyMenus.filter((item) => item.weekday !== weekday)
+    return { weekday, deleted: true }
   },
 
   async planWeeklyMenu(weekday: Weekday, date: string): Promise<MenuRun> {
@@ -853,11 +882,13 @@ export const mockApi = {
     return mockApi.ask({ text: '20 kg döner kebab meat for Friday', requested_date: date })
   },
 
-  async skipRecurring(_weekday: Weekday, date: string): Promise<{ skipped: boolean }> {
+  async skipRecurring(weekday: Weekday, date: string): Promise<{ weekday: string; date: string; skipped: boolean }> {
     await wait()
     calendarRecurringSkipped.add(date)
     calendarRecurringPlaced.delete(date)
-    return { skipped: true }
+    return { weekday: {
+      mon: 'monday', tue: 'tuesday', wed: 'wednesday', thu: 'thursday', fri: 'friday', sat: 'saturday', sun: 'sunday',
+    }[weekday], date, skipped: true }
   },
 
   // Pretend speech-to-text: the demo's example sentences, in turn.

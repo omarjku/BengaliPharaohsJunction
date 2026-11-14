@@ -234,7 +234,7 @@ export const getHealth = () => (MOCK ? mock().then((m) => m.health()) : api<Heal
 
 export const createSandbox = (): Promise<SandboxSession> =>
   MOCK
-    ? Promise.resolve({ buyer_id: 'try-mock', agent_key: 'mock-agent', approver_key: 'mock-approver',
+    ? Promise.resolve({ buyer_id: 'try-00000000', agent_key: 'mock-agent', approver_key: 'mock-approver',
                         expires_at: new Date(Date.now() + 86_400_000).toISOString(), template: 'helsinki-bistro' })
     : api<SandboxSession>('/api/sandbox', { method: 'POST' })
 
