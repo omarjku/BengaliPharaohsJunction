@@ -1,8 +1,8 @@
 # Pitch deck (T23): 10 slides
 
 Each slide body stays at 25 words or fewer; speaker notes are separate. The screenshots are in
-`docs/design/screens/` (1280 px desktop, 390 px phone). Those were captured in the UI's mock mode, so their product
-names and amounts are illustrative: label them "UI" and don't quote their numbers. Numbers on slides come from the
+`docs/design/screens/` (1280 px desktop, 390 px phone). Room 4 re-captured most of them against the real backend,
+but from their own test runs (for example 1,200 L at EUR 1,680), so slide text never quotes their numbers. Numbers on slides come from the
 live runs in `docs/m1-e2e.md`, `docs/GEMINI.md` and `docs/CODEX.md`.
 
 ---
@@ -45,6 +45,16 @@ Screens: `3-needs-ok-1280.png` (held for the chef), `4-approved-390.png` (approv
 > - 1500 L: €2,100, LINE_OVER_CAP + SPEND_OVER_LIMIT, held. The agent key gets 401 on approve; the approver key
 >   confirms.
 > - Menu: always ASK_HUMAN (MENU_ASSUMPTIONS).
+
+### 4b. Voice, during service (optional; only if voice lands)
+**"Cream for Monday?" Asked hands-free, before the cut-off.**
+One box for kebab shops, cafés and restaurants, typed or spoken. Same door, same rules.
+
+> **Notes:**
+> - Push-to-talk via Gemini Live.
+> - Valio Aimo delivers in about 24 h on agreed days, so the win is catching the cut-off during service, not
+>   same-hour delivery.
+> - The slide is ready in `docs/deck/index.html` as a commented-out block.
 
 ### 5. Trust and controls (J3)
 - **Hard rules refuse:** allergens, claims, max price, cut-off
