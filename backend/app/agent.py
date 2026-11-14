@@ -28,7 +28,7 @@ from trade_contracts import (Alternative, AuditEntry, AuditInput, Decision, Mand
 from trade_contracts import ReasonCode as C
 from trade_contracts.common import RuleKind
 
-from . import catalogue, config, gate, mandates, orders, quantity, valio, progress
+from . import catalogue, config, conversation, gate, mandates, orders, progress, quantity, valio
 
 RULES_VERSION = "m1-buyer-agent-0.1"
 ACTOR = "buyer_agent"
@@ -143,9 +143,14 @@ DECISIONS_PER_MENU = 600  # 20 ingredients x (12 matches + 3 x 8 lines) + 180 as
 
 
 def start_budget(n: int = DECISIONS_PER_RUN) -> None:
-    """Open a per-run Decisions budget unless one is already open in this request."""
-    if _BUDGET.get() is None:
-        _BUDGET.set([n])
+    """Open a per-run Decisions budget unless one is already open in this request; if one is open with a smaller cap,
+    raise it to n (a request /ask opened at order size turns out to be a menu). Never lowers or resets it."""
+    b = _BUDGET.get()
+    if b is None:
+        _BUDGET.set([n, n])
+    elif n > b[1]:
+        b[0] += n - b[1]
+        b[1] = n
 DECISION_CACHE_TTL_S = 600
 DECISION_CACHE_MAX = 5000
 
@@ -407,6 +412,10 @@ def _numbers(text: str) -> set[float]:
         for part in raw.split():  # "16 1000" is two numbers
             if re.fullmatch(r"\d+(?:[,.]\d+)?", part):  # "1.2.3" is no number
                 out.add(float(part.replace(",", ".")))
+    # Spoken numbers come back as words from voice ("Kymmenen kiloa voita"): read single-word numbers too (Render
+    # live check: the Finnish voice order was refused because "10" wasn't written as digits).
+    low = text.lower()
+    out |= {float(v) for w, v in conversation.NUMBER_WORDS.items() if re.search(rf"(?<![\wäöå]){w}(?![\wäöå])", low)}
     return out
 
 

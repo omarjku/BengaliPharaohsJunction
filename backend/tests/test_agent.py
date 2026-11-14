@@ -696,3 +696,24 @@ def test_codex16_wrong_shaped_gemini_json_is_no_answer(monkeypatch):
     monkeypatch.setattr(agent.config, "GEMINI_API_KEY", "k")
     monkeypatch.setattr(agent, "_HTTP", [None, None, None])
     assert asyncio.run(agent._gemini("s", "p", {})) is None
+
+
+def test_spoken_number_words_ground_the_amount():
+    """Render live check: 'Kymmenen kiloa voita' (a voice transcript) was refused because 10 wasn't written as digits."""
+    item = {"query": "butter", "amount": 10.0, "unit": "kg", "source": "voita"}
+    assert agent.ungrounded("Kymmenen kiloa voita maanantaiksi.", agent.anchored("Kymmenen kiloa voita maanantaiksi.", item)) is None
+    assert agent.ungrounded("ten kilos of butter", {"query": "butter", "amount": 10.0, "unit": "kg"}) is None
+    assert agent.ungrounded("ten kilos of butter", {"query": "butter", "amount": 100.0, "unit": "kg"}) is not None
+
+
+def test_budget_starts_order_sized_and_only_a_menu_raises_it():
+    async def go():
+        agent.start_budget()
+        b = agent._BUDGET.get()
+        assert b == [agent.DECISIONS_PER_RUN, agent.DECISIONS_PER_RUN]
+        b[0] -= 10
+        agent.start_budget(agent.DECISIONS_PER_MENU)  # menu.propose under /ask
+        assert b == [agent.DECISIONS_PER_MENU - 10, agent.DECISIONS_PER_MENU]
+        agent.start_budget()  # run() under /ask never lowers or resets it
+        assert b[1] == agent.DECISIONS_PER_MENU
+    asyncio.run(go())
