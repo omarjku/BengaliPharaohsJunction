@@ -17,7 +17,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from trade_contracts import AuditEntry, AuditInput, Decision, Mandate, PurchaseRequest, RequestItem
 
-from . import catalogue, gate, mandates
+from . import catalogue, gate, mandates, signing
 from .auth import Principal
 
 # ponytail: JSON files on local disk (D8). Render's disk is ephemeral, so orders + audit vanish on redeploy and
@@ -93,13 +93,27 @@ async def _gate(*args, **kwargs) -> gate.GateResult:
 
 
 def _response(order_id: str | None, status: str, body: dict, audit_id: str) -> dict:
-    return {"order_id": order_id, "status": status, "audit_id": audit_id, **body}
+    """Every order response carries a signed statement of what the front door decided and the quote facts it used."""
+    statement = {"v": 1, "iss": signing.ISSUER, "order_id": order_id, "status": status, "audit_id": audit_id,
+                 "total_cents": body["total_cents"], "decision": body["decision"],
+                 "quotes": body.get("quote_facts", [])}
+    return {"order_id": order_id, "status": status, "audit_id": audit_id, **body,
+            "signed_statement": statement, "signature": signing.sign(statement)}
+
+
+def _quote_facts(res: gate.GateResult) -> list[dict]:
+    """What Valio's API told the front door, per product (origin is Valio's catalogue data)."""
+    return [{"product_id": q.product_id, "unit_price_cents": q.unit_price_cents, "unit": q.unit,
+             "availability": q.availability.value, "available_quantity": q.quantity.value,
+             "cut_off": q.cut_off.closing_time.isoformat() if q.cut_off and q.cut_off.closing_time else None,
+             "cut_off_passed": bool(q.cut_off and q.cut_off.passed), "fetched_at": q.fetched_at.isoformat(),
+             "origin": (catalogue.get(q.product_id) or {}).get("origin")} for q in res.quotes]
 
 
 def _view(res: gate.GateResult) -> dict:
     return {"total_cents": res.total_cents, "lines": res.lines, "decision": res.decision.model_dump(mode="json"),
             "rejected_options": [r.model_dump(mode="json") for r in res.rejected_options],
-            "substitutes": res.substitutes, "alternative_order": res.alternative_order}
+            "substitutes": res.substitutes, "alternative_order": res.alternative_order, "quote_facts": _quote_facts(res)}
 
 
 def _busy() -> HTTPException:

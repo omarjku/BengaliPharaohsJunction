@@ -151,6 +151,35 @@ The application uses Valio sales-unit values such as `KI`, `ST`, and `KG`. UBL `
 
 Possible mappings are `KI` → `XCS`, `ST` → `H87`, and `KG` → `KGM`. These are candidates only. The code does not define this mapping, and `KI` must not be passed through as the UN/ECE code `KI`, which has a different meaning in that code list. Validate the mapping per product and sales unit before producing UBL.
 
+## Signed front-door statements
+
+Every order response (`POST /api/orders`, approve, reject, and the order inside `/api/agent/run`) carries
+`signed_statement` and `signature`. A buyer's agent can check them without trusting the transport or doing a
+manual check.
+
+- **What is signed.** `signed_statement` = `{v: 1, iss: "valio-front-door", order_id, status, audit_id,
+  total_cents, decision, quotes}`. `decision` is the contract `Decision`. Each entry in `quotes` is what Valio's
+  API reported at `fetched_at`: `product_id, unit_price_cents, unit, availability, available_quantity, cut_off,
+  cut_off_passed, fetched_at, origin`. `origin` comes from Valio's catalogue.
+- **Exact bytes.** UTF-8 JSON with keys sorted at every level, no whitespace (separators `,` and `:`),
+  non-ASCII characters left as is, no NaN or Infinity. In Python:
+  `json.dumps(s, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()`.
+  Numbers use Python's formatting (`51.0` stays `51.0`), so a non-Python verifier should check through
+  `POST /api/verify`, or format floats the same way. RFC 8785 (JCS) is the planned upgrade.
+- **Algorithm and key.** Ed25519 (RFC 8032). `signature = {kid, alg: "Ed25519", value}`, where `value` is the
+  64-byte signature in base64url without padding. The public key is published at
+  `GET /.well-known/front-door-keys.json` as a JWK Set (RFC 8037: `kty: OKP, crv: Ed25519, x`), selected by `kid`.
+  The private key comes from `FRONT_DOOR_SIGNING_KEY`: base64 of the 32-byte seed. If it is unset, the server uses
+  an ephemeral development key and logs that.
+- **Verify.** Either `POST /api/verify` with `{signed_statement, signature}` (returns `valid`), or offline:
+  canonical bytes + JWK `x` + any Ed25519 library.
+- **What it proves, and what it does not.** A valid signature proves that this Valio front door issued exactly
+  this decision and these quote facts, unchanged. It does not prove that the warehouse physically holds the
+  stock: the facts are what Valio's API reported at `fetched_at`.
+- **Prior art.** This is a detached signature over canonical JSON, in the spirit of JWS (RFC 7515) and HTTP
+  Message Signatures (RFC 9421). It signs the business statement rather than the HTTP message, so the statement
+  can be stored and checked later.
+
 ## Next steps
 
 1. Add an explicit GTIN field to the catalogue and `ProductFacts`, and validate the GS1 identifier before using `StandardItemIdentification`.

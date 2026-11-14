@@ -61,3 +61,77 @@ def test_buyer_audit_stays_scoped(shop):
     order([("463335", 1)])
     order([("463335", 1)], buyer="other")
     assert len(c.get("/api/audit", headers=AP).json()) == 1
+
+
+# --- 2. Signed decisions and quote facts
+import base64  # noqa: E402
+import copy  # noqa: E402
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey  # noqa: E402
+
+from app import signing  # noqa: E402
+
+
+def verify(body):
+    return c.post("/api/verify", json={"signed_statement": body["signed_statement"], "signature": body["signature"]})
+
+
+def test_order_response_is_signed_and_verifies(shop):
+    body = order([("463335", 10)]).json()
+    st, sig = body["signed_statement"], body["signature"]
+    assert sig["alg"] == "Ed25519" and sig["kid"] == signing.KID
+    assert st["order_id"] == body["order_id"] and st["decision"] == body["decision"] and st["total_cents"] == 1400
+    [q] = st["quotes"]
+    assert q["product_id"] == "463335" and q["unit_price_cents"] == 140 and q["availability"] == "available"
+    assert q["cut_off"] and q["fetched_at"] and q["cut_off_passed"] is False
+    r = verify(body).json()
+    assert r["valid"] is True and r["kid"] == signing.KID
+
+
+def test_tampering_with_any_field_breaks_the_signature(shop):
+    body = order([("463335", 10)]).json()
+    for path, value in [(("total_cents",), 1), (("quotes", 0, "unit_price_cents"), 1),
+                        (("quotes", 0, "availability"), "unknown"), (("decision", "outcome"), "ASK_HUMAN"),
+                        (("status",), "pending_approval")]:
+        bad = copy.deepcopy(body)
+        node = bad["signed_statement"]
+        for k in path[:-1]:
+            node = node[k]
+        node[path[-1]] = value
+        assert verify(bad).json()["valid"] is False, path
+    forged = copy.deepcopy(body)
+    forged["signature"]["kid"] = "fd-someone-else"
+    assert verify(forged).json()["valid"] is False
+    forged["signature"] = {"kid": signing.KID, "alg": "Ed25519", "value": "not base64 !!"}
+    assert verify(forged).json()["valid"] is False
+
+
+def test_published_jwk_verifies_independently_of_the_server(shop):
+    """A buyer's agent needs only the JWK and the canonical-bytes rule from docs/STANDARDS.md."""
+    body = order([("463335", 10)]).json()
+    [jwk] = c.get("/.well-known/front-door-keys.json").json()["keys"]
+    assert (jwk["kty"], jwk["crv"], jwk["kid"]) == ("OKP", "Ed25519", body["signature"]["kid"])
+    pad = lambda s: s + "=" * (-len(s) % 4)  # noqa: E731
+    pub = Ed25519PublicKey.from_public_bytes(base64.urlsafe_b64decode(pad(jwk["x"])))
+    msg = signing.canonical(body["signed_statement"])
+    pub.verify(base64.urlsafe_b64decode(pad(body["signature"]["value"])), msg)  # raises if invalid
+    assert msg.startswith(b'{"audit_id":') and b" " not in msg.split(b'"decision"')[0]
+
+
+def test_refusals_approvals_and_rejections_are_signed_too(shop):
+    assert verify(order([("463038", 1)]).json()).json()["valid"]  # refused
+    oid = order([("463335", 1000)]).json()["order_id"]
+    assert verify(c.post(f"/api/orders/{oid}/approve", headers=AP).json()).json()["valid"]
+    oid = order([("463335", 1000)]).json()["order_id"]
+    assert verify(c.post(f"/api/orders/{oid}/reject", headers=AP).json()).json()["valid"]
+
+
+def test_signing_key_from_env(monkeypatch):
+    seed = bytes(range(32))
+    monkeypatch.setattr(config, "FRONT_DOOR_SIGNING_KEY", base64.b64encode(seed).decode())
+    k = signing._load()
+    assert k.private_bytes_raw() == seed
+    monkeypatch.setattr(config, "FRONT_DOOR_SIGNING_KEY", base64.b64encode(b"short").decode())
+    import pytest
+    with pytest.raises(RuntimeError):
+        signing._load()
