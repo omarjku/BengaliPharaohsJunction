@@ -1,0 +1,128 @@
+{
+  "$defs": {
+    "AllergenStatus": {
+      "enum": [
+        "CONTAINS",
+        "MAY_CONTAIN",
+        "FREE_FROM"
+      ],
+      "title": "AllergenStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "const": "0.2",
+      "default": "0.2",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "product_id": {
+      "minLength": 1,
+      "title": "Product Id",
+      "type": "string"
+    },
+    "name_fi": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Name Fi"
+    },
+    "name_en": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "A couple of products have no English name.",
+      "title": "Name En"
+    },
+    "category": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "null = not in the data (decision asks).",
+      "title": "Category"
+    },
+    "allergens": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AllergenStatus"
+      },
+      "description": "Per allergen (lower-case name, e.g. 'gluten') CONTAINS / MAY_CONTAIN / FREE_FROM. An allergen that is absent means the data does not say.",
+      "title": "Allergens",
+      "type": "object"
+    },
+    "reliability": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Delivery reliability 0-1; null = no record.",
+      "title": "Reliability"
+    },
+    "min_order_qty": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Smallest order, in sales units; null = none stated.",
+      "title": "Min Order Qty"
+    },
+    "sales_unit": {
+      "description": "What one ordered unit is, e.g. '1 L carton'.",
+      "minLength": 1,
+      "title": "Sales Unit",
+      "type": "string"
+    },
+    "pack_size": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Contents per sales unit, e.g. 12 for a 12 x 1 L case.",
+      "title": "Pack Size"
+    }
+  },
+  "required": [
+    "product_id",
+    "sales_unit"
+  ],
+  "title": "ProductFacts",
+  "type": "object"
+}

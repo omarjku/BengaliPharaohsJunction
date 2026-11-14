@@ -1,11 +1,11 @@
 {
-  "contract_version": "0.1",
+  "contract_version": "0.2",
   "id": "audit-001",
   "timestamp": "2026-11-14T09:00:07+02:00",
   "actor": "buyer_agent",
   "input": {
     "request": {
-      "contract_version": "0.1",
+      "contract_version": "0.2",
       "id": "req-001",
       "buyer_id": "hotel-demo",
       "text": "I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.",
@@ -17,10 +17,10 @@
     "mandate": null,
     "quotes": [
       {
-        "contract_version": "0.1",
+        "contract_version": "0.2",
         "product_id": "463335",
         "product_name": "Valio Eila 3% milk drink 1 L",
-        "unit_price_eur": 1.4,
+        "unit_price_cents": 140,
         "unit": "1 L carton",
         "availability": "available",
         "quantity": { "known": true, "value": 5000 },
@@ -33,18 +33,30 @@
     ]
   },
   "decision": {
-    "contract_version": "0.1",
+    "contract_version": "0.2",
     "request_id": "req-001",
     "outcome": "ASK_HUMAN",
     "reasons": [
       {
-        "code": "OVER_SPEND_LIMIT",
-        "message": "1,000 x 1.40 EUR = 1,400 EUR is above your 500 EUR auto-approve limit, so a person must approve.",
+        "code": "SPEND_OVER_LIMIT",
+        "severity": "ASK_HUMAN",
+        "message": "This order is EUR 1,400.00 (net of VAT), above your EUR 500.00 auto-approve limit.",
+        "facts": { "total_cents": 140000, "limit_cents": 50000, "quantity": 1000, "unit_price_cents": 140 },
+        "suggested_fix": "Approve, reduce the quantity to fit the limit, or decline.",
         "product_id": "463335"
       }
     ],
+    "primary_reason": {
+      "code": "SPEND_OVER_LIMIT",
+      "severity": "ASK_HUMAN",
+      "message": "This order is EUR 1,400.00 (net of VAT), above your EUR 500.00 auto-approve limit.",
+      "facts": { "total_cents": 140000, "limit_cents": 50000, "quantity": 1000, "unit_price_cents": 140 },
+      "suggested_fix": "Approve, reduce the quantity to fit the limit, or decline.",
+      "product_id": "463335"
+    },
     "confidence": 0.93,
     "alternatives": [],
+    "rules_version": "t06-0.1",
     "decided_at": "2026-11-14T09:00:07+02:00"
   },
   "rejected_options": [
@@ -52,8 +64,11 @@
       "product_id": "463038",
       "reasons": [
         {
-          "code": "CUT_OFF_PASSED",
+          "code": "CUTOFF_PASSED",
+          "severity": "ASK_HUMAN",
           "message": "Order cut-off Thu 12 Nov 15:00 has passed, and its stock is unknown (999999), so it cannot be ordered for Monday.",
+          "facts": { "closing_time": "2026-11-12T15:00:00+02:00" },
+          "suggested_fix": "Pick an alternative that can still arrive Monday.",
           "product_id": "463038"
         }
       ]
@@ -62,8 +77,11 @@
       "product_id": "462775",
       "reasons": [
         {
-          "code": "PARTIAL_STOCK",
+          "code": "STOCK_PARTIAL",
+          "severity": "ASK_HUMAN",
           "message": "Only 51 units are available of the 1,000 needed.",
+          "facts": { "available": 51, "requested": 1000 },
+          "suggested_fix": "Take 51 now plus a substitute for the rest, or wait.",
           "product_id": "462775"
         }
       ]

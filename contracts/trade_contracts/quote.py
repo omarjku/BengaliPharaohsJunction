@@ -33,7 +33,12 @@ class CutOff(ContractModel):
 class Quote(VersionedModel):
     product_id: str = Field(min_length=1)
     product_name: str | None = None
-    unit_price_eur: float = Field(ge=0)
+    # NET OF VAT: the customer price excluding VAT, per sales unit, in integer cents
+    # (not Valio's priceWithTax). Spend limits are compared on this same net basis.
+    # null = no price known; the decision step treats that as ASK_HUMAN, not as an error.
+    unit_price_cents: int | None = Field(
+        description="Net-of-VAT customer price per sales unit, integer cents; null if unknown."
+    )
     unit: str = Field(min_length=1, description="Sales unit, e.g. '1 L carton'.")
     availability: Availability
     quantity: QuantityInfo

@@ -1,25 +1,39 @@
-"""Shared contracts v0 for the Trusted Trade Agents front door."""
+"""Shared contracts v0.2 for the Trusted Trade Agents front door.
+
+Money: integer cents, net of VAT (customer price excluding VAT).
+"""
 
 from .audit import AuditEntry, AuditInput, RejectedOption
-from .common import CONTRACT_VERSION, HARD_RULE_CODES, Outcome, ReasonCode
+from .common import (
+    CONTRACT_VERSION,
+    HARD_CODES,
+    AllergenStatus,
+    Outcome,
+    ReasonCode,
+    Severity,
+)
 from .decision import Alternative, Decision, Reason
 from .mandate import HardRule, Mandate, OpenQuestion, Preference
+from .money import eur_to_cents
+from .product import ProductFacts
 from .quote import CutOff, QuantityInfo, Quote
 from .request import PurchaseRequest, RequestItem
 
-# The five top-level shapes that get a published JSON Schema.
+# The top-level shapes that get a published JSON Schema.
 SCHEMA_MODELS = {
     "PurchaseRequest": PurchaseRequest,
     "Mandate": Mandate,
     "Quote": Quote,
+    "ProductFacts": ProductFacts,
     "Decision": Decision,
     "AuditEntry": AuditEntry,
 }
 
 __all__ = [
     "CONTRACT_VERSION",
-    "HARD_RULE_CODES",
+    "HARD_CODES",
     "SCHEMA_MODELS",
+    "AllergenStatus",
     "Alternative",
     "AuditEntry",
     "AuditInput",
@@ -30,6 +44,7 @@ __all__ = [
     "OpenQuestion",
     "Outcome",
     "Preference",
+    "ProductFacts",
     "PurchaseRequest",
     "QuantityInfo",
     "Quote",
@@ -37,4 +52,6 @@ __all__ = [
     "ReasonCode",
     "RejectedOption",
     "RequestItem",
+    "Severity",
+    "eur_to_cents",
 ]

@@ -2,7 +2,7 @@
   "$defs": {
     "HardRule": {
       "additionalProperties": false,
-      "description": "A check that is either met or not. Breaking one justifies DECLINE\n(except AUTO_APPROVE_LIMIT_EUR, which only decides who signs off).",
+      "description": "A check that is either met or not. Breaking one is a hard violation\n(except AUTO_APPROVE_LIMIT_CENTS, which only decides who signs off).",
       "properties": {
         "kind": {
           "$ref": "#/$defs/RuleKind"
@@ -16,7 +16,7 @@
               "type": "number"
             }
           ],
-          "description": "Allergen/claim name, or a number, depending on kind.",
+          "description": "Allergen/claim name, or a number (cents for *_cents kinds), depending on kind.",
           "title": "Value"
         },
         "scope": {
@@ -102,13 +102,13 @@
       "type": "string"
     },
     "RuleKind": {
-      "description": "Closed list of checks a hard rule may express.",
+      "description": "Closed list of checks a hard rule may express. Money values are net cents.",
       "enum": [
         "excluded_allergen",
         "required_claim",
-        "max_unit_price_eur",
+        "max_unit_price_cents",
         "min_delivery_reliability",
-        "auto_approve_limit_eur"
+        "auto_approve_limit_cents"
       ],
       "title": "RuleKind",
       "type": "string"
@@ -127,8 +127,8 @@
   "additionalProperties": false,
   "properties": {
     "contract_version": {
-      "const": "0.1",
-      "default": "0.1",
+      "const": "0.2",
+      "default": "0.2",
       "title": "Contract Version",
       "type": "string"
     },
@@ -166,6 +166,49 @@
       },
       "title": "Open Questions",
       "type": "array"
+    },
+    "blocklist": {
+      "description": "Product ids that may never be ordered.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Blocklist",
+      "type": "array"
+    },
+    "per_line_cap_cents": {
+      "default": 30000,
+      "description": "Max net cents for one order line (default EUR 300).",
+      "exclusiveMinimum": 0,
+      "title": "Per Line Cap Cents",
+      "type": "integer"
+    },
+    "weekly_budget_cents": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional net-cents budget for a rolling 7 days.",
+      "title": "Weekly Budget Cents"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "After this the mandate is expired (decisions ask a human).",
+      "title": "Expires At"
     }
   },
   "required": [

@@ -97,8 +97,8 @@
       "additionalProperties": false,
       "properties": {
         "contract_version": {
-          "const": "0.1",
-          "default": "0.1",
+          "const": "0.2",
+          "default": "0.2",
           "title": "Contract Version",
           "type": "string"
         },
@@ -111,12 +111,24 @@
           "$ref": "#/$defs/Outcome"
         },
         "reasons": {
+          "description": "All reasons, highest severity first.",
           "items": {
             "$ref": "#/$defs/Reason"
           },
-          "minItems": 1,
           "title": "Reasons",
           "type": "array"
+        },
+        "primary_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Reason"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "reasons[0]; filled in automatically; null only when no reasons."
         },
         "confidence": {
           "anyOf": [
@@ -136,8 +148,14 @@
           "items": {
             "$ref": "#/$defs/Alternative"
           },
+          "maxItems": 3,
           "title": "Alternatives",
           "type": "array"
+        },
+        "rules_version": {
+          "minLength": 1,
+          "title": "Rules Version",
+          "type": "string"
         },
         "decided_at": {
           "format": "date-time",
@@ -148,7 +166,7 @@
       "required": [
         "request_id",
         "outcome",
-        "reasons",
+        "rules_version",
         "decided_at"
       ],
       "title": "Decision",
@@ -156,7 +174,7 @@
     },
     "HardRule": {
       "additionalProperties": false,
-      "description": "A check that is either met or not. Breaking one justifies DECLINE\n(except AUTO_APPROVE_LIMIT_EUR, which only decides who signs off).",
+      "description": "A check that is either met or not. Breaking one is a hard violation\n(except AUTO_APPROVE_LIMIT_CENTS, which only decides who signs off).",
       "properties": {
         "kind": {
           "$ref": "#/$defs/RuleKind"
@@ -170,7 +188,7 @@
               "type": "number"
             }
           ],
-          "description": "Allergen/claim name, or a number, depending on kind.",
+          "description": "Allergen/claim name, or a number (cents for *_cents kinds), depending on kind.",
           "title": "Value"
         },
         "scope": {
@@ -202,8 +220,8 @@
       "additionalProperties": false,
       "properties": {
         "contract_version": {
-          "const": "0.1",
-          "default": "0.1",
+          "const": "0.2",
+          "default": "0.2",
           "title": "Contract Version",
           "type": "string"
         },
@@ -241,6 +259,49 @@
           },
           "title": "Open Questions",
           "type": "array"
+        },
+        "blocklist": {
+          "description": "Product ids that may never be ordered.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Blocklist",
+          "type": "array"
+        },
+        "per_line_cap_cents": {
+          "default": 30000,
+          "description": "Max net cents for one order line (default EUR 300).",
+          "exclusiveMinimum": 0,
+          "title": "Per Line Cap Cents",
+          "type": "integer"
+        },
+        "weekly_budget_cents": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional net-cents budget for a rolling 7 days.",
+          "title": "Weekly Budget Cents"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "After this the mandate is expired (decisions ask a human).",
+          "title": "Expires At"
         }
       },
       "required": [
@@ -320,8 +381,8 @@
       "additionalProperties": false,
       "properties": {
         "contract_version": {
-          "const": "0.1",
-          "default": "0.1",
+          "const": "0.2",
+          "default": "0.2",
           "title": "Contract Version",
           "type": "string"
         },
@@ -412,8 +473,8 @@
       "additionalProperties": false,
       "properties": {
         "contract_version": {
-          "const": "0.1",
-          "default": "0.1",
+          "const": "0.2",
+          "default": "0.2",
           "title": "Contract Version",
           "type": "string"
         },
@@ -434,10 +495,17 @@
           "default": null,
           "title": "Product Name"
         },
-        "unit_price_eur": {
-          "minimum": 0,
-          "title": "Unit Price Eur",
-          "type": "number"
+        "unit_price_cents": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Net-of-VAT customer price per sales unit, integer cents; null if unknown.",
+          "title": "Unit Price Cents"
         },
         "unit": {
           "description": "Sales unit, e.g. '1 L carton'.",
@@ -500,7 +568,7 @@
       },
       "required": [
         "product_id",
-        "unit_price_eur",
+        "unit_price_cents",
         "unit",
         "availability",
         "quantity",
@@ -525,11 +593,51 @@
         "code": {
           "$ref": "#/$defs/ReasonCode"
         },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
         "message": {
           "description": "Plain language, shown to the chef.",
           "minLength": 1,
           "title": "Message",
           "type": "string"
+        },
+        "facts": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "The numbers behind the message (money in net cents).",
+          "title": "Facts",
+          "type": "object"
+        },
+        "suggested_fix": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the human can do about it.",
+          "title": "Suggested Fix"
         },
         "product_id": {
           "anyOf": [
@@ -546,6 +654,7 @@
       },
       "required": [
         "code",
+        "severity",
         "message"
       ],
       "title": "Reason",
@@ -553,18 +662,37 @@
     },
     "ReasonCode": {
       "enum": [
-        "CUT_OFF_PASSED",
-        "QUANTITY_UNKNOWN",
-        "PARTIAL_STOCK",
-        "UNAVAILABLE",
-        "NOT_DELIVERABLE",
+        "QTY_INVALID",
+        "QTY_AMBIGUOUS",
+        "QTY_SUSPICIOUS",
+        "QTY_UNKNOWN",
+        "STOCK_PARTIAL",
+        "STOCK_NONE",
         "UNIT_MISMATCH",
-        "OVER_SPEND_LIMIT",
+        "CUTOFF_PASSED",
+        "UNDELIVERABLE",
+        "DATE_NOT_HONOURED",
+        "LOW_RELIABILITY",
+        "QUOTE_STALE",
+        "PRICE_MISSING",
+        "PRICE_CHANGED",
+        "UNKNOWN_PRODUCT",
+        "DATA_MISSING",
+        "SPEND_OVER_LIMIT",
+        "LINE_OVER_CAP",
+        "WEEKLY_BUDGET_EXCEEDED",
+        "ALLERGEN_CONTAINS",
+        "ALLERGEN_MAY_CONTAIN",
+        "ALLERGEN_DATA_MISSING",
+        "BLOCKLISTED",
+        "MANDATE_MISSING",
+        "MANDATE_EXPIRED",
+        "MANDATE_INVALID",
+        "DEFAULT_MANDATE_APPLIED",
+        "LIMIT_CHANGE_ATTEMPT",
+        "POLICY_DECLINE_UNKNOWN",
         "LOW_CONFIDENCE",
-        "SUBSTITUTION_OUTSIDE_PREFERENCES",
-        "HARD_RULE_VIOLATED",
-        "ALLERGEN_CONFLICT",
-        "WITHIN_MANDATE"
+        "ENGINE_ERROR"
       ],
       "title": "ReasonCode",
       "type": "string"
@@ -636,15 +764,25 @@
       "type": "object"
     },
     "RuleKind": {
-      "description": "Closed list of checks a hard rule may express.",
+      "description": "Closed list of checks a hard rule may express. Money values are net cents.",
       "enum": [
         "excluded_allergen",
         "required_claim",
-        "max_unit_price_eur",
+        "max_unit_price_cents",
         "min_delivery_reliability",
-        "auto_approve_limit_eur"
+        "auto_approve_limit_cents"
       ],
       "title": "RuleKind",
+      "type": "string"
+    },
+    "Severity": {
+      "description": "Per-reason severity. The Decision outcome is the highest severity present:\nDECLINE > ASK_HUMAN > INFO (INFO only = AUTO).",
+      "enum": [
+        "INFO",
+        "ASK_HUMAN",
+        "DECLINE"
+      ],
+      "title": "Severity",
       "type": "string"
     },
     "UncertaintyPolicy": {
@@ -661,8 +799,8 @@
   "additionalProperties": false,
   "properties": {
     "contract_version": {
-      "const": "0.1",
-      "default": "0.1",
+      "const": "0.2",
+      "default": "0.2",
       "title": "Contract Version",
       "type": "string"
     },
