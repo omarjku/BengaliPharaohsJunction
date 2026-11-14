@@ -117,6 +117,7 @@ export type AlternativeOrder = {
   lines: (OrderLine & { replaces?: string; tier?: Substitute['tier'] })[]
   total_cents: number
   summary: string
+  order_lines?: { product_id: string; quantity: number }[] // the body to re-POST, verbatim
 }
 
 export type OrderStatus = 'confirmed' | 'pending_approval' | 'refused' | 'rejected'

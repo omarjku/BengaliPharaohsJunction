@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { placeOrder } from './api'
+import { getKeys, MOCK, placeOrder } from './api'
 import { tidyName } from './copy'
 import { errorText } from './format'
 import { useCopy } from './i18n'
@@ -17,6 +17,7 @@ type Props = {
 }
 
 const productName = (l: Line) => tidyName(l.product.name_en ?? l.product.name_fi ?? l.product.id)
+const orderable = (l: Line) => l.quote != null && l.quote.orderable && l.quantity?.quantity != null && l.line_total_cents != null
 
 // A menu became a proposed cart: the chef checks the portions, then orders the cart as one order.
 export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAnnounce, after }: Props) {
@@ -27,6 +28,24 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
   const [ordering, setOrdering] = useState(false)
   const [ordered, setOrdered] = useState<OrderResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // The chef's own picks: ingredient index -> the option chosen instead of the agent's (or for an empty slot).
+  const [swap, setSwap] = useState<Record<number, Line>>({})
+  const swapped = Object.entries(swap).map(([i, l]) => [Number(i), l] as const)
+  const replaced = plan.lines.filter((l) => l.chosen && l.item != null && swap[l.item] !== undefined)
+  // ponytail: a product the agent chose for two ingredients is one order line; swapping one ingredient drops both.
+  const orderLines = [
+    ...plan.order_lines.filter((o) => !replaced.some((l) => l.product.id === o.product_id)),
+    ...swapped.map(([, l]) => ({ product_id: l.product.id, quantity: l.quantity!.quantity! })),
+  ]
+  const total =
+    plan.cart_total_cents - replaced.reduce((a, l) => a + (l.line_total_cents ?? 0), 0) + swapped.reduce((a, [, l]) => a + (l.line_total_cents ?? 0), 0)
+  const choose = (i: number, l: Line) =>
+    setSwap((s) => {
+      const next = { ...s }
+      if (l.chosen) delete next[i] // back to the agent's pick
+      else next[i] = l
+      return next
+    })
   const heading = useRef<HTMLHeadingElement>(null)
   // The order button comes after the cart, and on a phone it floats only once the total has been seen.
   const totalRef = useRef<HTMLDivElement>(null)
@@ -49,11 +68,12 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
   }, [plan, forWhom, onAnnounce, t, c])
 
   async function orderCart() {
+    if (!MOCK && !getKeys().agentKey) return setError(c.UI.result.keysFirst)
     setOrdering(true)
     onBusy(true)
     setError(null)
     try {
-      setOrdered(await placeOrder({ requested_date: planFor.date, lines: plan.order_lines })) // verbatim, as proposed
+      setOrdered(await placeOrder({ requested_date: planFor.date, lines: orderLines })) // as proposed, with the chef's picks
       onAction()
     } catch (err) {
       setError(errorText(err))
@@ -94,7 +114,7 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
           <section className="answer" aria-label={t.aria}>
             <p className="status neutral">{c.UI.status.ready}</p>
             <h2 ref={heading} tabIndex={-1} className="answer-text">
-              {t.cart(forWhom, c.money(plan.cart_total_cents))}
+              {t.cart(forWhom, c.money(total))}
             </h2>
             <p className="answer-sub">
               {t.sub(c.day(planFor.date))}
@@ -108,8 +128,8 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
             </h2>
             {plan.ingredients.map((ing, i) => {
               const lines = plan.lines.filter((l) => l.item === i)
-              const chosen = lines.filter((l) => l.chosen)
-              const others = lines.filter((l) => !l.chosen)
+              const chosen = swap[i] ? [swap[i]] : lines.filter((l) => l.chosen)
+              const others = lines.filter((l) => !chosen.includes(l))
               return (
                 <div key={i} className="cart-group">
                   <p className="dish">
@@ -141,7 +161,14 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
                       <ul className="more-body">
                         {others.map((l) => (
                           <li key={l.product.id} className="option">
-                            <span>{productName(l)}</span>
+                            <div>
+                              <p>{productName(l)}</p>
+                              {orderable(l) && (
+                                <button type="button" className="btn plain accent-text small-btn" onClick={() => choose(i, l)} disabled={ordering}>
+                                  {c.UI.result.orderInstead}
+                                </button>
+                              )}
+                            </div>
                             <span className="option-side quiet">{l.line_total_cents !== null ? c.money(l.line_total_cents) : '—'}</span>
                           </li>
                         ))}
@@ -153,13 +180,13 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
             })}
             <div className="split-total" ref={totalRef}>
               <span>
-                <strong className="num">{c.money(plan.cart_total_cents)}</strong> <span className="quiet">{c.UI.result.exclVat}</span>
+                <strong className="num">{c.money(total)}</strong> <span className="quiet">{c.UI.result.exclVat}</span>
               </span>
             </div>
-            {plan.order_lines.length > 0 && (
+            {orderLines.length > 0 && (
               <div className={`decide${totalSeen ? ' floating' : ''}`}>
                 <button type="button" className="btn" onClick={orderCart} disabled={ordering}>
-                  {ordering ? c.UI.result.ordering : t.orderCart(c.money(plan.cart_total_cents))}
+                  {ordering ? c.UI.result.ordering : t.orderCart(c.money(total))}
                 </button>
               </div>
             )}

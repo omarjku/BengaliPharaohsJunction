@@ -13,9 +13,11 @@ type Props = {
   onAnnounce: (headline: string) => void
   onRetry?: () => void // "Not this one": back to the request field
   onHistory?: () => void // "See it in History", from the front-door line
+  onAskFor?: (text: string) => void // a substitute in another pack size: ask the agent for it (it works out the amount)
   after?: ReactNode // shown right under the answer (e.g. "Need it sooner?"), before the details
 }
 type Busy = 'approve' | 'reject' | 'place' | null
+type Pick = { label: string; go: () => void }
 
 const productName = (l: Line) => tidyName(l.product.name_en ?? l.product.name_fi ?? l.product.id)
 const clock = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Helsinki' })
@@ -44,8 +46,10 @@ function useSeen<T extends Element>(): [RefObject<T | null>, boolean] {
 const orderable = (l: Line) => l.quote != null && l.quote.orderable && l.quantity?.quantity != null && l.line_total_cents != null
 const lineOrder = (l: Line) => ({ product_id: l.product.id, quantity: l.quantity!.quantity! })
 
-export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, onRetry, onHistory, after }: Props) {
+export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, onRetry, onHistory, onAskFor, after }: Props) {
   const [busy, setBusy] = useState<Busy>(null)
+  const [placing, setPlacing] = useState<string | null>(null) // which option's button is ordering (its label says so)
+  const errorRef = useRef<HTMLDivElement>(null)
   const [result, setResult] = useState<OrderResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [signOff, setSignOff] = useState<string | null>(null) // "Chef Aino approved · 04:52"
@@ -117,6 +121,12 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   }, [status, head, result, onAnnounce])
 
   async function run_(kind: Busy, go: () => Promise<OrderResponse>) {
+    if (kind === 'place' && !MOCK && !getKeys().agentKey) {
+      setPlacing(null)
+      setError(t.keysFirst)
+      requestAnimationFrame(() => errorRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
+      return
+    }
     setBusy(kind)
     onBusy(true)
     setError(null)
@@ -133,14 +143,30 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
       } else setSignOff(null)
       onAction()
     } catch (err) {
-      setError(errorText(err))
+      setError(errorText(err)) // the backend's own words (detail)
+      requestAnimationFrame(() => errorRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
     } finally {
       setBusy(null)
+      setPlacing(null)
       onBusy(false)
     }
   }
   const decide = (action: 'approve' | 'reject') => run_(action, () => decideOrder(order!.order_id!, action))
-  const place = (lines: OrderInput['lines']) => run_('place', () => placeOrder({ requested_date: requestedDate, lines }))
+  const place = (lines: OrderInput['lines'], which = 'main') => {
+    setPlacing(which)
+    return run_('place', () => placeOrder({ requested_date: requestedDate, lines }))
+  }
+  // Another option can be chosen until something is ordered or waiting for the chef's OK.
+  const canChoose = !order || order.status === 'refused' || order.status === 'rejected'
+  // A substitute takes the refused line's amount when it comes in the same unit; otherwise the agent works it out.
+  const pickSub = (s: Substitute): Pick | null => {
+    if (!canChoose) return null
+    const was = order?.lines.find((l) => l.product_id === s.replaces)
+    if (was?.quantity != null && (was.unit ?? null) === (s.unit ?? null))
+      return { label: t.orderInstead, go: () => place([{ product_id: s.product_id, quantity: was.quantity! }], s.product_id) }
+    const asked = run.lines.find((l) => l.product.id === s.replaces)?.quantity?.requested
+    return onAskFor ? { label: t.askFor, go: () => onAskFor(`${asked ? `${asked.amount} ${asked.unit} ` : ''}${tidyName(s.name)}`) } : null
+  }
 
   // Calm notes stay out of "Also worth knowing": the Gemini line says the confidence, the front-door line the hand-off.
   const otherReasons = decision.reasons.slice(1).filter((r) => r.code !== 'CONFIDENCE_OK' && r.code !== 'FRONT_DOOR')
@@ -207,8 +233,13 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
         )}
         {split && (
           <div className={`decide${reasonsSeen ? ' floating' : ''}`}>
-            <button type="button" className="btn" onClick={() => place(split.lines.map((l) => ({ product_id: l.product_id, quantity: l.quantity ?? 0 })))} disabled={busy !== null}>
-              {busy === 'place' ? t.ordering : t.orderBoth(split.lines.length === 2, c.money(split.total_cents))}
+            <button
+              type="button"
+              className="btn"
+              onClick={() => place(split.order_lines ?? split.lines.filter((l) => l.quantity != null).map((l) => ({ product_id: l.product_id, quantity: l.quantity! })))}
+              disabled={busy !== null}
+            >
+              {placing === 'main' ? t.ordering : t.orderBoth(split.lines.length === 2, c.money(split.total_cents))}
             </button>
           </div>
         )}
@@ -216,7 +247,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
           <div className={`decide${reasonsSeen ? ' floating' : ''}`}>
             {guess && (
               <button type="button" className="btn" onClick={() => place([lineOrder(guess)])} disabled={busy !== null}>
-                {busy === 'place' ? t.ordering : t.orderIt(c.money(guess.line_total_cents!))}
+                {placing === 'main' ? t.ordering : t.orderIt(c.money(guess.line_total_cents!))}
               </button>
             )}
             {onRetry && (
@@ -227,7 +258,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
           </div>
         )}
         {error && (
-          <div className="problem" role="alert">
+          <div className="problem" role="alert" ref={errorRef}>
             <strong>{c.UI.failed}</strong>
             {error}
           </div>
@@ -236,7 +267,9 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
 
       {after}
       {split && <SplitRows alt={split} />}
-      {subs.length > 0 && <Substitutes subs={subs} />}
+      {subs.length > 0 && (
+        <Substitutes subs={subs} pick={pickSub} busy={busy !== null} placing={placing} />
+      )}
 
       <div className="more">
         {chosen.map((l) => (
@@ -263,7 +296,13 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
             <summary>{t.other(others.length)}</summary>
             <ul className="more-body">
               {others.map((l) => (
-                <OtherOption key={l.product.id} line={l} onOrder={!order && run.decision.outcome !== 'DECLINE' && orderable(l) ? () => place([lineOrder(l)]) : null} busy={busy !== null} />
+                <OtherOption
+                  key={l.product.id}
+                  line={l}
+                  onOrder={canChoose && orderable(l) ? () => place([lineOrder(l)], l.product.id) : null}
+                  busy={busy !== null}
+                  placing={placing === l.product.id}
+                />
               ))}
             </ul>
           </details>
@@ -345,7 +384,7 @@ function WhyThis({ line }: { line: Line }) {
   )
 }
 
-function OtherOption({ line, onOrder, busy }: { line: Line; onOrder: (() => void) | null; busy: boolean }) {
+function OtherOption({ line, onOrder, busy, placing }: { line: Line; onOrder: (() => void) | null; busy: boolean; placing: boolean }) {
   const c = useCopy()
   const [tone, avail] = availability(line, c)
   const unsure = line.confidence != null && line.confidence < CONFIDENT_AT
@@ -357,7 +396,7 @@ function OtherOption({ line, onOrder, busy }: { line: Line; onOrder: (() => void
         <p className={`option-why num ${tone === 'bad' ? 'bad' : unsure ? 'warn' : ''}`}>{why}</p>
         {onOrder && (
           <button type="button" className="btn plain accent-text small-btn" onClick={onOrder} disabled={busy}>
-            {c.UI.result.orderInstead}
+            {placing ? c.UI.result.ordering : c.UI.result.orderInstead}
           </button>
         )}
       </div>
@@ -367,7 +406,7 @@ function OtherOption({ line, onOrder, busy }: { line: Line; onOrder: (() => void
 }
 
 // Allergen-safe substitutes for a line Valio can't deliver, best first (the backend's order is kept).
-function Substitutes({ subs }: { subs: Substitute[] }) {
+function Substitutes({ subs, pick, busy, placing }: { subs: Substitute[]; pick: (s: Substitute) => Pick | null; busy: boolean; placing: string | null }) {
   const c = useCopy()
   const t = c.UI.result
   return (
@@ -382,6 +421,16 @@ function Substitutes({ subs }: { subs: Substitute[] }) {
               <p className="alt-rank">{t.rank[s.tier] ?? s.tier}</p>
               <p>{tidyName(s.name)}</p>
               <p className="quiet small">{s.why_safe}</p>
+              {(() => {
+                const p = pick(s)
+                return (
+                  p && (
+                    <button type="button" className="btn plain accent-text small-btn" onClick={p.go} disabled={busy}>
+                      {placing === s.product_id ? t.ordering : p.label}
+                    </button>
+                  )
+                )
+              })()}
             </div>
             <div className="alt-side">
               <p>{s.unit_price_cents !== null ? c.money(s.unit_price_cents) : '—'}</p>

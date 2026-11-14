@@ -88,6 +88,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const [editing, setEditing] = useState(false) // phone: the composer is collapsed to a summary row after a result
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [expired, setExpired] = useState(false) // a follow-up came too late: offer to ask the original again
   const [auditKey, setAuditKey] = useState(0)
   const [deciding, setDeciding] = useState(false) // approve/reject in flight
   const [announce, setAnnounce] = useState('')
@@ -146,15 +147,17 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   }
 
   // A new request, or (with `to`) the answer to the question the agent just asked.
-  async function ask(words: string, to?: string) {
+  async function ask(words: string, to?: string, when?: string) {
     setRunning(true)
     setAnnounce(u.ask.announce)
     setError(null)
-    setResult(null)
+    setExpired(false)
+    // An answer keeps its question on screen (with "Sending…" and the progress) until the new result replaces it.
+    if (!to) setResult(null)
     setEditing(false)
     try {
       phaseLine.reset()
-      const input = to ? { text: '', follow_up: { to, answer: words.trim() } } : { text: words.trim(), ...(dateSet ? { requested_date: date } : {}) }
+      const input = to ? { text: '', follow_up: { to, answer: words.trim() } } : { text: words.trim(), ...(when ? { requested_date: when } : dateSet ? { requested_date: date } : {}) }
       const res = await askAgentStream(input, (p) =>
         phaseLine.push(c.UI.progress.phases[p.phase] ?? p.text),
       )
@@ -167,9 +170,14 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         setEditing(true) // the answer goes in the box (or the guests field), so keep it open
       }
     } catch (err) {
-      const expired = to && err instanceof ApiError && err.status === 404
+      const expired = !!to && err instanceof ApiError && err.status === 404
+      if (expired) {
+        setResult(null) // the question is gone; "Ask again" re-sends the original request
+        setExpired(true)
+        setEditing(true)
+      }
       setError(expired ? u.question.expired : err instanceof Error && err.message === DROPPED ? u.progress.dropped : errorText(err))
-      setAnnounce('')
+      setAnnounce(expired ? u.question.expired : '')
       if (expired && byVoice) readBack.speak(u.question.expired, { lang: languageOf(text) })
     } finally {
       setRunning(false)
@@ -385,6 +393,13 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                 <div className="problem" role="alert">
                   <strong>{u.failed}</strong>
                   {error}
+                  {expired && text.trim() && (
+                    <div className="actions">
+                      <button type="button" className="btn" onClick={() => void ask(text)} disabled={running}>
+                        {u.question.reask}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               {byVoice && result && readBack.canSpeak && (
@@ -410,6 +425,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                   onAnswer={(words) => convo && void ask(words, convo)}
                   onAgain={orderAgain}
                   onLeave={leaveIt}
+                  onEdit={retry}
                   mic={micOn && convo ? <MicButton voice={voice} disabled={running} /> : null}
                   status={micOn && convo ? <VoiceStatus voice={voice} /> : null}
                 />
@@ -436,6 +452,10 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                   onAnnounce={setAnnounce}
                   onRetry={retry}
                   onHistory={() => setView('history')}
+                  onAskFor={(next) => {
+                    setText(next)
+                    void ask(next, undefined, runDate) // same delivery day as the result it came from
+                  }}
                   after={urgentBlock}
                 />
               )}
@@ -466,6 +486,13 @@ function useCyclingExample(active: boolean, examples: string[]): string {
     return () => clearInterval(t)
   }, [active, examples.length])
   return examples[i % examples.length]
+}
+
+// The next n delivery days from tomorrow (Helsinki), as YYYY-MM-DD.
+function nextDays(n: number): string[] {
+  const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Helsinki' }).format(new Date())
+  const base = Date.parse(`${ymd}T12:00:00Z`)
+  return Array.from({ length: n }, (_, i) => new Date(base + (i + 1) * 86_400_000).toISOString().slice(0, 10))
 }
 
 // A small way in for Valio's staff; the chef's nav never shows it unless an admin key is set.
@@ -517,7 +544,7 @@ function AdminKeyForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: ()
 // in the past) leave the box open above.
 function Question(p: {
   question: string; more: boolean; reason: Reason | null; answerable: boolean; byVoice: boolean; busy: boolean
-  onAnswer: (words: string) => void; onAgain: () => void; onLeave: () => void; mic: ReactNode; status: ReactNode
+  onAnswer: (words: string) => void; onAgain: () => void; onLeave: () => void; onEdit: () => void; mic: ReactNode; status: ReactNode
 }) {
   const c = useCopy()
   const u = c.UI
@@ -525,6 +552,9 @@ function Question(p: {
   const heading = useRef<HTMLHeadingElement>(null)
   const field = useRef<HTMLInputElement>(null)
   const again = p.reason?.facts.minutes_ago != null
+  // "For which delivery day?": the next days as one-tap answers (sent as "20.11.", which the backend reads exactly).
+  const askingDay = p.answerable && /which delivery day/i.test(p.question)
+  const days = askingDay ? nextDays(6) : []
   useEffect(() => {
     // typing: straight into the answer field; by voice the mic is listening, so focus just brings the question into view
     if (p.answerable && !again && !p.byVoice) field.current?.focus()
@@ -537,6 +567,22 @@ function Question(p: {
         {c.question(p.question, p.reason)}
       </h2>
       {!again && p.reason?.suggested_fix && !p.answerable && <p className="answer-sub">{p.reason.suggested_fix}</p>}
+      {!again && !p.answerable && (
+        <div className="actions">
+          <button type="button" className="btn plain accent-text" onClick={p.onEdit}>
+            {u.question.edit}
+          </button>
+        </div>
+      )}
+      {days.length > 0 && (
+        <div className="chips" role="group" aria-label={u.question.days}>
+          {days.map((d) => (
+            <button key={d} type="button" className="chip" onClick={() => p.onAnswer(`${Number(d.slice(8))}.${Number(d.slice(5, 7))}.`)} disabled={p.busy}>
+              {c.day(d)}
+            </button>
+          ))}
+        </div>
+      )}
       {again ? (
         <div className="actions">
           <button type="button" className="btn" onClick={p.onAgain} disabled={p.busy}>
@@ -564,6 +610,7 @@ function Question(p: {
                   placeholder={u.question.answer}
                   value={words}
                   onChange={(e) => setWords(e.target.value)}
+                  disabled={p.busy}
                   enterKeyHint="send"
                 />
                 {p.mic}
