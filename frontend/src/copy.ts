@@ -497,6 +497,8 @@ export const UI = {
     yesterday: 'Yesterday',
     recently: 'Recently',
     all: 'All history',
+    colOther: 'Other outcomes',
+    nothing: 'Nothing here',
     yourRules: 'Your rules',
     step: {
       approved: (who: string) => `${who} approved it`,

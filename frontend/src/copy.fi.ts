@@ -517,6 +517,8 @@ export const UI = {
     yesterday: 'Eilen',
     recently: 'Viimeksi',
     all: 'Koko historia',
+    colOther: 'Muut tulokset',
+    nothing: 'Ei mitään täällä',
     yourRules: 'Sääntösi',
     step: {
       approved: (who: string) => `${who} hyväksyi`,
