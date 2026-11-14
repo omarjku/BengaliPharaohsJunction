@@ -20,3 +20,47 @@
 .composer-voice { background: var(--accent); color: #fff; }
 .composer-send { background: var(--lime); color: var(--lime-ink); }
 .composer-end { background: var(--ink); color: var(--surface); }
+
+/* Motion: ported from Watermelon command-search (eased focus ring, icon motion, placeholder fade), plain CSS. */
+.composer { position: relative; transition: border-color .25s ease, box-shadow .3s ease; }
+.composer:focus-within {
+  border-color: var(--bubble-mine);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bubble-mine) 22%, transparent), 0 6px 18px rgba(28, 31, 35, 0.08);
+}
+/* A soft teal highlight travels along the border while focused or while voice is on. */
+.composer::after {
+  content: ''; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none; opacity: 0;
+  background: conic-gradient(from var(--sweep, 0deg), transparent 0 70%, var(--bubble-mine) 85%, transparent 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); transition: opacity .3s ease;
+}
+@property --sweep { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+.composer:focus-within::after, .composer.voice-on::after { opacity: 0.85; animation: composer-sweep 4.5s linear infinite; }
+@keyframes composer-sweep { to { --sweep: 360deg; } }
+.composer-field::placeholder { transition: opacity .25s ease; }
+.composer-field:focus::placeholder { opacity: 0.35; }
+.composer-btn, .composer .mic, .composer .photo-icon { transition: transform .15s ease, background-color .2s ease, color .2s ease; }
+.composer-btn:hover:not(:disabled), .composer .mic:hover, .composer .photo-icon:hover { transform: translateY(-1px) scale(1.06); }
+.composer-btn:active:not(:disabled), .composer .mic:active, .composer .photo-icon:active { transform: scale(0.93); }
+.composer-btn:focus-visible, .composer .mic:focus-visible, .composer .photo-icon:focus-visible { outline: 2px solid var(--bubble-mine); outline-offset: 2px; }
+:root[data-theme='dark'] .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent), 0 6px 18px rgba(0, 0, 0, 0.3); }
+:root[data-theme='dark'] .composer::after { background: conic-gradient(from var(--sweep, 0deg), transparent 0 70%, var(--accent) 85%, transparent 100%); }
+
+/* Send / Voice share one slot and swap with a short slide. */
+.composer-slot { position: relative; flex: none; width: 44px; height: 44px; }
+.composer-slot > .composer-btn { position: absolute; inset: 0; transition: transform .2s ease-out, opacity .2s ease-out, background-color .2s ease; }
+.composer-slot > .composer-btn:hover:not(:disabled) { transform: scale(1.06); }
+.composer-slot > .composer-send { transform: translateX(14px) scale(.7); opacity: 0; pointer-events: none; }
+.composer.has-text .composer-slot > .composer-send { transform: none; opacity: 1; pointer-events: auto; }
+.composer.has-text .composer-slot > .composer-voice { transform: translateX(-14px) scale(.7); opacity: 0; pointer-events: none; }
+/* Nothing to swap with, or voice running with no text: the bar stays exactly as before. */
+.composer:not(.has-text) .composer-slot:not(.with-voice) { display: none; }
+.composer.voice-on:not(.has-text) .composer-slot { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .composer, .composer::after, .composer-btn, .composer .mic, .composer .photo-icon, .composer-slot > .composer-btn, .composer-field::placeholder {
+    transition: none !important; animation: none !important;
+  }
+  .composer-btn:hover, .composer .mic:hover, .composer .photo-icon:hover { transform: none !important; }
+}
+.composer:not(.voice-on) .composer-slot { order: 1; } /* keeps the mic to the left of Voice/Send, as before */
