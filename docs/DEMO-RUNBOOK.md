@@ -51,6 +51,16 @@ not the demo buyer. Gemini's numbers can move a little between runs, so say "aro
 | 8 | Zoha | J5, Gemini and Codex lines, then the close: "Any agent can visit. Only the right orders get in." | The deck's slides 7–9, or the audit view in History |
 | Q&A | Zoha | "Our own QA caught the agent picking *coffee* milk for a plain milk order: cheapest, and barely confident. Calibrated confidence plus ranking fixed it: confidence leads, price only breaks near-ties. Coffee milk is now a labelled trap in the eval" | — |
 
+**Proposed new beats (pending merge; final wording after 16:00):**
+
+| # | Who | Do or say | What should appear |
+|---|---|---|---|
+| P1 | Omar, on the phone | Photograph `docs/demo-images/handwritten-list.jpg` (printed, or on a second screen): "Tilaus maanantaiksi / 10 kg voita / 20 l laktoositon maito / 5 kg mozzarella / 2 laatikkoa kananmunia / gluten-free flour 10 kg" | Five lines read from the handwriting, in Finnish and English. The cart is priced live, and anything unclear is asked ("2 laatikkoa" of eggs). Say: "A chef's handwritten list, in two languages, becomes a checked cart" |
+| P2 | Omar, as `helsinki-bistro`, in **Talk** | Say: "Order butter for Monday." Answer its question aloud | The agent asks how much and answers aloud. Its profile makes the pick (gluten-free kitchen, usual Valio unsalted butter 500 g), and the line says "You usually order this" |
+
+**If they go into the 3-minute pitch,** drop step 4 (sugar) and step 6 (the menu). P1 replaces the menu as the "it reads
+what chefs actually write" moment, and P2 replaces step 7 as the Helsinki voice moment.
+
 **Extras for peer review:**
 - `60 L Arla lactose-free whole milk drink for Monday`: cut-off passed, stock 999999 = unknown, substitutes.
 - `20 kg döner kebab meat for the rotisserie for Monday`: Well Kebab kebab meat, and it asks, because Gemini is only

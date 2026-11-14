@@ -495,3 +495,49 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
   .landing { grid-template-columns: 1fr; padding-block: var(--s6); }
   .landing-art { order: -1; max-width: 18rem; }
 }
+
+/* --- Talk: one circle that listens, thinks and speaks; captions under it; End at the thumb. */
+.talk-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); margin-block-start: var(--s2); }
+.talk-btn, .photo-btn { display: inline-flex; align-items: center; gap: var(--s2); }
+.talk-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); }
+.talk {
+  position: fixed; inset: 0; z-index: 50; background: var(--paper); color: var(--ink);
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+  padding-block-start: env(safe-area-inset-top);
+}
+.talk-stage { display: grid; justify-items: center; gap: var(--s4); padding: var(--s8) var(--s5) var(--s5); }
+.talk-circle {
+  --level: 0;
+  width: 152px; height: 152px; border-radius: 50%; background: var(--accent);
+  transform: scale(calc(0.9 + var(--level) * 0.22));
+  transition: transform 120ms var(--ease-out), opacity 200ms ease, background-color 200ms ease;
+}
+.talk-circle.connecting { opacity: 0.25; }
+.talk-circle.listening { opacity: 0.9; }
+.talk-circle.thinking { opacity: 0.6; animation: talk-think 1.4s ease-in-out infinite alternate; }
+.talk-circle.speaking { opacity: 1; animation: talk-speak 0.8s ease-in-out infinite alternate; }
+.talk-circle.error { background: var(--bad); opacity: 0.35; }
+@keyframes talk-think { from { transform: scale(0.88); } to { transform: scale(0.96); } }
+@keyframes talk-speak { from { transform: scale(0.97); } to { transform: scale(1.05); } }
+.talk-line { font: var(--t-body); color: var(--ink-2); text-align: center; min-height: 1.55em; }
+.talk-line.bad { color: var(--bad); }
+.talk-log {
+  overflow-y: auto; width: 100%; max-width: calc(var(--column) + 2 * var(--s5)); margin-inline: auto;
+  padding: 0 var(--s5) var(--s5); display: grid; align-content: start; gap: var(--s3);
+}
+.talk-caption { max-width: 85%; }
+.talk-caption.user { justify-self: end; text-align: end; color: var(--ink-2); }
+.talk-caption.agent { justify-self: start; font-weight: 500; }
+.talk-caption.partial { opacity: 0.6; }
+.talk-result .answer { margin-block-start: var(--s4); }
+.talk-end { display: flex; justify-content: center; padding: var(--s4) var(--s5) max(var(--s5), env(safe-area-inset-bottom)); }
+.talk-end .btn { min-width: 10rem; }
+@media (prefers-reduced-motion: reduce) {
+  .talk-circle.thinking, .talk-circle.speaking { animation: none; }
+}
+
+/* --- Photo: what was read, next to a small thumbnail. (Talk + photo use only talk-* / photo-* classes.) */
+.photo-read { flex-basis: 100%; display: flex; align-items: flex-start; gap: var(--s3); }
+.photo-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+.photo-error { color: var(--bad); }
+.photo-unreadable { color: var(--warn); }

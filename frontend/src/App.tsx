@@ -13,6 +13,9 @@ import { ValioView } from './Valio'
 import { languageOf, useReadBack, useVoice, voiceSupported } from './useVoice'
 import { usePhaseLine } from './usePhaseLine'
 import { MicButton, VoiceStatus } from './Voice'
+import { PhotoButton } from './PhotoButton'
+import { Talk } from './Talk'
+import { useTalk, useTalkPhotoAvailable } from './useTalk'
 
 type View = 'order' | 'rules' | 'history' | 'valio'
 
@@ -95,6 +98,20 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const phaseLine = usePhaseLine(400)
   const refreshAudit = () => setAuditKey((k) => k + 1)
   const offline = useBackendDown()
+  // HOOK: Talk + photo (Talk.tsx, PhotoButton.tsx, useTalk.ts). Keep these three lines and the two JSX blocks marked HOOK.
+  const caps = useTalkPhotoAvailable()
+  const talk = useTalk()
+  const talkResult = (r: AskResponse) =>
+    r.question ? (
+      <section className="answer" aria-label={u.question.status}>
+        <p className="status neutral">{u.question.status}</p>
+        <h2 className="answer-text">{c.question(r.question, r.decision?.reasons[0])}</h2>
+      </section>
+    ) : r.intent === 'menu' && 'lines' in r ? (
+      <MenuResult key={r.audit_id} plan={r} covers={r.covers ?? null} requestedDate={r.requested_date ?? date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} />
+    ) : 'lines' in r ? (
+      <RunResult key={r.audit_id} run={r} requestedDate={r.requested_date ?? date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} />
+    ) : null
   const onEntries = useCallback((e: AuditEntry[]) => setEntries(e), [])
 
   const needsSetup = !MOCK && (!savedKeys.agentKey || !savedKeys.approverKey)
@@ -284,6 +301,9 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         <AdminKeyForm onSaved={adminSaved} onCancel={() => adminDialog.current?.close()} />
       </dialog>
 
+      {/* HOOK: Talk, full screen while a session is open */}
+      {talk.session && <Talk ctx={talk.session.ctx} mic={talk.session.mic} onEnd={talk.end} renderResult={talkResult} />}
+
       <p className="sr-only" aria-live="polite">
         {announce}
       </p>
@@ -347,6 +367,27 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                 <p className="sr-only" id="text-help">
                   {u.ask.help(c.EXAMPLES)}
                 </p>
+                {/* HOOK: Talk + photo buttons */}
+                {(caps.photo || caps.talk) && (
+                  <div className="talk-tools">
+                    {caps.talk && (
+                      <button type="button" className="link talk-btn" onClick={talk.open} disabled={running}>
+                        <span className="talk-dot" aria-hidden="true" />
+                        {u.talk.open}
+                      </button>
+                    )}
+                    {caps.photo && (
+                      <PhotoButton
+                        disabled={running || deciding}
+                        onRead={(words) => {
+                          setText(words)
+                          setByVoice(false)
+                          void ask(words)
+                        }}
+                      />
+                    )}
+                  </div>
+                )}
                 <div className="ask-row">
                   <label className="date-pick">
                     {u.ask.delivery} <strong className="num">{c.day(date)}</strong>

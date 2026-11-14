@@ -281,6 +281,30 @@ export type Health = {
   valio_key_configured: boolean
   gemini_key_configured: boolean
   catalogue: { ready: boolean; products: number; error: string | null }
+  talk?: boolean // the live voice conversation (/api/live) is configured
+  vision?: boolean // photo reading (/api/vision/read) is configured
+}
+
+// The live voice conversation (WebSocket /api/live), server -> client.
+export type LiveEvent =
+  | { type: 'ready' }
+  | { type: 'audio'; data: string } // base64 PCM16 mono 24 kHz
+  | { type: 'transcript'; role: 'user' | 'agent'; text: string; final: boolean }
+  | { type: 'tool'; name: string; status: 'running' | 'done'; label: string }
+  | { type: 'result'; payload: AskResponse }
+  | { type: 'interrupted' }
+  | { type: 'turn_complete' }
+  | { type: 'error'; message: string }
+export type LiveSocket = { send: (msg: object) => void; close: () => void; onEvent: (e: LiveEvent) => void; onClose: () => void }
+
+// POST /api/vision/read: what a photo of a note, a menu or a delivery slip says.
+export type PhotoRead = {
+  kind: string
+  text: string
+  items: (string | { name?: string; amount?: number | null; unit?: string | null; quantity?: number | null })[]
+  covers: number | null
+  unreadable: string[] | string | null
+  language: string | null
 }
 
 // GET /api/profile (agent key): the calling buyer's profile, read-only guidance.

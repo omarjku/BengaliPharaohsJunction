@@ -5,5 +5,5 @@ import react from '@vitejs/plugin-react'
 // frontend calls the backend URL given in VITE_API_URL (set on Render).
 export default defineConfig({
   plugins: [react()],
-  server: { proxy: { '/api': 'http://localhost:8000' } },
+  server: { proxy: { '/api': { target: 'http://localhost:8000', ws: true } } }, // ws: Talk's /api/live
 })

@@ -61,6 +61,32 @@ Each answer comes back with `speak`, one sentence in the chef's language, and th
 | 10 L lactose-free cream | Valio low-fat cream 1 l (0.74, €29.70) over whipping cream (0.70) | **confirmed** |
 | 10 kg sugar for baking | caster sugar (≈0.84); the sachets are no longer candidates | confirmed |
 
+## The buyer profile (on main): guidance, never a rule
+
+`backend/app/profile.py` uses Zoha's `trade_profile` package. Facts from the code:
+- **Standing dietary needs.** `helsinki-bistro` is seeded with "Our kitchen is gluten-free". When the buyer's text
+  states no diet, that becomes a *preferred* claim on each item. A labelled gluten-free product wins when one
+  exists, and the line says why ("Gluten-free, because your profile says …"). The buyer's own words always beat
+  the profile.
+- **Usual products.** Seeded for `helsinki-bistro`: Valio butter 500 g unsalted, Sunnuntai gluten-free flour mix
+  1 kg, Galbani grated mozzarella 2 kg. Confirmed orders are added to these. They only break near-ties ("You
+  usually order this"), never past the confidence threshold or the front door's limits.
+- **Read-only view:** `GET /api/profile` (agent key) returns the needs, usual products, remembered items with why
+  each is used, open questions and recent confirmed orders.
+
+## Photo input (pending merge, Room 2 + Room 4)
+
+A chef photographs a handwritten list, a chalkboard menu or a whiteboard. Gemini reads it into the same structured
+items as typed text, and from there the normal pipeline runs: grounding, Decisions judge, Valio quotes, the front
+door. A photo is treated like the chef's own words, so a menu photo always asks, like a pasted menu. Test images:
+[`docs/demo-images/`](demo-images/). The model, the route and the live numbers go here after the merge.
+
+## Talk: a Gemini Live voice conversation (pending merge, Room 3 + Room 4)
+
+A spoken back-and-forth instead of push-to-talk: the chef talks, the agent answers aloud and asks its one
+follow-up question ("How much butter?"), and the order goes through the same front door. The models, latency and
+live results go here after the merge.
+
 ## Guardrails: Gemini can only add caution
 
 - **No Gemini answer can permit anything** a hard rule forbids, add an allergen exception or raise a limit. Each extra question can only turn "order" into "ask".
