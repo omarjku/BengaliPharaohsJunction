@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.1",
+  "contract_version": "0.2",
   "id": "req-001",
   "buyer_id": "hotel-demo",
   "text": "I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.",

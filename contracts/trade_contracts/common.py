@@ -1,4 +1,8 @@
-"""Shared building blocks: closed vocabularies (enums) and the base model."""
+"""Shared building blocks: closed vocabularies (enums) and the base model.
+
+Money convention (all shapes): integer cents, and NET OF VAT, i.e. the customer price
+excluding VAT. Spend limits are compared on that same net basis.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-CONTRACT_VERSION = "0.1"
+CONTRACT_VERSION = "0.2"
 
 
 class ContractModel(BaseModel):
@@ -17,9 +21,9 @@ class ContractModel(BaseModel):
 
 
 class VersionedModel(ContractModel):
-    """Base for the five top-level shapes; carries the contract version."""
+    """Base for the top-level shapes; carries the contract version."""
 
-    contract_version: Literal["0.1"] = CONTRACT_VERSION
+    contract_version: Literal["0.2"] = CONTRACT_VERSION
 
 
 class Channel(StrEnum):
@@ -45,13 +49,13 @@ class PreferenceScope(StrEnum):
 
 
 class RuleKind(StrEnum):
-    """Closed list of checks a hard rule may express."""
+    """Closed list of checks a hard rule may express. Money values are net cents."""
 
     EXCLUDED_ALLERGEN = "excluded_allergen"
     REQUIRED_CLAIM = "required_claim"
-    MAX_UNIT_PRICE_EUR = "max_unit_price_eur"
+    MAX_UNIT_PRICE_CENTS = "max_unit_price_cents"
     MIN_DELIVERY_RELIABILITY = "min_delivery_reliability"
-    AUTO_APPROVE_LIMIT_EUR = "auto_approve_limit_eur"
+    AUTO_APPROVE_LIMIT_CENTS = "auto_approve_limit_cents"
 
 
 class Outcome(StrEnum):
@@ -60,26 +64,65 @@ class Outcome(StrEnum):
     DECLINE = "DECLINE"
 
 
+class Severity(StrEnum):
+    """Per-reason severity. The Decision outcome is the highest severity present:
+    DECLINE > ASK_HUMAN > INFO (INFO only = AUTO)."""
+
+    INFO = "INFO"
+    ASK_HUMAN = "ASK_HUMAN"
+    DECLINE = "DECLINE"
+
+
 class ReasonCode(StrEnum):
-    # Uncertain or unverifiable -> a human decides (D6: never silently reject)
-    CUT_OFF_PASSED = "CUT_OFF_PASSED"
-    QUANTITY_UNKNOWN = "QUANTITY_UNKNOWN"
-    PARTIAL_STOCK = "PARTIAL_STOCK"
-    UNAVAILABLE = "UNAVAILABLE"
-    NOT_DELIVERABLE = "NOT_DELIVERABLE"
+    # --- quantity and stock
+    QTY_INVALID = "QTY_INVALID"
+    QTY_AMBIGUOUS = "QTY_AMBIGUOUS"
+    QTY_SUSPICIOUS = "QTY_SUSPICIOUS"
+    QTY_UNKNOWN = "QTY_UNKNOWN"
+    STOCK_PARTIAL = "STOCK_PARTIAL"
+    STOCK_NONE = "STOCK_NONE"
     UNIT_MISMATCH = "UNIT_MISMATCH"
-    OVER_SPEND_LIMIT = "OVER_SPEND_LIMIT"
+    # --- delivery, dates, data quality
+    CUTOFF_PASSED = "CUTOFF_PASSED"
+    UNDELIVERABLE = "UNDELIVERABLE"
+    DATE_NOT_HONOURED = "DATE_NOT_HONOURED"
+    LOW_RELIABILITY = "LOW_RELIABILITY"
+    QUOTE_STALE = "QUOTE_STALE"
+    PRICE_MISSING = "PRICE_MISSING"
+    PRICE_CHANGED = "PRICE_CHANGED"
+    UNKNOWN_PRODUCT = "UNKNOWN_PRODUCT"
+    DATA_MISSING = "DATA_MISSING"
+    # --- spend
+    SPEND_OVER_LIMIT = "SPEND_OVER_LIMIT"
+    LINE_OVER_CAP = "LINE_OVER_CAP"
+    WEEKLY_BUDGET_EXCEEDED = "WEEKLY_BUDGET_EXCEEDED"
+    # --- mandate and allergens
+    ALLERGEN_CONTAINS = "ALLERGEN_CONTAINS"
+    ALLERGEN_MAY_CONTAIN = "ALLERGEN_MAY_CONTAIN"
+    ALLERGEN_DATA_MISSING = "ALLERGEN_DATA_MISSING"
+    BLOCKLISTED = "BLOCKLISTED"
+    MANDATE_MISSING = "MANDATE_MISSING"
+    MANDATE_EXPIRED = "MANDATE_EXPIRED"
+    MANDATE_INVALID = "MANDATE_INVALID"
+    DEFAULT_MANDATE_APPLIED = "DEFAULT_MANDATE_APPLIED"
+    LIMIT_CHANGE_ATTEMPT = "LIMIT_CHANGE_ATTEMPT"
+    POLICY_DECLINE_UNKNOWN = "POLICY_DECLINE_UNKNOWN"
+    # --- engine
     LOW_CONFIDENCE = "LOW_CONFIDENCE"
-    SUBSTITUTION_OUTSIDE_PREFERENCES = "SUBSTITUTION_OUTSIDE_PREFERENCES"
-    # A rule the buyer set was clearly broken -> the only reasons that justify DECLINE
-    HARD_RULE_VIOLATED = "HARD_RULE_VIOLATED"
-    ALLERGEN_CONFLICT = "ALLERGEN_CONFLICT"
-    # Everything checked out
-    WITHIN_MANDATE = "WITHIN_MANDATE"
+    ENGINE_ERROR = "ENGINE_ERROR"
 
 
-HARD_RULE_CODES: frozenset[ReasonCode] = frozenset(
-    {ReasonCode.HARD_RULE_VIOLATED, ReasonCode.ALLERGEN_CONFLICT}
+# D4: the only codes that may carry DECLINE severity (the mandate itself forbids it and
+# no human action on this order can fix it).
+HARD_CODES: frozenset[ReasonCode] = frozenset(
+    {
+        ReasonCode.ALLERGEN_CONTAINS,
+        ReasonCode.BLOCKLISTED,
+        ReasonCode.QTY_INVALID,
+        ReasonCode.UNKNOWN_PRODUCT,
+        ReasonCode.LIMIT_CHANGE_ATTEMPT,
+        ReasonCode.POLICY_DECLINE_UNKNOWN,
+    }
 )
 
 
@@ -94,3 +137,9 @@ class QuoteSource(StrEnum):
     VALIO_API = "valio_api"
     VALIO_FRONT_DOOR = "valio_front_door"
     MOCK = "mock"
+
+
+class AllergenStatus(StrEnum):
+    CONTAINS = "CONTAINS"
+    MAY_CONTAIN = "MAY_CONTAIN"
+    FREE_FROM = "FREE_FROM"

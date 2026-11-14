@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.1",
+  "contract_version": "0.2",
   "id": "mandate-001",
   "buyer_id": "hotel-demo",
   "hard_rules": [
@@ -10,8 +10,14 @@
       "source_text": "it has to be lactose-free"
     },
     {
-      "kind": "auto_approve_limit_eur",
-      "value": 500,
+      "kind": "excluded_allergen",
+      "value": "peanut",
+      "scope": "always",
+      "source_text": "no peanuts, ever"
+    },
+    {
+      "kind": "auto_approve_limit_cents",
+      "value": 50000,
       "scope": "always",
       "source_text": "anything over 500 euros needs the manager"
     },
@@ -31,5 +37,9 @@
       "question": "Does 1,000 L mean 1,000 one-litre cartons?",
       "why": "Pack sizes differ (1 L carton vs 10 L novobox)."
     }
-  ]
+  ],
+  "blocklist": ["999001"],
+  "per_line_cap_cents": 30000,
+  "weekly_budget_cents": 200000,
+  "expires_at": "2026-11-16T23:59:59+02:00"
 }

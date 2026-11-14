@@ -37,11 +37,51 @@
         "code": {
           "$ref": "#/$defs/ReasonCode"
         },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
         "message": {
           "description": "Plain language, shown to the chef.",
           "minLength": 1,
           "title": "Message",
           "type": "string"
+        },
+        "facts": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "The numbers behind the message (money in net cents).",
+          "title": "Facts",
+          "type": "object"
+        },
+        "suggested_fix": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the human can do about it.",
+          "title": "Suggested Fix"
         },
         "product_id": {
           "anyOf": [
@@ -58,6 +98,7 @@
       },
       "required": [
         "code",
+        "severity",
         "message"
       ],
       "title": "Reason",
@@ -65,28 +106,57 @@
     },
     "ReasonCode": {
       "enum": [
-        "CUT_OFF_PASSED",
-        "QUANTITY_UNKNOWN",
-        "PARTIAL_STOCK",
-        "UNAVAILABLE",
-        "NOT_DELIVERABLE",
+        "QTY_INVALID",
+        "QTY_AMBIGUOUS",
+        "QTY_SUSPICIOUS",
+        "QTY_UNKNOWN",
+        "STOCK_PARTIAL",
+        "STOCK_NONE",
         "UNIT_MISMATCH",
-        "OVER_SPEND_LIMIT",
+        "CUTOFF_PASSED",
+        "UNDELIVERABLE",
+        "DATE_NOT_HONOURED",
+        "LOW_RELIABILITY",
+        "QUOTE_STALE",
+        "PRICE_MISSING",
+        "PRICE_CHANGED",
+        "UNKNOWN_PRODUCT",
+        "DATA_MISSING",
+        "SPEND_OVER_LIMIT",
+        "LINE_OVER_CAP",
+        "WEEKLY_BUDGET_EXCEEDED",
+        "ALLERGEN_CONTAINS",
+        "ALLERGEN_MAY_CONTAIN",
+        "ALLERGEN_DATA_MISSING",
+        "BLOCKLISTED",
+        "MANDATE_MISSING",
+        "MANDATE_EXPIRED",
+        "MANDATE_INVALID",
+        "DEFAULT_MANDATE_APPLIED",
+        "LIMIT_CHANGE_ATTEMPT",
+        "POLICY_DECLINE_UNKNOWN",
         "LOW_CONFIDENCE",
-        "SUBSTITUTION_OUTSIDE_PREFERENCES",
-        "HARD_RULE_VIOLATED",
-        "ALLERGEN_CONFLICT",
-        "WITHIN_MANDATE"
+        "ENGINE_ERROR"
       ],
       "title": "ReasonCode",
+      "type": "string"
+    },
+    "Severity": {
+      "description": "Per-reason severity. The Decision outcome is the highest severity present:\nDECLINE > ASK_HUMAN > INFO (INFO only = AUTO).",
+      "enum": [
+        "INFO",
+        "ASK_HUMAN",
+        "DECLINE"
+      ],
+      "title": "Severity",
       "type": "string"
     }
   },
   "additionalProperties": false,
   "properties": {
     "contract_version": {
-      "const": "0.1",
-      "default": "0.1",
+      "const": "0.2",
+      "default": "0.2",
       "title": "Contract Version",
       "type": "string"
     },
@@ -99,12 +169,24 @@
       "$ref": "#/$defs/Outcome"
     },
     "reasons": {
+      "description": "All reasons, highest severity first.",
       "items": {
         "$ref": "#/$defs/Reason"
       },
-      "minItems": 1,
       "title": "Reasons",
       "type": "array"
+    },
+    "primary_reason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Reason"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "reasons[0]; filled in automatically; null only when no reasons."
     },
     "confidence": {
       "anyOf": [
@@ -124,8 +206,14 @@
       "items": {
         "$ref": "#/$defs/Alternative"
       },
+      "maxItems": 3,
       "title": "Alternatives",
       "type": "array"
+    },
+    "rules_version": {
+      "minLength": 1,
+      "title": "Rules Version",
+      "type": "string"
     },
     "decided_at": {
       "format": "date-time",
@@ -136,7 +224,7 @@
   "required": [
     "request_id",
     "outcome",
-    "reasons",
+    "rules_version",
     "decided_at"
   ],
   "title": "Decision",

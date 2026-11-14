@@ -71,8 +71,8 @@
   "additionalProperties": false,
   "properties": {
     "contract_version": {
-      "const": "0.1",
-      "default": "0.1",
+      "const": "0.2",
+      "default": "0.2",
       "title": "Contract Version",
       "type": "string"
     },
@@ -93,10 +93,17 @@
       "default": null,
       "title": "Product Name"
     },
-    "unit_price_eur": {
-      "minimum": 0,
-      "title": "Unit Price Eur",
-      "type": "number"
+    "unit_price_cents": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Net-of-VAT customer price per sales unit, integer cents; null if unknown.",
+      "title": "Unit Price Cents"
     },
     "unit": {
       "description": "Sales unit, e.g. '1 L carton'.",
@@ -159,7 +166,7 @@
   },
   "required": [
     "product_id",
-    "unit_price_eur",
+    "unit_price_cents",
     "unit",
     "availability",
     "quantity",

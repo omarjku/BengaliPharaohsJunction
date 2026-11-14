@@ -1,15 +1,27 @@
 {
-  "contract_version": "0.1",
+  "contract_version": "0.2",
   "request_id": "req-001",
   "outcome": "ASK_HUMAN",
   "reasons": [
     {
-      "code": "OVER_SPEND_LIMIT",
-      "message": "1,000 x 1.40 EUR = 1,400 EUR is above your 500 EUR auto-approve limit, so a person must approve.",
+      "code": "SPEND_OVER_LIMIT",
+      "severity": "ASK_HUMAN",
+      "message": "This order is EUR 1,400.00 (net of VAT), above your EUR 500.00 auto-approve limit.",
+      "facts": { "total_cents": 140000, "limit_cents": 50000, "quantity": 1000, "unit_price_cents": 140 },
+      "suggested_fix": "Approve, reduce the quantity to fit the limit, or decline.",
       "product_id": "463335"
     }
   ],
+  "primary_reason": {
+    "code": "SPEND_OVER_LIMIT",
+    "severity": "ASK_HUMAN",
+    "message": "This order is EUR 1,400.00 (net of VAT), above your EUR 500.00 auto-approve limit.",
+    "facts": { "total_cents": 140000, "limit_cents": 50000, "quantity": 1000, "unit_price_cents": 140 },
+    "suggested_fix": "Approve, reduce the quantity to fit the limit, or decline.",
+    "product_id": "463335"
+  },
   "confidence": 0.93,
   "alternatives": [],
+  "rules_version": "t06-0.1",
   "decided_at": "2026-11-14T09:00:07+02:00"
 }

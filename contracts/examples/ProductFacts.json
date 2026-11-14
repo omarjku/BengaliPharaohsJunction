@@ -1,0 +1,12 @@
+{
+  "contract_version": "0.2",
+  "product_id": "463335",
+  "name_fi": "Valio Eila 3 % maitojuoma 1 l",
+  "name_en": "Valio Eila 3% milk drink 1 L",
+  "category": "Milk drinks",
+  "allergens": { "milk": "CONTAINS", "lactose": "FREE_FROM", "gluten": "FREE_FROM" },
+  "reliability": 0.95,
+  "min_order_qty": 1,
+  "sales_unit": "1 L carton",
+  "pack_size": 1
+}
