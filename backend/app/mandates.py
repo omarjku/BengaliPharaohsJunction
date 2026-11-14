@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from trade_contracts import HardRule, Mandate, Preference
 from trade_contracts.common import PreferenceScope, RuleKind
 
-from . import config
+from . import config, sandbox
 
 _MANDATES = {m.buyer_id: m for m in [
     # Demo persona: a restaurant kitchen in Lapland. Money is net-of-VAT cents.
@@ -77,7 +77,11 @@ def _stored() -> dict[str, dict]:
 def get(buyer_id: str) -> Mandate | None:
     saved = _stored().get(buyer_id)
     if not saved:
-        return _MANDATES.get(buyer_id)
+        seeded = _MANDATES.get(buyer_id)
+        if seeded is None and sandbox.is_sandbox_buyer(buyer_id):
+            template = _MANDATES.get(sandbox.TEMPLATE)
+            return template.model_copy(update={"buyer_id": buyer_id, "id": f"{buyer_id}-2026-11"}) if template else None
+        return seeded
     try:
         return Mandate.model_validate(saved)
     except ValueError:
@@ -146,6 +150,8 @@ _CONFIDENCE_THRESHOLDS = {"lapland-kitchen": 0.7, "smoke-kitchen": 0.7, "helsink
 
 
 def confidence_threshold(buyer_id: str) -> float:
+    if sandbox.is_sandbox_buyer(buyer_id):
+        return _CONFIDENCE_THRESHOLDS.get(sandbox.TEMPLATE, DEFAULT_CONFIDENCE_THRESHOLD)
     return _CONFIDENCE_THRESHOLDS.get(buyer_id, DEFAULT_CONFIDENCE_THRESHOLD)
 
 
@@ -160,6 +166,8 @@ DEFAULT_KITCHEN = "a professional restaurant kitchen, about 100 covers a day, or
 
 
 def kitchen(buyer_id: str) -> str:
+    if sandbox.is_sandbox_buyer(buyer_id):
+        return _KITCHENS.get(sandbox.TEMPLATE, DEFAULT_KITCHEN)
     return _KITCHENS.get(buyer_id, DEFAULT_KITCHEN)
 
 
@@ -169,4 +177,6 @@ _LOCATIONS = {"helsinki-bistro": "helsinki", "lapland-kitchen": "lapland", "smok
 
 
 def location(buyer_id: str) -> str | None:
+    if sandbox.is_sandbox_buyer(buyer_id):
+        return _LOCATIONS.get(sandbox.TEMPLATE)
     return _LOCATIONS.get(buyer_id)

@@ -132,6 +132,8 @@ def resolve(product: dict, amount: float, unit: str) -> dict:
     if qty != need:
         why = f"lot size {_fmt(lot)}" if step != 1 else "whole units"
         text += f" Rounded up to {_fmt(qty)} {sales} ({why}): delivers {_fmt(delivered)} {unit}, {_fmt(delivered - want)} {unit} more than asked."
+    if product.get("name_en") or product.get("name_fi"):
+        text += f" {_fmt(want)} {unit} = {_fmt(qty)} × {product.get('name_en') or product.get('name_fi')}."
     if assumption:
         text += f" Please confirm: {assumption}."
     return out | {"quantity": _num(qty), "per_sales_unit": _num(per_sales), "delivered": _num(delivered),

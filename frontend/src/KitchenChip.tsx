@@ -8,7 +8,7 @@ export function KitchenChip({ kitchen, onSwitch }: { kitchen: string | null; onS
   if (!kitchen) return null
   return (
     <p className="kitchen-chip">
-      <span>{t.signedIn(buyerLabel(kitchen))}</span>{' '}
+      <span>{kitchen.startsWith('try-') ? t.signedInSandbox : t.signedIn(buyerLabel(kitchen))}</span>{' '}
       <button type="button" className="link accent inline kitchen-switch" onClick={onSwitch}>
         {t.switch}
       </button>

@@ -1,12 +1,38 @@
 import type {
-  AdminFilter, AdminRow, AgentRun, BuyerProfile, KitchenContext, Memory, LiveEvent, LiveSocket, PhotoRead, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
+  AdminFilter, AdminRow, AgentRun, BuyerProfile, ChatResponse, KitchenContext, Memory, LiveEvent, LiveSocket, PhotoRead, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
 } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
 
 export type ApiKeys = { agentKey: string; approverKey: string }
+export type SandboxSession = {
+  buyer_id: string
+  agent_key: string
+  approver_key: string
+  expires_at: string
+  template: string
+}
 
 const KEYS_STORAGE = 'valio-aimo-keys'
+const SANDBOX_STORAGE = 'valio-aimo-sandbox'
+
+function readSandboxSession(): SandboxSession | null {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SANDBOX_STORAGE) ?? 'null') as Partial<SandboxSession> | null
+    if (!stored || typeof stored.buyer_id !== 'string' || typeof stored.agent_key !== 'string' || typeof stored.approver_key !== 'string' || typeof stored.expires_at !== 'string' || typeof stored.template !== 'string') return null
+    return stored as SandboxSession
+  } catch {
+    return null
+  }
+}
+
+function clearSandboxSession() {
+  try {
+    localStorage.removeItem(SANDBOX_STORAGE)
+  } catch {
+    // storage blocked: the session only lasts for this page
+  }
+}
 
 // ponytail: shared-secret keys in localStorage are readable by any script on this origin; fine for the demo,
 // a real deployment signs approvers in instead.
@@ -28,12 +54,26 @@ export const getKeys = (): ApiKeys => ({ ...keys })
 
 export const setKeys = (next: ApiKeys) => {
   keys = { agentKey: next.agentKey.trim(), approverKey: next.approverKey.trim() }
+  const sandbox = readSandboxSession()
+  if (sandbox && (sandbox.agent_key !== keys.agentKey || sandbox.approver_key !== keys.approverKey)) clearSandboxSession()
   try {
     localStorage.setItem(KEYS_STORAGE, JSON.stringify(keys))
   } catch {
     // storage unavailable (private mode, blocked): keys last for this page only
   }
 }
+
+export const getSandboxSession = (): SandboxSession | null => readSandboxSession()
+export const setSandboxSession = (session: SandboxSession) => {
+  setKeys({ agentKey: session.agent_key, approverKey: session.approver_key })
+  try {
+    localStorage.setItem(SANDBOX_STORAGE, JSON.stringify(session))
+  } catch {
+    // storage unavailable: the keys last for this page only
+  }
+}
+export const sandboxSessionLive = (session: SandboxSession): boolean => Date.parse(session.expires_at) > Date.now()
+export const isTryEntry = (): boolean => typeof window !== 'undefined' && (window.location.hash === '#try' || window.location.pathname === '/try')
 
 // One-tap setup link: <site>/#agent=<key>&approver=<key> (either part optional), read when the page loads, before any
 // API call. The hash never reaches a server, is never logged, and is removed from the address bar at once, so it
@@ -192,6 +232,12 @@ const keyHeader = (name: string, value: string): HeadersInit => (value ? { [name
 
 export const getHealth = () => (MOCK ? mock().then((m) => m.health()) : api<Health>('/api/health'))
 
+export const createSandbox = (): Promise<SandboxSession> =>
+  MOCK
+    ? Promise.resolve({ buyer_id: 'try-00000000', agent_key: 'mock-agent', approver_key: 'mock-approver',
+                        expires_at: new Date(Date.now() + 86_400_000).toISOString(), template: 'helsinki-bistro' })
+    : api<SandboxSession>('/api/sandbox', { method: 'POST' })
+
 // Voice: audio in, the chef's words out (POST /api/voice/transcribe). On by default now that the backend has it;
 // a build with VITE_VOICE=0 hides the mic. (It used to need VITE_VOICE=1, which the live build never had: no mic.)
 export const VOICE_READY = MOCK || import.meta.env.VITE_VOICE !== '0'
@@ -208,6 +254,15 @@ export const transcribe = (audio: Blob): Promise<string> =>
 // One box: the backend works out whether it's an order or a menu. requested_date only when the chef overrode it.
 export const askAgent = (input: AskInput) =>
   MOCK ? mock().then((m) => m.ask(input)) : api<AskResponse>('/api/agent/ask', { ...post(input), headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')
+
+export const chatAgent = (input: AskInput): Promise<ChatResponse> =>
+  MOCK
+    ? mock().then((m) => m.ask(input)).then((card) => ({
+        reply: card.reply ?? card.speak ?? '', cards: 'lines' in card ? [card as ChatResponse['cards'][number]] : [],
+        conversation_id: card.conversation_id ?? '', tools_used: [], question: card.question ?? null,
+        requested_date: card.requested_date ?? null,
+      }))
+    : api<ChatResponse>('/api/agent/chat', { ...post(input), headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')
 
 // The same request, streamed (POST /api/agent/ask/stream, Server-Sent Events): `phase` {phase, text} as each step
 // starts, then one `result` (the /ask body) or `error` {status, detail}. fetch + a stream reader, since EventSource

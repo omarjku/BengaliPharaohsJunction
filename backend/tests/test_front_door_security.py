@@ -39,13 +39,18 @@ def codes(res):
 def test_required_claim_refuses_a_product_without_it_and_alternatives_must_have_it(shop):
     shop.products["107"] = product("107", "Oat drink 1 l", claims=("VEGAN", "FREE_FROM_LACTOSE"), contains=())
     shop.quotes["107"] = quote("107", price=1.9)
-    shop.products["463335"]["substitutes"] = ["476240", "107"]  # 476240 is milk: not vegan
+    shop.products["108"] = product("108", "Vegan milk 1 l", claims=("VEGAN", "FREE_FROM_LACTOSE"), contains=())
+    shop.quotes["108"] = quote("108", price=2.0)
+    shop.products["463335"]["substitutes"] = ["476240", "107", "108"]  # 476240 is milk: not vegan
     res = run([("463335", 10)], [("required_claim", "VEGAN")])
     assert res.status == "refused"
     [r] = res.decision.reasons
     assert r.code == gate.CLAIM_MISSING and r.facts["required_claim"] == "VEGAN" and r.facts["hard_rule"]
-    assert [a.product_id for a in res.decision.alternatives] == ["107"]
+    assert [a.product_id for a in res.decision.alternatives] == ["108"]
     assert "476240" in {ro.product_id for ro in res.rejected_options}
+    assert "107" in {ro.product_id for ro in res.rejected_options}
+    assert any("not a similar kind of product" in reason.message
+               for ro in res.rejected_options if ro.product_id == "107" for reason in ro.reasons)
     assert run([("107", 1)], [("required_claim", "vegan")]).status == "confirmed"
 
 

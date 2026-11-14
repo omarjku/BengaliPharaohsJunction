@@ -58,14 +58,15 @@ def test_a_product_without_an_amount_asks_how_much_with_options(shop1, monkeypat
 
 
 def test_a_stated_need_never_guesses_a_label_and_says_so_plainly(shop1, monkeypatch):  # noqa: F811
-    """No mozzarella is labelled gluten-free: the closest one is offered with 'check its label', and the order asks."""
+    """A complete allergen declaration can prove an unrelated diet without inventing a product label."""
     pizza_shop(shop1)
     fake(monkeypatch, [{"query": "mozzarella", "amount": 2, "unit": "L", "dietary": ["gluten_free"]}])
     body = post("2 L gluten-free mozzarella", path="/api/agent/run", requested_date=REQ.isoformat())
-    msg = [r for r in reasons(body) if r["code"] == "DATA_MISSING"]
-    assert msg and msg[0]["severity"] == "ASK_HUMAN" and "check its label" in msg[0]["message"].lower()
-    assert "Valio labels no mozzarella gluten-free" in msg[0]["message"]
-    assert body["order"] is None or body["order"]["status"] != "confirmed"
+    chosen = next(line for line in body["lines"] if line["chosen"])
+    assert chosen["diet_checks"] == [{"diet": "gluten_free", "level": "verified",
+                                       "basis": "allergen data declares no gluten"}]
+    assert "allergen data declares no gluten" in chosen["why"]
+    assert body["order"]["status"] == "confirmed"
     assert not any("FREE_FROM" in r["message"] for r in reasons(body))  # plain words, never codes
 
 
@@ -83,8 +84,12 @@ def test_menu_says_the_dietary_rule_once_for_the_cart(shop1, monkeypatch):  # no
     body = r.json()
     cart = [x for x in reasons(body) if x["code"] == "MENU_ASSUMPTIONS" and x["severity"] == "INFO"
             and x["message"].startswith("Gluten-free")]
-    assert len(cart) == 1 and cart[0]["message"].startswith("Gluten-free: I only pick products Valio labels gluten-free")
-    assert any(x["code"] == "DATA_MISSING" and "mozzarella" in x["message"] for x in reasons(body))
+    assert cart == []
+    assert any("because" in ln["why"].lower() and "gluten-free" in ln["why"].lower()
+               for ln in body["lines"] if ln["chosen"])
+    mozzarella = next(line for line in body["lines"] if line["product"]["id"] == "203")
+    assert "allergen data declares no gluten" in mozzarella["why"]
+    assert not any(x["code"] == "DATA_MISSING" and "mozzarella" in x["message"] for x in reasons(body))
 
 
 def test_profile_gluten_free_kitchen_is_a_visible_default_and_words_beat_it(shop1, monkeypatch):  # noqa: F811
@@ -143,7 +148,10 @@ def test_labelled_but_wrong_products_fall_back_to_the_real_one(shop1, monkeypatc
     monkeypatch.setattr(agent, "match", match)
     body = post("2 L gluten-free pizza base", path="/api/agent/run", requested_date=REQ.isoformat())
     assert [ln["product"]["id"] for ln in body["lines"] if ln["chosen"]] == ["202"]
-    assert any(r["code"] == "DATA_MISSING" and "check its label" in r["message"].lower() for r in reasons(body))
+    chosen = next(line for line in body["lines"] if line["chosen"])
+    assert chosen["diet_checks"] == [{"diet": "gluten_free", "level": "verified",
+                                       "basis": "allergen data declares no gluten"}]
+    assert "allergen data declares no gluten" in chosen["why"]
     assert not any(r["code"] == "UNKNOWN_PRODUCT" for r in reasons(body))
 
 

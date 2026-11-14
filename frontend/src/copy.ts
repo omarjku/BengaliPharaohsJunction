@@ -287,6 +287,14 @@ export const UI = {
     ok: 'OK',
     show: 'Show',
     hide: 'Hide',
+    newSandbox: 'New test kitchen',
+  },
+  sandbox: {
+    settingUp: 'Setting up your test kitchen…',
+    off: 'Test kitchens are switched off',
+    rateLimited: 'Too many test kitchens from this network, try again in a while',
+    failed: 'Couldn’t set up a test kitchen.',
+    retry: 'Try again',
   },
   status: { ordered: 'Ordered', yourCall: 'Your call', rejected: 'Rejected', notOrdered: 'Not ordered', sent: 'Sent to Valio', ready: 'Ready to order' },
   result: {
@@ -364,6 +372,7 @@ export const UI = {
     also: (n: number) => `Also worth knowing (${n})`,
     other: (n: number) => `Other options (${n})`,
     understood: 'What the agent understood',
+    changed: (from: string, to: string) => `Changed from ${from} to ${to}.`,
     split: (have: string, rest: string, extra: string) => `Valio has ${have}. Top up with ${rest} ${extra}?`,
     splitFallback: 'Valio can cover it with a substitute.',
     splitAria: 'The split order',
@@ -419,8 +428,8 @@ export const UI = {
     youHave: (matched: string, thisOrder: boolean) => `You have this (${matched}${thisOrder ? ', this order only' : ''}), so it's left out.`,
     addAnyway: 'Add anyway',
     addAnywayOn: 'Will be added: Update the cart',
-    coverage: (total: string, inCart: number, all: number, check: number, checkTotal: string, have: number) =>
-      [`${total} for ${inCart} of ${all} ingredients`, have > 0 && `${have} you already have`, check > 0 && `${check} need your look, about ${checkTotal}`].filter(Boolean).join('; ') + '.',
+    coverage: (total: string, inCart: number, all: number, check: number, checkTotal: string, have: number, notFound: string[] = []) =>
+      [`${total} for ${inCart} of ${all} ingredients`, have > 0 && `${have} you already have`, check > 0 && `${check} need your look, about ${checkTotal}`, notFound.length > 0 && `${notFound.length} not found`].filter(Boolean).join('; ') + '.',
     update: (n: number) => `Update the cart (${n} ${n === 1 ? 'change' : 'changes'})`,
     spareLine: (needed: string, pct: string) => `Needed ${needed}, plus ${pct}% spare`,
     spareCost: (m: string) => `(${m} beyond what the recipe needs)`,
@@ -525,6 +534,7 @@ export const UI = {
   },
   kitchen: {
     signedIn: (name: string): string => `Signed in as ${name}`,
+    signedInSandbox: 'Signed in as Test kitchen (copy of Helsinki bistro) · resets in 24 h',
     switch: 'Switch kitchen',
     onboardingTitle: 'Tell me about your kitchen',
     onboardingIntro: 'Share the kitchen details you want the agent to remember as guidance. You can change them later.',

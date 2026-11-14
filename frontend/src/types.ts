@@ -35,6 +35,23 @@ export type RequestItem = {
   exclude_allergens: string[]
 }
 
+// V2 front-door metadata. Choice labels are the exact answers sent back to the engine.
+export type Choice = { label: string; amount?: number | null; unit?: string | null }
+export type CartChange = { item: number; from: string; to: string }
+export type Understood = {
+  intent: string
+  slots: Record<string, unknown>
+  source: string
+  interpretation: string | null
+}
+export type AskCard = {
+  intent?: string
+  question?: string | null
+  reply?: string | null
+  choices?: Choice[]
+  changes?: CartChange[]
+}
+
 // Catalogue product (backend/app/catalogue.py); only the fields the UI reads.
 export type Product = {
   id: string
@@ -156,6 +173,11 @@ export type AgentRun = {
   decision: Decision
   order: OrderResponse | null
   audit_id: string
+  understood?: Understood
+  reply?: string | null
+  choices?: Choice[]
+  changes?: CartChange[]
+  cards?: AskCard[]
 }
 
 // POST /api/agent/menu: a proposed cart for a menu (always ASK_HUMAN; nothing is ordered until order_lines are posted).
@@ -170,6 +192,10 @@ export type MenuRun = {
   order_lines: { product_id: string; quantity: number }[]
   decision: Decision
   audit_id: string
+  understood?: Understood
+  reply?: string | null
+  choices?: Choice[]
+  changes?: CartChange[]
 }
 // overrides: the chef's own portions (the menu screen's editable amounts per portion); they count as the chef's only
 // when the approver key is sent too (planMenu does), otherwise they are marked "agent" and still checked.
@@ -236,8 +262,22 @@ type AskMeta = {
   urgent_options?: UrgentOption[] | null
   speak?: string | null // one sentence to read back, in the request's language
   conversation_id?: string | null // set when the question can be answered with a follow_up
+  understood?: Understood
+  reply?: string | null
+  choices?: Choice[]
+  cards?: AskCard[]
 }
 export type AskInput = { text: string; requested_date?: string; follow_up?: { to: string; answer: string }; have?: string[] }
+export type ChatCard = (AgentRun & { intent?: 'order' }) | (MenuRun & { intent?: 'menu' })
+export type ChatResponse = {
+  reply: string
+  cards: ChatCard[]
+  conversation_id: string
+  tools_used: string[]
+  question?: string | null
+  requested_date?: string | null
+  fallback?: boolean
+}
 export type AskResponse =
   | (AskMeta & { intent: 'order'; question?: null } & AgentRun)
   | (AskMeta & { intent: 'menu'; question?: null } & MenuRun)

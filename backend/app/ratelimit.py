@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from . import config
 from .auth import _listed
 
-LIMITS = {"agent": (30, 60.0), "human": (120, 60.0), "ip": (120, 60.0)}  # kind → (requests, per seconds)
+LIMITS = {"agent": (30, 60.0), "human": (120, 60.0), "ip": (120, 60.0), "sandbox": (5, 3600.0)}  # kind → (requests, per seconds)
 MAX_BUCKETS = 10_000  # memory bound for IP buckets; key buckets are bounded by the configured keys
 _buckets: dict[tuple[str, str], list[float]] = {}  # (kind, who) → [tokens, last refill]
 
@@ -26,7 +26,7 @@ def wait_s(kind: str, who: str, now: float | None = None) -> float:
     cap, per = LIMITS[kind]
     now, rate = time.monotonic() if now is None else now, cap / per
     if (b := _buckets.get((kind, who))) is None:
-        if kind == "ip" and len(_buckets) >= MAX_BUCKETS:
+        if kind in ("ip", "sandbox") and len(_buckets) >= MAX_BUCKETS:
             _evict(now)
         b = _buckets[(kind, who)] = [float(cap), now]
     b[0], b[1] = min(cap, b[0] + (now - b[1]) * rate), now
@@ -43,7 +43,7 @@ def _evict(now: float) -> None:
         cap, per = LIMITS[k[0]]
         t, last = _buckets[k]
         return min(cap, t + (now - last) * cap / per) / cap
-    ips = sorted((k for k in _buckets if k[0] == "ip"), key=lambda k: _buckets[k][1])
+    ips = sorted((k for k in _buckets if k[0] in ("ip", "sandbox")), key=lambda k: _buckets[k][1])
     idle = [k for k in ips if level(k) >= 1]
     for k in idle or [k for k in ips if level(k) >= 0.5][: max(1, len(ips) // 10)]:
         del _buckets[k]

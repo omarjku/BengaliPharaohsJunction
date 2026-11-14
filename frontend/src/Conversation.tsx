@@ -1,8 +1,28 @@
 import type { ReactNode } from 'react'
 import { useCopy } from './i18n'
+import type { Choice } from './types'
 import './Conversation.css'
 
 export type VoiceLayout = 'orb' | 'thread'
+
+// V2 questions send the visible label back as the answer, not an index hidden from the chef.
+export function ChoiceChips({ choices, onChoose, disabled = false }: {
+  choices: Choice[]
+  onChoose: (label: string) => void
+  disabled?: boolean
+}) {
+  const t = useCopy().UI.question
+  if (!choices.length) return null
+  return (
+    <div className="chips" role="group" aria-label={t.options}>
+      {choices.map((choice) => (
+        <button key={choice.label} type="button" className="chip" onClick={() => onChoose(choice.label)} disabled={disabled}>
+          {choice.label}
+        </button>
+      ))}
+    </div>
+  )
+}
 
 // The conversation screen's layout, three modes in one thread:
 // - text only: the thread, the bar at the bottom

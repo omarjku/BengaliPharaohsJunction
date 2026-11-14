@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { ApiError, askAgentStream, DROPPED, getAdminKey, getHealth, getKeys, KEYS_FROM_LINK, applyLinkKeys, checkLinkKeys, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
+import { ApiError, chatAgent, createSandbox, getAdminKey, getHealth, getKeys, getSandboxSession, KEYS_FROM_LINK, applyLinkKeys, checkLinkKeys, isTryEntry, MOCK, sandboxSessionLive, setAdminKey, setKeys, setSandboxSession, getOrder, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
 import { buyerLabel, errorText, nextMonday } from './format'
 import { groupHistory } from './history'
@@ -7,7 +7,7 @@ import { COPIES, CopyContext, initialLang, rememberLang, useCopy, type Lang } fr
 import { MenuResult } from './Menu'
 import { Rules } from './Rules'
 import { RunResult } from './RunResult'
-import type { AskResponse, AuditEntry, MenuRun, Reason } from './types'
+import type { AskResponse, AuditEntry, ChatCard, MenuRun, Reason } from './types'
 import { UrgentOptions } from './Urgent'
 import { ValioView } from './Valio'
 
@@ -32,6 +32,7 @@ import { useOnboarded } from './onboardingApi'
 import { Kitchen } from './Kitchen'
 import { onboardingSkippedFor, skipOnboardingFor, useKitchen } from './useKitchen'
 import { Conversation, type VoiceLayout } from './Conversation'
+import { Calendar } from './Calendar'
 import { Orb } from './Orb'
 import { useLive } from './useLive'
 import { useLiveWarm } from './liveWarm'
@@ -50,6 +51,11 @@ type NewItem = Item extends infer I ? (I extends Item ? Omit<I, 'id'> : never) :
 const partOfDay = () => {
   const h = Number(new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hourCycle: 'h23', timeZone: 'Europe/Helsinki' }).format(new Date()))
   return h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening'
+}
+
+function clearTryEntry() {
+  const path = window.location.pathname === '/try' ? '/' : window.location.pathname
+  window.history.replaceState(null, '', path + window.location.search)
 }
 
 export default function App() {
@@ -75,6 +81,9 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const u = c.UI
   const [view, setView] = useState<View>('order')
   const [savedKeys, setSavedKeys] = useState(getKeys)
+  const [sandboxState, setSandboxState] = useState<'idle' | 'setting-up' | 'error'>(() => (isTryEntry() ? 'setting-up' : 'idle'))
+  const [sandboxError, setSandboxError] = useState<string | null>(null)
+  const sandboxBusy = useRef(false)
   const keysDialog = useRef<HTMLDialogElement>(null)
   const adminDialog = useRef<HTMLDialogElement>(null)
   const [adminKey, setAdminKeyState] = useState(getAdminKey) // Valio staff only: the Valio view appears once it's set
@@ -84,9 +93,10 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const [text, setText] = useState('')
   const [date, setDate] = useState(nextMonday)
   const [result, setResult] = useState<AskResponse | null>(null)
+  const [chatConversationId, setChatConversationId] = useState<string | null>(null)
   // A question wins: "How much cream?" and "Order again?" come with the run attached, but only the question is shown.
   const question = result?.question ? result : null
-  const convo = question?.conversation_id ?? null // the question can be answered right here (typed or spoken)
+  const convo = question?.conversation_id ?? chatConversationId // the question can be answered right here (typed or spoken)
   const convoRef = useRef(convo)
   useEffect(() => {
     convoRef.current = convo
@@ -133,7 +143,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     if (replace) keysSaved()
   }
   const phaseLine = usePhaseLine(400)
-  const refreshAudit = () => setAuditKey((k) => k + 1)
+  const refreshAudit = useCallback(() => setAuditKey((k) => k + 1), [])
   const offline = useBackendDown()
   // Voice (Talk): the voice button starts it inside the tap; its words and results go into the same thread. Dictation
   // and Talk never hold the mic at once: starting Talk cancels dictation, and the mic button is gone while Talk is on.
@@ -143,9 +153,40 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   // (a setup link) still gets asked. Until the kitchen is known it isn't opened (no flicker).
   const kitchen = useKitchen(savedKeys.agentKey)
   const onboarding = useOnboarded()
+  const refreshOnboarding = onboarding.refresh
   const [, bumpSkip] = useState(0)
   const onboardingSkipped = kitchen ? onboardingSkippedFor(kitchen) : true
   const onboardingOpen = onboarding.onboarded === false && !onboardingSkipped // first run only; later it lives on the Kitchen tab
+  const startSandbox = useCallback(async (fromTry: boolean, fresh = false) => {
+    if (sandboxBusy.current) return
+    sandboxBusy.current = true
+    setSandboxState('setting-up')
+    setSandboxError(null)
+    try {
+      const existing = getSandboxSession()
+      const session = !fresh && existing && sandboxSessionLive(existing) ? existing : await createSandbox()
+      setSandboxSession(session)
+      if (fromTry) clearTryEntry()
+      setSavedKeys(getKeys())
+      refreshOnboarding()
+      refreshAudit()
+      setView('order')
+      setSandboxState('idle')
+    } catch (error) {
+      const message = error instanceof ApiError && error.status === 404
+        ? u.sandbox.off
+        : error instanceof ApiError && error.status === 429
+          ? u.sandbox.rateLimited
+          : errorText(error)
+      setSandboxError(message)
+      setSandboxState('error')
+    } finally {
+      sandboxBusy.current = false
+    }
+  }, [refreshAudit, refreshOnboarding, u])
+  useEffect(() => {
+    if (isTryEntry()) void startSandbox(true)
+  }, [startSandbox])
   function closeOnboarding() {
     if (kitchen) skipOnboardingFor(kitchen)
     bumpSkip((n) => n + 1)
@@ -252,28 +293,28 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     setRunning(true)
     setAnnounce(u.ask.announce)
     try {
-      phaseLine.reset()
       const have = pantry.current.length ? { have: pantry.current } : {}
       const input = to
         ? { text: '', follow_up: { to, answer: words.trim() }, ...have }
         : { text: words.trim(), ...(when ? { requested_date: when } : {}), ...have } // the day comes from the words, or the agent asks
-      const res = await askAgentStream(input, (p) =>
-        phaseLine.push(c.UI.progress.phases[p.phase] ?? p.text),
-      )
-      await phaseLine.settle() // let the last step be read before the answer replaces it
-      if (res.requested_date) setDate(res.requested_date) // the fallback day for cards that don't carry one
-      setResult(res)
-      // The agent's line (the backend's one-sentence `speak`), then the decision card; a question is its own message.
-      if (!res.question && res.speak) push({ kind: 'agent', text: res.speak })
-      // The pantry counts for this order only: a menu card keeps it for its own re-plans, then it is cleared.
-      const usedHave = res.intent === 'menu' && !res.question ? pantry.current : undefined
-      push({ kind: 'res', res, date: res.requested_date ?? date, asked: lastRequest.current, have: usedHave })
+      const res = await chatAgent(input)
+      if (res.requested_date) setDate(res.requested_date)
+      if (res.reply) push({ kind: 'agent', text: res.reply })
+      setChatConversationId(res.question ? res.conversation_id : null)
+      const cards = res.cards.filter((card): card is ChatCard => 'lines' in card)
+      const usedHave = cards.some((card) => 'menu' in card) ? pantry.current : undefined
+      const responses = cards.map((card) => ({ ...card, intent: card.intent ?? ('menu' in card ? 'menu' : 'order'),
+        reply: res.reply, speak: res.reply, requested_date: res.requested_date ?? date,
+      }) as AskResponse)
+      setResult(responses[0] ?? null)
+      responses.forEach((card) => push({ kind: 'res', res: card, date: card.requested_date ?? date,
+        asked: lastRequest.current, have: usedHave }))
       if (usedHave) pantry.current = []
-      if (res.question) setAnnounce(c.question(res.question, res.decision?.reasons[0]))
+      if (res.question) setAnnounce(c.question(res.question, null))
     } catch (err) {
       const expired = !!to && err instanceof ApiError && err.status === 404
       if (expired) setResult(null) // the question is gone; "Ask again" re-sends the original request
-      const message = expired ? u.question.expired : err instanceof Error && err.message === DROPPED ? u.progress.dropped : errorText(err)
+      const message = expired ? u.question.expired : errorText(err)
       push({ kind: 'error', text: message, reask: expired ? lastRequest.current : null })
       setAnnounce(expired ? u.question.expired : '')
     } finally {
@@ -320,6 +361,27 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     setResult(null)
     push({ kind: 'agent', text: u.question.leftAlone })
     setAnnounce(u.question.leftAlone)
+  }
+
+  function prefillCalendar(words: string) {
+    setView('order')
+    setText(words)
+    requestAnimationFrame(() => {
+      const f = field.current
+      if (!f) return
+      f.focus()
+      f.setSelectionRange(f.value.length, f.value.length)
+    })
+  }
+
+  function showPlannedCalendarMenu(plan: MenuRun, requestedDate: string, covers: number) {
+    const planned: AskResponse = { ...plan, intent: 'menu', requested_date: requestedDate, date_source: 'request', covers }
+    setView('order')
+    setResult(planned)
+    push({ kind: 'agent', text: c.UI.conv.cartNow(c.money(plan.cart_total_cents)) })
+    push({ kind: 'res', res: planned, date: requestedDate, asked: plan.menu.dishes.map((dish) => dish.name).join(', ') })
+    setAnnounce(c.UI.conv.cartNow(c.money(plan.cart_total_cents)))
+    refreshAudit()
   }
 
   // The cart was re-planned: the agent's line above the card said the old total, so it is rewritten.
@@ -410,6 +472,27 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     )
   }
 
+  if (sandboxState === 'setting-up') {
+    return (
+      <main className="try-setup">
+        <p className="try-setup-line" role="status">{u.sandbox.settingUp}</p>
+      </main>
+    )
+  }
+  if (sandboxState === 'error') {
+    return (
+      <main className="try-setup">
+        <div className="problem" role="alert">
+          <strong>{u.sandbox.failed}</strong>
+          {sandboxError}
+          <div className="actions">
+            <button type="button" className="btn" onClick={() => void startSandbox(isTryEntry())}>{u.sandbox.retry}</button>
+          </div>
+        </div>
+      </main>
+    )
+  }
+
   return (
     <>
       <header className="top">
@@ -445,7 +528,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
       </header>
 
       <dialog ref={keysDialog} className="sheet" aria-labelledby="keys-dialog-title">
-        <KeysForm titleId="keys-dialog-title" title={u.keys.title} onSaved={keysSaved} onCancel={() => keysDialog.current?.close()} />
+        <KeysForm key={savedKeys.agentKey} titleId="keys-dialog-title" title={u.keys.title} onSaved={keysSaved} onNewSandbox={() => void startSandbox(false, true)} onCancel={() => keysDialog.current?.close()} />
         {!adminKey && <ValioLink onOpen={openAdmin} />}
       </dialog>
       <dialog ref={adminDialog} className="sheet" aria-labelledby="admin-dialog-title">
@@ -520,6 +603,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
           <>
             <section hidden={view !== 'order'} aria-label={u.nav.order}>
               <h1 className="sr-only">{u.nav.order}</h1>
+              {/* HOOK: the calendar opens from the chat screen and returns planned menus to this thread. */}
+              {!onboardingOpen && <Calendar onPrefill={prefillCalendar} onMenuPlanned={showPlannedCalendarMenu} />}
               {onboardingOpen ? (
                 <Onboarding
                   onDone={() => {
@@ -834,8 +919,8 @@ function EyeIcon({ off }: { off: boolean }) {
 
 // Two keys in one nested card: a soft outer shell, a white card inside. Keys are trimmed on save (pasted spaces and newlines break requests).
 function KeysForm({
-  title, titleId, intro, submitLabel, onSaved, onCancel,
-}: { title: string; titleId?: string; intro?: string; submitLabel?: string; onSaved: () => void; onCancel?: () => void }) {
+  title, titleId, intro, submitLabel, onSaved, onNewSandbox, onCancel,
+}: { title: string; titleId?: string; intro?: string; submitLabel?: string; onSaved: () => void; onNewSandbox?: () => void; onCancel?: () => void }) {
   const k = useCopy().UI.keys
   const [keys, setDraft] = useState<ApiKeys>(getKeys)
   const ready = !!keys.agentKey.trim() && !!keys.approverKey.trim()
@@ -864,6 +949,11 @@ function KeysForm({
           <button type="submit" className="btn" disabled={!ready}>
             {submitLabel ?? k.save}
           </button>
+          {onNewSandbox && (
+            <button type="button" className="btn plain" onClick={onNewSandbox}>
+              {k.newSandbox}
+            </button>
+          )}
           {onCancel && (
             <button type="button" className="btn plain" onClick={onCancel}>
               {k.cancel}

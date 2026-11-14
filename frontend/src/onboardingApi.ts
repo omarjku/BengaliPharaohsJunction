@@ -6,11 +6,28 @@ import { MOCK, getKeys } from './api'
 const BASE = import.meta.env.VITE_API_URL ?? ''
 
 export type QuestionInput = 'text' | 'choice' | 'multi'
+export type StandingOrderAnswerLine = { text: string; product_id?: string; quantity?: number; unit?: string }
+export type StandingOrderAnswer = { weekday: string; lines: StandingOrderAnswerLine[] }
 export type AnswerValue = string | number | string[] | { city: string; region: string | null }
 export type Question = { id: string; question: string; input: QuestionInput; options?: string[]; answer?: AnswerValue }
 export type Onboarding = { onboarded: boolean; questions: Question[] }
 export type Preview = { stored: false; proposed: { id: string; question: string; value: AnswerValue }[]; unclear: string[]; hints: string[] }
-export type Saved = { stored: true; saved: string[]; hints: string[]; onboarding: Onboarding }
+export type OnboardingProfile = {
+  buyer_id: string
+  dietary: { tag: string; label: string; because: string }[]
+  allergens: string[]
+  delivery_days: string[]
+  usual_product_ids: string[]
+  standing_orders: StandingOrderAnswer[]
+  notes: { text: string; source: string; source_detail: string }[]
+  usual_products: { text: string; source: string; source_detail: string }[]
+  onboarding_facts: { key: string; value: unknown; source: string; source_detail: string }[]
+  memories: unknown[]
+  suggested_questions: string[]
+  recent_orders: unknown[]
+  onboarded: boolean
+}
+export type Saved = { stored: true; saved: string[]; hints: string[]; onboarding: Onboarding; profile: OnboardingProfile }
 
 // A failed save keeps the backend's per-question reasons ({errors: {id: reason}}) so each can sit under its field.
 export class OnboardingError extends Error {
@@ -34,7 +51,14 @@ async function call<T>(path: string, init: RequestInit, header: 'X-Agent-Key' | 
   const body = (await res.json().catch(() => ({}))) as { detail?: unknown }
   if (res.ok) return body as T
   const d = body.detail
-  if (d && typeof d === 'object' && 'errors' in d) throw new OnboardingError(res.status, 'Some answers need a fix.', (d as { errors: Record<string, string> }).errors)
+  if (d && typeof d === 'object' && !Array.isArray(d) && 'errors' in d && typeof d.errors === 'object' && d.errors)
+    throw new OnboardingError(res.status, 'Some answers need a fix.', d.errors as Record<string, string>)
+  if (Array.isArray(d)) {
+    const messages = d.map((item) => item && typeof item === 'object' && 'msg' in item && typeof item.msg === 'string' ? item.msg : null).filter(Boolean)
+    throw new OnboardingError(res.status, messages.join('; ') || `Request failed (${res.status}).`)
+  }
+  if (d && typeof d === 'object' && 'error' in d && typeof d.error === 'string')
+    throw new OnboardingError(res.status, d.error)
   throw new OnboardingError(res.status, typeof d === 'string' ? d : `Request failed (${res.status}).`)
 }
 
@@ -49,7 +73,13 @@ export const previewAbout = (about: string): Promise<Preview> =>
 export const saveAnswers = (answers: Record<string, AnswerValue>): Promise<Saved> => {
   if (MOCK) {
     mockState.answers = { ...mockState.answers, ...answers }
-    return Promise.resolve({ stored: true, saved: Object.keys(answers), hints: [], onboarding: mockOnboarding() })
+    return Promise.resolve({
+      stored: true,
+      saved: Object.keys(answers),
+      hints: [],
+      onboarding: mockOnboarding(),
+      profile: mockProfile(),
+    })
   }
   return call<Saved>('/api/profile/onboarding', { method: 'POST', body: JSON.stringify({ answers, confirm: true }) }, 'X-Approver-Key')
 }
@@ -91,10 +121,16 @@ const MOCK_QUESTIONS: Question[] = [
     options: ['lactose_free', 'gluten_free', 'vegan', 'vegetarian', 'milk_free', 'egg_free', 'nut_free', 'peanut_free', 'soy_free', 'fish_free'] },
   { id: 'cuisine', question: 'What do you cook, and how do you serve it?', input: 'text' },
   { id: 'staples', question: 'What do you always keep in stock?', input: 'multi' },
+  { id: 'standing_orders', question: 'What do you order regularly, and on which days?', input: 'text' },
 ]
 const mockOnboarding = (): Onboarding => ({
   onboarded: Object.keys(mockState.answers).length > 0,
   questions: MOCK_QUESTIONS.map((q) => (q.id in mockState.answers ? { ...q, answer: mockState.answers[q.id] } : q)),
+})
+const mockProfile = (): OnboardingProfile => ({
+  buyer_id: 'lapland-kitchen', dietary: [], allergens: [], delivery_days: [], usual_product_ids: [],
+  standing_orders: [], notes: [], usual_products: [], onboarding_facts: [], memories: [],
+  suggested_questions: [], recent_orders: [], onboarded: Object.keys(mockState.answers).length > 0,
 })
 const MOCK_PREVIEW: Preview = {
   stored: false,
