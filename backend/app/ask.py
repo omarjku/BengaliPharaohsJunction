@@ -276,6 +276,8 @@ def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict
                                    + "? Or say it more precisely.")
     out["conversation_id"] = None
     when = out.get("requested_date") or (requested and requested.isoformat())
+    if kind and _is_continuous_cart(out.get("request")):
+        state.setdefault("cart", conversation.cart_state(out["request"], out.get("lines"), out.get("held_items")))
     if kind and out.get("question"):
         out["conversation_id"] = conversation.save(buyer_id, kind,
                                                      {"text": text, "requested": when, **state,
@@ -307,8 +309,8 @@ def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict
 
 def _next_steps(out: dict, text: str, when: str | None, buyer_id: str) -> list[dict]:
     """One answerable next step per HELD line of an order (Room 2: in a multi-line list, a held 'cream' had none):
-    'How much X?', 'Which X: 1) .. 2) ..?', or 'What should I look for instead?'. Each has its own conversation_id,
-    and an answer re-runs only that line (the lines already ordered are not sent again)."""
+    'How much X?', 'Which X: 1) .. 2) ..?', or 'What should I look for instead?'. Each has its own conversation_id;
+    standing-order expansions keep the complete cart in that conversation."""
     steps = []
     for n in out["held_items"]:
         it = out["request"]["items"][n]
@@ -330,10 +332,13 @@ def _next_steps(out: dict, text: str, when: str | None, buyer_id: str) -> list[d
                                                        + "? Or say it more precisely."), names
         else:
             kind, question, step_options = "clarify", f"Valio doesn't seem to stock '{it['query']}'. What should I look for instead?", names
-        cid = conversation.save(buyer_id, kind, {"text": text, "requested": when, "request": out["request"], "item": n,
-                                                 "options": step_options, "line_only": True, "question": question,
-                                                 "amount_question": question if kind == "amount" else None,
-                                                 "unit": unit if kind == "amount" else None})
+        state = {"text": text, "requested": when, "request": out["request"], "item": n,
+                 "options": step_options, "line_only": True, "question": question,
+                 "amount_question": question if kind == "amount" else None,
+                 "unit": unit if kind == "amount" else None}
+        if _is_continuous_cart(out["request"]):
+            state["cart"] = conversation.cart_state(out["request"], out.get("lines"), out["held_items"])
+        cid = conversation.save(buyer_id, kind, state)
         why = [r["message"] for r in (out.get("decision") or {}).get("reasons", [])
                if r["severity"] != "INFO" and r.get("product_id") in {(ln.get("product") or {}).get("id") for ln in lines}]
         steps.append({"item": n, "query": it["query"], "kind": "amount" if kind == "amount" else "which",
@@ -419,6 +424,13 @@ def _copy_request(entry: dict) -> dict | None:
     return out
 
 
+def _is_continuous_cart(request: dict | None) -> bool:
+    """Standing-order expansions and their extras travel as one cart through follow-ups."""
+    items = request.get("items") if isinstance(request, dict) else None
+    return isinstance(items, list) and len(items) > 1 and any(item.get("standing_order") for item in items
+                                                               if isinstance(item, dict))
+
+
 def _follow_up_date(entry: dict) -> date | None:
     try:
         return date.fromisoformat(entry["requested"]) if entry.get("requested") else None
@@ -432,6 +444,8 @@ def _follow_up_again(entry: dict, requested: date | None, question: str | None =
                 "Answer the pending question, or start a new request.", kind=entry.get("kind"))
     out["_state"] = {key: entry[key] for key in ("request", "item", "options", "choices", "line_only", "amount_question", "unit")
                       if key in entry}
+    if entry.get("cart"):
+        out["_state"]["cart"] = entry["cart"]
     return out
 
 
@@ -510,7 +524,7 @@ def _retain_proposal_approval(request: dict) -> dict:
 
 
 def _line_request(entry: dict, request: dict) -> tuple[dict, str]:
-    if not entry.get("line_only"):
+    if not entry.get("line_only") or entry.get("cart"):
         return request, f"{entry['text']}. " + ", ".join(_request_item_clause(item) for item in request["items"])
     number = entry.get("item")
     item = request["items"][number] if isinstance(number, int) and number < len(request["items"]) else None
@@ -630,7 +644,7 @@ async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, d
         choice = options[pick - 1] if pick and pick <= len(options) else answer.strip()
         if not choice:
             return again("Which one did you mean?", "Say the number of the option, or the product."), text, requested
-        if entry.get("line_only"):  # one held line of a list: only that line runs again, as the chosen product
+        if entry.get("line_only") and not entry.get("cart"):  # legacy single-line continuation
             if not _line_grounded(entry):
                 return _line_refused(entry), text, requested
             item = dict(entry["request"]["items"][entry["item"]], query=choice[:120], source="")
@@ -638,6 +652,11 @@ async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, d
             merged = f"{amount}{choice}"  # only this line: the other lines' text would read as unparsed (guard)
             one = {**entry["request"], "items": [item]}
             return await _flow(merged, requested, buyer_id, parsed=(one, True)), merged, requested
+        if entry.get("cart"):
+            request = _copy_request(entry)
+            request["items"][entry["item"]].update(query=choice[:120], source="")
+            request, merged = _line_request(entry, request)
+            return await _flow(merged, requested, buyer_id, parsed=(request, True)), merged, requested
         merged = f"{text} ({choice})"  # same clause: the amount the chef gave stays with the product
         return await _flow(merged, requested, buyer_id), merged, requested
     # amount: the stored parse, buyer and mandate stay, but a product named in the answer replaces the old query.
@@ -681,10 +700,12 @@ async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, d
     amount_unit = item.get("unit") or unit
     amount_words = f"{amount:g} {amount_unit} " if amount is not None and amount_unit else ""
     merged = f"{text}. {amount_words}{item['query']}"  # grounding finds amount + unit + product in one clause
-    if entry.get("line_only"):  # one held line of a list: the lines already ordered are not sent again
+    if entry.get("line_only") and not entry.get("cart"):  # legacy single-line continuation
         if not _line_grounded(entry):
             return _line_refused(entry), text, requested
         request, merged = {**request, "items": [item]}, f"{amount_words}{item['query']}"
+    elif entry.get("cart"):
+        request, merged = _line_request(entry, request)
     out = await _flow(merged, requested, buyer_id, parsed=(request, True))
     if change:
         if out.get("_v2") and out["_v2"].get("cards"):

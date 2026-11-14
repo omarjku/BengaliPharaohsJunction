@@ -203,6 +203,13 @@ def peek(cid: str, buyer_id: str) -> dict:
     return json.loads(json.dumps(entry, ensure_ascii=False))
 
 
+def cart_state(request: dict, lines: list[dict] | None = None, held_items: list[int] | None = None) -> dict:
+    """Bounded state for the one cart shared by all of its answerable follow-ups."""
+    return {"request": json.loads(json.dumps(request, ensure_ascii=False)),
+            "lines": json.loads(json.dumps(lines or [], ensure_ascii=False)),
+            "held_items": list(held_items or [])}
+
+
 # The v2 reading context is deliberately separate from the open follow-up store above.  Follow-up ids are short-lived
 # workflow state; these buyer-scoped files are only the small amount of recent conversation context needed to understand
 # the next message.
