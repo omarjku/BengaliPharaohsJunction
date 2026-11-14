@@ -3,7 +3,7 @@ import json
 from datetime import timedelta
 
 import pytest
-from conftest import NOW, PAST, REQ, quote, store_mandate
+from conftest import NOW, PAST, REQ, quote, store_mandate, outcome
 from fastapi.testclient import TestClient
 
 from app import orders
@@ -67,7 +67,7 @@ def test_over_limit_waits_then_human_approves(shop):
 def test_approve_rechecks_cutoff_that_passed_while_waiting(shop):
     oid = order([("463335", 1000)]).json()["order_id"]
     shop.quotes["463335"] = quote("463335", cutoff=PAST)  # the cut-off passed while the chef was deciding
-    body = c.post(f"/api/orders/{oid}/approve", json={"approver": "Chef Aino"}).json()
+    body = outcome(c.post(f"/api/orders/{oid}/approve", json={"approver": "Chef Aino"}))
     assert body["status"] == "refused" and "CUTOFF_PASSED" in {r["code"] for r in body["decision"]["reasons"]}
     assert c.get(f"/api/orders/{oid}").json()["status"] == "refused"
 
@@ -75,9 +75,9 @@ def test_approve_rechecks_cutoff_that_passed_while_waiting(shop):
 def test_approve_with_new_price_goes_back_to_the_human(shop):
     oid = order([("463335", 1000)]).json()["order_id"]
     shop.quotes["463335"] = quote("463335", price=1.5)
-    body = c.post(f"/api/orders/{oid}/approve", json={"approver": "Chef Aino"}).json()
+    body = outcome(c.post(f"/api/orders/{oid}/approve", json={"approver": "Chef Aino"}))
     assert body["status"] == "pending_approval" and "PRICE_CHANGED" in {r["code"] for r in body["decision"]["reasons"]}
-    body = c.post(f"/api/orders/{oid}/approve", json={"approver": "Chef Aino"}).json()  # approves the new price
+    body = outcome(c.post(f"/api/orders/{oid}/approve", json={"approver": "Chef Aino"}))  # approves the new price
     assert body["status"] == "confirmed" and body["total_cents"] == 150000
 
 

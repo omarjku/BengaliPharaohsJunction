@@ -405,7 +405,9 @@ def _numbers(text: str) -> set[float]:
     """One reading per number written: 1000, 1,000, 1 000, 1.000 → 1000; 1,5 / 1.5 → 1.5. (Two readings per token
     let '1,000 L' ground a parsed amount of 1.)"""
     out = set()
-    for raw in re.findall(r"\d+(?:[ ,.]\d+)*", text):
+    # Spoken numbers come back as words from voice ("Sata litraa"): read them as digits (Render live check + the
+    # video recording: the Finnish voice order was refused because the amount wasn't written as digits).
+    for raw in re.findall(r"\d+(?:[ ,.]\d+)*", conversation.spoken_to_digits(text)):
         if re.fullmatch(r"\d{1,3}(?:([ ,.])\d{3})(?:\1\d{3})*", raw):  # thousands separators
             out.add(float(re.sub(r"[ ,.]", "", raw)))
             continue
@@ -452,10 +454,11 @@ def grounding(text: str, item: dict) -> tuple[str | None, set[int]]:
     """Deterministic injection / hallucination guard → (what in a Gemini-parsed item is NOT in the chef's own text,
     indices of the clauses that ground it). Product, amount and unit must all be in the SAME clause, so
     '12 kg butter and 1 L milk' can't become 12 L milk."""
-    words = re.findall(r"[\wäöå]+", item["query"].lower())
+    words = re.findall(r"[\wäöå]+", conversation.spoken_to_digits(item["query"]).lower())  # like the text below
     unit = (item["unit"] or "").lower()
     if unit and unit not in quantity.MEASURES:
         return f"the unit {item['unit']}", set()  # catalogue codes like KI multiply quantities; plain units only
+    text = conversation.spoken_to_digits(text)  # before splitting: "two hundred and fifty" is one amount
     clauses = {i: c for i, c in enumerate(re.split(_SPLIT, text)) if _words_in(words, c)}
     if not clauses:
         return f"the product '{item['query']}'", set()
@@ -843,7 +846,11 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                 judged = await judge(canonical(it),
                                      [(catalogue.get(a.product_id) or {"id": a.product_id}, ["sub"]) for a in subs])
                 ranked = sorted(zip(subs, judged), key=lambda x: -(x[1][0] or 0))  # most acceptable first
-                alternatives += [a.model_copy(update={"summary": a.summary + (
+                def doubted(summary: str, conf) -> str:  # QA round 2 N4: below threshold = at most "good"
+                    if conf is None or conf >= threshold:
+                        return summary
+                    return re.sub(r"^(BEST|BETTER) ", "GOOD ", summary) + " Gemini doubts this substitute."
+                alternatives += [a.model_copy(update={"summary": doubted(a.summary, conf) + (
                     f" Gemini Decisions: {_pct(conf)} that it is an acceptable substitute"
                     + ("" if conf >= threshold else f", below your {threshold:.2f} threshold: check before accepting")
                     + "." if conf is not None else " Not checked by Gemini Decisions.")}) for a, (conf, *_) in ranked]

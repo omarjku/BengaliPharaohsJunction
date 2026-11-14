@@ -79,6 +79,19 @@ A kebab shop ordering döner meat shouldn't be asked "for how many guests". So t
 - **Safe when the network isn't.** If the stream can't be opened, the plain request runs instead, because the server started nothing. If it breaks midway, it does not retry, because the agent may already have ordered: "The connection dropped before the answer came back. Check History before asking again."
 - **Voice goes straight into the stream,** so the chef sees progress right after speaking.
 
+## Quality pass (Sat 14 Nov)
+- **Accessibility.** `frontend/scripts/qa.mjs` runs axe (WCAG 2.2 AA plus best practice) over 12 screens × EN/FI × 360/390/430/1280: no serious or critical issues left. The tertiary grey went from #737b85 to #676f78, because the old value was 4.1:1 on paper. The progress line is now a polite status region, so each step is read out. The order screen has an h1 for screen readers. The mic intro takes focus and hands it back to the mic. `scripts/keyboard.mjs` walks ask → approve, Rules → check → save and Keys → Escape with the keyboard only.
+- **Phones.** No horizontal scroll at any width in either language. Every control is at least 44 px; on phones the Try examples are rows instead of links inside a sentence. The viewport has `viewport-fit=cover` (so the safe-area insets actually apply) and `interactive-widget=resizes-content` (so the keyboard shrinks the page instead of covering it). Reduced motion swaps the sliding progress bar for a slow fade.
+- **Long backend sentences** become a short headline plus a line under it, with catalogue names that were in capitals shown in normal case.
+- **Lighthouse (mobile, production build):** performance 95, accessibility 100, best practices 96, SEO 100. The missing points come from having no backend in the local run: the offline banner shifts the layout and the console logs the failed health check. With the mock build the scores are 99/100/100/100. There are no web fonts and no images; the JS is 96 KB gzipped.
+- Final deck/video screenshots from the real backend are in `screens/final/` (`frontend/scripts/capture.mjs`).
+
+## Answering the agent (follow-ups)
+- When the agent asks something it can continue from ("How much cream?", "For which delivery day?", "Order again?"), only the question shows, with the answer right under it: a field with the mic inside it and **Send**, or **Order again / No, leave it**. The answer goes back as a `follow_up` to the same request, for as many rounds as it takes.
+- When the request was made by voice, the backend's `speak` sentence is read aloud in the request's language, then the mic opens by itself ("Listening for your answer… tap the mic to send", with Cancel). Typing works just as well. An expired question (404) is shown and said: "That question has expired. Please say the whole order again."
+- Questions that can't be answered inline (off-topic, a date in the past) are said plainly, in Finnish too, and leave the box open.
+- `CONFIDENCE_OK` is the calm "Matched by Gemini · 84%" line, never a warning. `FRONT_DOOR` is one quiet line under it, "Sent to Valio's front door: confirmed", with a link to History. Both stay out of "Also worth knowing".
+
 ## Known gaps
 - Product names come straight from Valio's catalogue ("Valio Eila® 3 % milk drink 1 l lactose free"). Cleaning them up would need a naming pass in the data.
 - History can't tell "Valio held for your OK" apart from "Valio refused" when the front door's outcome was an ask, because the audit entry doesn't store the order status. The opening screen's waiting count avoids this by checking each order's real status.

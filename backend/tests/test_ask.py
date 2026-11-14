@@ -299,3 +299,40 @@ def test_codex14_absurd_content_length_is_413():
     r = c.post("/api/agent/ask", content=b"{}", headers={"Content-Type": "application/json", "Content-Length": "9" * 5000,
                                                           "X-Agent-Key": "agent-lk"})
     assert r.status_code == 413
+
+
+import pytest  # noqa: E402
+
+from app import conversation as _conv  # noqa: E402
+
+
+@pytest.mark.parametrize("spoken, digits", [
+    ("Sata litraa laktoositonta maitoa", "100 litraa laktoositonta maitoa"), ("tuhat litraa", "1000 litraa"),
+    ("kaksisataa kiloa", "200 kiloa"), ("sataviisikymmentä litraa", "150 litraa"), ("kaksi ja puoli kiloa", "2.5 kiloa"),
+    ("puolitoista kiloa", "1.5 kiloa"), ("kaksikymmentäviisi", "25"), ("kaksituhatta", "2000"),
+    ("two hundred litres", "200 litres"), ("a thousand litres", "1000 litres"), ("one and a half kg", "1.5 kg"),
+    ("two hundred and fifty kg", "250 kg"), ("half a kilo", "0.5 kilo"),
+    ("20 kg butter and 5 L cream", "20 kg butter and 5 L cream"), ("1,000 L milk", "1,000 L milk"),
+    ("I need cream and milk", "I need cream and milk"), ("a litre of milk", "1 litre of milk"),
+    ("I need five kilos of butter as soon as possible", "I need 5 kilos of butter as soon as possible"),
+    ("Ten litres of cream", "10 litres of cream"), ("an apple and a kilo of butter", "an apple and 1 kilo of butter"),
+    ("a dozen eggs", "12 eggs"), ("two dozen eggs", "24 eggs"), ("tusina munaa", "12 munaa"),
+    ("kaksi tusinaa munaa", "24 munaa"), ("puoli kiloa voita", "0.5 kiloa voita"), ("a hundred kg", "100 kg"),
+    ("Kymmenen kiloa voita maanantaiksi", "10 kiloa voita maanantaiksi"), ("I want a coffee milk", "I want a coffee milk")])
+def test_spoken_numbers_become_digits(spoken, digits):
+    assert _conv.spoken_to_digits(spoken) == digits
+
+
+@pytest.mark.parametrize("text, amount", [("Sata litraa laktoositonta maitoa maanantaiksi.", 100),
+                                          ("sataviisikymmentä litraa maitoa", 150), ("kaksi ja puoli litraa maitoa", 2.5),
+                                          ("two hundred and fifty litres of milk", 250), ("one and a half L milk", 1.5),
+                                          ("I need five litres of milk as soon as possible", 5),
+                                          ("Ten litres of milk", 10), ("a litre of milk", 1), ("puoli litraa maitoa", 0.5)])
+def test_spoken_amounts_ground_and_wrong_readings_dont(text, amount):
+    item = {"query": "maitoa" if "maitoa" in text else "milk", "amount": amount, "unit": "L"}  # as anchored() does
+    assert agent.ungrounded(text, item) is None
+    assert agent.ungrounded(text, dict(item, amount=2)) is not None  # "two hundred" is not 2 L
+
+
+def test_dozen_eggs_ground_as_a_count():
+    assert agent.ungrounded("two dozen eggs for Monday", {"query": "eggs", "amount": 24, "unit": "pcs"}) is None

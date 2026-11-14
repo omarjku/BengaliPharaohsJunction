@@ -70,8 +70,8 @@ def post(body, ctype="audio/wav", key="agent-chef"):
 
 def test_recording_becomes_the_chefs_words(live):
     r = post(wav(1.0))
-    assert r.status_code == 200 and r.json() == {"text": "20 kg butter for Monday.", "seconds": 1.0,
-                                                 "model": config.GEMINI_LISTEN_MODEL}
+    assert r.status_code == 200 and r.json() == {"text": "20 kg butter for Monday.", "raw_text": "20 kg butter for Monday.",
+                                                 "seconds": 1.0, "model": config.GEMINI_LISTEN_MODEL}
     setup, start, *audio, end = live.sent
     assert setup["setup"]["model"] == f"models/{config.GEMINI_LISTEN_MODEL}"
     assert setup["setup"]["realtimeInputConfig"]["automaticActivityDetection"]["disabled"] is True  # push-to-talk
@@ -91,6 +91,14 @@ def test_recording_becomes_the_chefs_words(live):
 def test_bad_recordings_get_a_plain_reason(live, body, ctype, status):
     r = post(body, ctype)
     assert r.status_code == status and isinstance(r.json()["detail"], str)
+
+
+def test_decoder_errors_never_reach_the_client(live):
+    # Live probe found "[Errno 1094995529] Invalid data found when processing input" in the 422 (PyAV errors are
+    # ValueErrors, so they slipped through the pass-through for our own messages).
+    for junk in (b"\x00not audio at all" * 10, b"\x00" * 200_000, b"RIFF\x00\x00\x00\x00WAVEjunk"):
+        r = post(junk, "audio/webm")
+        assert r.status_code == 422 and "Errno" not in r.text and "Invalid data" not in r.text
 
 
 def test_size_cap_and_auth(live):
@@ -154,3 +162,11 @@ def test_silence_is_refused_fast_without_calling_gemini(live):
 def test_decoder_errors_are_plain_sentences(live):
     detail = post(b"definitely not audio", "audio/webm").json()["detail"]
     assert detail == "I couldn't read that recording. Try again, or type the order." and "Errno" not in detail
+
+
+def test_spoken_numbers_come_back_as_digits(live, monkeypatch):
+    """Video recording: "Sata litraa ..." was refused; the transcript now carries digits, raw_text the words heard."""
+    monkeypatch.setattr(voice, "connect", FakeLive(text="Sata litraa laktoositonta maitoa maanantaiksi."))
+    r = post(wav(1.0)).json()
+    assert r["text"] == "100 litraa laktoositonta maitoa maanantaiksi."
+    assert r["raw_text"] == "Sata litraa laktoositonta maitoa maanantaiksi."

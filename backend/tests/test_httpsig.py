@@ -105,3 +105,12 @@ def test_agent_routes_need_the_signature_too_and_failures_are_audited(shop, monk
     events = [json.loads(x) for x in orders.AUDIT_FILE.read_text().splitlines()]
     assert events[-1]["event"] == "bad_request_signature" and events[-1]["buyer_id"] == "chef"
     assert "agent-chef" not in orders.AUDIT_FILE.read_text()
+
+
+def test_malformed_signature_bytes_are_401_not_500(shop, monkeypatch):  # Codex whole-backend audit
+    register(monkeypatch)
+    raw = body()
+    signed = sign_headers("POST", URL, raw, KEY, "kitchen-1")
+    signed["Signature"] = "sig1=:A:"
+    r = send(raw, signed)
+    assert r.status_code == 401 and "base64" in r.json()["detail"]
