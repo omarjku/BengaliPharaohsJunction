@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -19,7 +20,8 @@ from pydantic import (AwareDatetime, BaseModel, ConfigDict, Field, StrictFloat, 
 from trade_contracts import Mandate
 
 from . import (agent, ask, auth, catalogue, calendar as kitchen_calendar, config, gate, httpsig, interview, kitchen,
-               live, mandates, menu, orders, profile, progress, quantity, ratelimit, rules, signing, valio, vision, voice)
+               live, mandates, menu, orders, profile, progress, quantity, ratelimit, rules, sandbox, signing, valio, vision,
+               voice)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -35,6 +37,17 @@ app = FastAPI(
     version="0.1.0",
 )
 app.add_middleware(CORSMiddleware, allow_origins=config.FRONTEND_ORIGINS, allow_methods=["*"], allow_headers=["*"])
+
+
+@app.post("/api/sandbox")
+def create_sandbox(request: Request) -> dict:
+    """Mint a 24-hour QR test kitchen; its credentials are returned only in this response."""
+    if not config.SANDBOX_ENABLED:
+        raise HTTPException(404, detail="Test kitchens are switched off")
+    if (wait := ratelimit.wait_s("sandbox", ratelimit.client_ip(request))) > 0:
+        raise HTTPException(429, detail="Too many test kitchens from this network, try again in a while",
+                            headers={"Retry-After": str(math.ceil(wait))})
+    return sandbox.mint()
 
 
 @app.get("/api/health")

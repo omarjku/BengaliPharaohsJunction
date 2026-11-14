@@ -287,6 +287,14 @@ export const UI = {
     ok: 'OK',
     show: 'Show',
     hide: 'Hide',
+    newSandbox: 'New test kitchen',
+  },
+  sandbox: {
+    settingUp: 'Setting up your test kitchen…',
+    off: 'Test kitchens are switched off',
+    rateLimited: 'Too many test kitchens from this network, try again in a while',
+    failed: 'Couldn’t set up a test kitchen.',
+    retry: 'Try again',
   },
   status: { ordered: 'Ordered', yourCall: 'Your call', rejected: 'Rejected', notOrdered: 'Not ordered', sent: 'Sent to Valio', ready: 'Ready to order' },
   result: {
@@ -516,6 +524,7 @@ export const UI = {
   },
   kitchen: {
     signedIn: (name: string): string => `Signed in as ${name}`,
+    signedInSandbox: 'Signed in as Test kitchen (copy of Helsinki bistro) · resets in 24 h',
     switch: 'Switch kitchen',
     onboardingTitle: 'Tell me about your kitchen',
     onboardingIntro: 'Share the kitchen details you want the agent to remember as guidance. You can change them later.',

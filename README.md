@@ -19,6 +19,7 @@ the human with the reason and alternatives. Never silently guess. (That is the d
 
 ## Try it
 
+- [Open a test kitchen](https://valio-front-door.onrender.com/#try) on a phone, or scan [`docs/try-qr.png`](docs/try-qr.png). It mints a temporary Helsinki-bistro copy with no credentials to type; the kitchen and its orders reset after 24 hours.
 - [Live UI](https://valio-front-door.onrender.com)
 - [API docs](https://valio-front-door-api.onrender.com/docs)
 

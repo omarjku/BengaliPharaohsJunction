@@ -307,6 +307,14 @@ export const UI = {
     ok: 'OK',
     show: 'Näytä',
     hide: 'Piilota',
+    newSandbox: 'Uusi testikeittiö',
+  },
+  sandbox: {
+    settingUp: 'Testikeittiötä valmistellaan…',
+    off: 'Testikeittiöt eivät ole käytössä',
+    rateLimited: 'Tästä verkosta on luotu liikaa testikeittiöitä, yritä hetken kuluttua uudelleen',
+    failed: 'Testikeittiön valmistelu epäonnistui.',
+    retry: 'Yritä uudelleen',
   },
   status: { ordered: 'Tilattu', yourCall: 'Sinun päätöksesi', rejected: 'Hylätty', notOrdered: 'Ei tilattu', sent: 'Lähetetty Valiolle', ready: 'Valmis tilattavaksi' },
   result: {
@@ -536,6 +544,7 @@ export const UI = {
   },
   kitchen: {
     signedIn: (name: string): string => `Kirjautuneena: ${name}`,
+    signedInSandbox: 'Kirjautuneena: testikeittiö (Helsingin bistromallin kopio) · nollautuu 24 tunnissa',
     switch: 'Vaihda keittiö',
     onboardingTitle: 'Kerro keittiöstäsi',
     onboardingIntro: 'Kerro tiedot, jotka haluat agentin muistavan ohjeena. Voit muuttaa niitä myöhemmin.',

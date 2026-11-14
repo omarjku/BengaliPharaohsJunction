@@ -19,11 +19,12 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from trade_contracts.common import PreferenceScope
-from trade_profile import (MemoryKind, MemorySource, OrderRef, ProfileStore, get_profile_context, log_path,
+from trade_profile import (Memory, MemoryKind, MemorySource, OrderRef, ProfileStore, get_profile_context, log_path,
                            memory_id_for)
+from trade_profile.models import EventType
 from trade_profile.models import OrderLineRef
 
-from . import catalogue, config, orders
+from . import catalogue, config, orders, sandbox
 
 SEED = Path(__file__).with_name("profile_seed.json")
 SEEDED_AT = datetime(2026, 11, 13, 9, tzinfo=timezone.utc)
@@ -61,8 +62,36 @@ def _order_id() -> str:
     return "today-" + datetime.now(ZoneInfo("Europe/Helsinki")).date().isoformat()
 
 
+def _sandbox_seed_memories(buyer_id: str) -> list[Memory]:
+    if not sandbox.is_sandbox_buyer(buyer_id):
+        return []
+    out = []
+    for raw in json.loads(SEED.read_text()).get(sandbox.TEMPLATE, []):
+        kind, value = MemoryKind(raw["kind"]), raw.get("value") or {}
+        out.append(Memory(id=memory_id_for(buyer_id, kind, raw["key"], value, PreferenceScope.ALWAYS, None),
+                          buyer_id=buyer_id, kind=kind, key=raw["key"], text=raw["text"], value=value,
+                          scope=PreferenceScope.ALWAYS, source=MemorySource.ONBOARDING, created_at=SEEDED_AT))
+    return out
+
+
 def _memories(buyer_id: str) -> list:
-    return store().active_memories(buyer_id, _order_id(), datetime.now(timezone.utc))
+    base = store()
+    active = base.active_memories(buyer_id, _order_id(), datetime.now(timezone.utc))
+    if not sandbox.is_sandbox_buyer(buyer_id):
+        return active
+    hidden = {event.memory_id for event in base.events(buyer_id)
+              if event.memory_id and event.type in (EventType.REVOKE, EventType.EXPIRE, EventType.FORGET)}
+    return sorted([*active, *(m for m in _sandbox_seed_memories(buyer_id) if m.id not in hidden and m.id not in {x.id for x in active})],
+                  key=lambda m: (m.kind.value, m.key, m.id))
+
+
+class _SandboxProfileReadStore:
+    """Read-only seed overlay for get_profile_context; writes still use the real ProfileStore."""
+    def __init__(self, base: ProfileStore):
+        self.base = base
+
+    def active_memories(self, buyer_id: str, order_id: str, now: datetime) -> list[Memory]:
+        return _memories(buyer_id) if sandbox.is_sandbox_buyer(buyer_id) else self.base.active_memories(buyer_id, order_id, now)
 
 
 def _decoded_value(memory) -> dict:
@@ -221,7 +250,12 @@ def revoke(buyer_id: str, memory_id: str) -> None:
     """Forget one active memory of THIS buyer. KeyError if it isn't one (unknown, already revoked, another buyer's)."""
     if memory_id not in {m.id for m in _memories(buyer_id)}:
         raise KeyError(memory_id)
-    store().revoke(buyer_id, memory_id, datetime.now(timezone.utc))
+    now = datetime.now(timezone.utc)
+    seeded = next((m for m in _sandbox_seed_memories(buyer_id) if m.id == memory_id), None)
+    if seeded:
+        store().add_memory(buyer_id, kind=seeded.kind, key=seeded.key, text=seeded.text, value=seeded.value,
+                           source=seeded.source, now=seeded.created_at, scope=seeded.scope)
+    store().revoke(buyer_id, memory_id, now)
 
 
 def remember(buyer_id: str, product_id: str, scope: str, text: str | None) -> dict:
@@ -268,7 +302,8 @@ def usual(buyer_id: str) -> set[str]:
 
 
 def context(buyer_id: str) -> dict:
-    ctx = get_profile_context(store(), buyer_id, _order_id(), datetime.now(timezone.utc), past_orders=_PastOrders())
+    profile_store = _SandboxProfileReadStore(store()) if sandbox.is_sandbox_buyer(buyer_id) else store()
+    ctx = get_profile_context(profile_store, buyer_id, _order_id(), datetime.now(timezone.utc), past_orders=_PastOrders())
     why = {i.memory.id: i.used_because for i in ctx.items} | {o.memory_id: f"not used: {o.reason}" for o in ctx.overridden}
     mems = _memories(buyer_id)
     delivery_days = next((m.value.get("answer") for m in mems if m.kind is MemoryKind.DELIVERY_DAYS), [])

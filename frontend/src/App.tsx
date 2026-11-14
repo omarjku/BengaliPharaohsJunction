@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { ApiError, askAgentStream, DROPPED, getAdminKey, getHealth, getKeys, KEYS_FROM_LINK, applyLinkKeys, checkLinkKeys, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
+import { ApiError, askAgentStream, createSandbox, DROPPED, getAdminKey, getHealth, getKeys, getSandboxSession, KEYS_FROM_LINK, applyLinkKeys, checkLinkKeys, isTryEntry, MOCK, sandboxSessionLive, setAdminKey, setKeys, setSandboxSession, getOrder, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
 import { buyerLabel, errorText, nextMonday } from './format'
 import { groupHistory } from './history'
@@ -42,6 +42,11 @@ const partOfDay = () => {
   return h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening'
 }
 
+function clearTryEntry() {
+  const path = window.location.pathname === '/try' ? '/' : window.location.pathname
+  window.history.replaceState(null, '', path + window.location.search)
+}
+
 export default function App() {
   const [lang, setLang] = useState<Lang>(initialLang)
   const c = COPIES[lang]
@@ -65,6 +70,9 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const u = c.UI
   const [view, setView] = useState<View>('order')
   const [savedKeys, setSavedKeys] = useState(getKeys)
+  const [sandboxState, setSandboxState] = useState<'idle' | 'setting-up' | 'error'>(() => (isTryEntry() ? 'setting-up' : 'idle'))
+  const [sandboxError, setSandboxError] = useState<string | null>(null)
+  const sandboxBusy = useRef(false)
   const keysDialog = useRef<HTMLDialogElement>(null)
   const adminDialog = useRef<HTMLDialogElement>(null)
   const [adminKey, setAdminKeyState] = useState(getAdminKey) // Valio staff only: the Valio view appears once it's set
@@ -123,7 +131,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     if (replace) keysSaved()
   }
   const phaseLine = usePhaseLine(400)
-  const refreshAudit = () => setAuditKey((k) => k + 1)
+  const refreshAudit = useCallback(() => setAuditKey((k) => k + 1), [])
   const offline = useBackendDown()
   // Voice (Talk): the voice button starts it inside the tap; its words and results go into the same thread. Dictation
   // and Talk never hold the mic at once: starting Talk cancels dictation, and the mic button is gone while Talk is on.
@@ -133,9 +141,40 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   // (a setup link) still gets asked. Until the kitchen is known it isn't opened (no flicker).
   const kitchen = useKitchen(savedKeys.agentKey)
   const onboarding = useOnboarded()
+  const refreshOnboarding = onboarding.refresh
   const [, bumpSkip] = useState(0)
   const onboardingSkipped = kitchen ? onboardingSkippedFor(kitchen) : true
   const onboardingOpen = onboarding.onboarded === false && !onboardingSkipped // first run only; later it lives on the Kitchen tab
+  const startSandbox = useCallback(async (fromTry: boolean, fresh = false) => {
+    if (sandboxBusy.current) return
+    sandboxBusy.current = true
+    setSandboxState('setting-up')
+    setSandboxError(null)
+    try {
+      const existing = getSandboxSession()
+      const session = !fresh && existing && sandboxSessionLive(existing) ? existing : await createSandbox()
+      setSandboxSession(session)
+      if (fromTry) clearTryEntry()
+      setSavedKeys(getKeys())
+      refreshOnboarding()
+      refreshAudit()
+      setView('order')
+      setSandboxState('idle')
+    } catch (error) {
+      const message = error instanceof ApiError && error.status === 404
+        ? u.sandbox.off
+        : error instanceof ApiError && error.status === 429
+          ? u.sandbox.rateLimited
+          : errorText(error)
+      setSandboxError(message)
+      setSandboxState('error')
+    } finally {
+      sandboxBusy.current = false
+    }
+  }, [refreshAudit, refreshOnboarding, u])
+  useEffect(() => {
+    if (isTryEntry()) void startSandbox(true)
+  }, [startSandbox])
   function closeOnboarding() {
     if (kitchen) skipOnboardingFor(kitchen)
     bumpSkip((n) => n + 1)
@@ -406,6 +445,27 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     )
   }
 
+  if (sandboxState === 'setting-up') {
+    return (
+      <main className="try-setup">
+        <p className="try-setup-line" role="status">{u.sandbox.settingUp}</p>
+      </main>
+    )
+  }
+  if (sandboxState === 'error') {
+    return (
+      <main className="try-setup">
+        <div className="problem" role="alert">
+          <strong>{u.sandbox.failed}</strong>
+          {sandboxError}
+          <div className="actions">
+            <button type="button" className="btn" onClick={() => void startSandbox(isTryEntry())}>{u.sandbox.retry}</button>
+          </div>
+        </div>
+      </main>
+    )
+  }
+
   return (
     <>
       <header className="top">
@@ -441,7 +501,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
       </header>
 
       <dialog ref={keysDialog} className="sheet" aria-labelledby="keys-dialog-title">
-        <KeysForm titleId="keys-dialog-title" title={u.keys.title} onSaved={keysSaved} onCancel={() => keysDialog.current?.close()} />
+        <KeysForm key={savedKeys.agentKey} titleId="keys-dialog-title" title={u.keys.title} onSaved={keysSaved} onNewSandbox={() => void startSandbox(false, true)} onCancel={() => keysDialog.current?.close()} />
         {!adminKey && <ValioLink onOpen={openAdmin} />}
       </dialog>
       <dialog ref={adminDialog} className="sheet" aria-labelledby="admin-dialog-title">
@@ -829,8 +889,8 @@ function EyeIcon({ off }: { off: boolean }) {
 
 // Two keys in one nested card: a soft outer shell, a white card inside. Keys are trimmed on save (pasted spaces and newlines break requests).
 function KeysForm({
-  title, titleId, intro, submitLabel, onSaved, onCancel,
-}: { title: string; titleId?: string; intro?: string; submitLabel?: string; onSaved: () => void; onCancel?: () => void }) {
+  title, titleId, intro, submitLabel, onSaved, onNewSandbox, onCancel,
+}: { title: string; titleId?: string; intro?: string; submitLabel?: string; onSaved: () => void; onNewSandbox?: () => void; onCancel?: () => void }) {
   const k = useCopy().UI.keys
   const [keys, setDraft] = useState<ApiKeys>(getKeys)
   const ready = !!keys.agentKey.trim() && !!keys.approverKey.trim()
@@ -859,6 +919,11 @@ function KeysForm({
           <button type="submit" className="btn" disabled={!ready}>
             {submitLabel ?? k.save}
           </button>
+          {onNewSandbox && (
+            <button type="button" className="btn plain" onClick={onNewSandbox}>
+              {k.newSandbox}
+            </button>
+          )}
           {onCancel && (
             <button type="button" className="btn plain" onClick={onCancel}>
               {k.cancel}

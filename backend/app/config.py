@@ -30,6 +30,8 @@ FRONT_DOOR_SIGNING_KEY = os.getenv("FRONT_DOOR_SIGNING_KEY", "")
 # listed here must sign POST /api/orders and /api/agent/* (backend/app/httpsig.py); others work as before.
 AGENT_SIGNING_KEYS = os.getenv("AGENT_SIGNING_KEYS", "")
 DEMO_RESET_ENABLED = os.getenv("DEMO_RESET_ENABLED", "").lower() in ("1", "true", "yes")
+# 1 enables the QR test-kitchen route; off by default so a deployment never opens anonymous buyers accidentally.
+SANDBOX_ENABLED = os.getenv("SANDBOX_ENABLED", "") == "1"
 # Where the front door keeps its state (orders, audit trail, idempotency keys; stored mandates once they leave the
 # code). Default: the repo's data/. Point it at a mounted persistent disk (e.g. Render's /var/data) to keep state.
 DATA_DIR = Path(os.getenv("DATA_DIR") or Path(__file__).resolve().parents[2] / "data")

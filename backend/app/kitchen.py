@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
-from . import agent, catalogue, config, orders, profile
+from . import agent, catalogue, config, orders, profile, sandbox
 
 HELSINKI = ZoneInfo("Europe/Helsinki")
 SEED = Path(__file__).with_name("kitchen_seed.json")
@@ -78,7 +78,7 @@ def _save_history_state(buyer_id: str, state: dict) -> None:
 
 
 def _example_pattern(buyer_id: str) -> dict:
-    pattern = SEEDS.get(buyer_id)
+    pattern = SEEDS.get(_seed_buyer(buyer_id))  # a try-* sandbox borrows its template kitchen's example history
     if pattern is None and (buyer_id in _DEMO_BUYERS or buyer_id.startswith("try-")):
         pattern = SEEDS.get("lapland-kitchen")
     return pattern or {}
@@ -205,6 +205,14 @@ def _amount(rng: random.Random, spec: dict):
     return round(rng.uniform(lo, hi), 1)
 
 
+def _seed_buyer(buyer_id: str) -> str:
+    return sandbox.TEMPLATE if sandbox.is_sandbox_buyer(buyer_id) else buyer_id
+
+
+def _seed_for(buyer_id: str) -> dict | None:
+    return SEEDS.get(_seed_buyer(buyer_id))
+
+
 def _seed_rows(buyer_id: str, end: date) -> list[dict]:
     if _history_state(buyer_id)["example_hidden"]:
         return []
@@ -214,7 +222,7 @@ def _seed_rows(buyer_id: str, end: date) -> list[dict]:
     rows = []
     for offset in range(55, -1, -1):
         when = end - timedelta(days=offset)
-        rng = random.Random(f"{buyer_id}-{when.isoformat()}")
+        rng = random.Random(f"{_seed_buyer(buyer_id)}-{when.isoformat()}")
         low, high = pattern["covers"][DAY_KEYS[when.weekday()]]
         covers = rng.randint(low, high)
         revenue = round(covers * pattern["revenue_per_cover_eur"] * rng.uniform(0.95, 1.05), 2)
