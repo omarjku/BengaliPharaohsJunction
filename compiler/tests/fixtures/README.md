@@ -1,0 +1,1 @@
+Hand-written (synthetic) answers keyed by the prompt hash. The user records real ones with LLM_MODE=record; any change to prompt.py or schema.py invalidates the keys: re-run make_fixtures.py (or re-record).
