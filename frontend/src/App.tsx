@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { ApiError, askAgentStream, DROPPED, getAdminKey, getHealth, getKeys, KEYS_FROM_LINK, applyLinkKeys, checkLinkKeys, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
 import { buyerLabel, errorText, nextMonday } from './format'
@@ -10,25 +10,28 @@ import { RunResult } from './RunResult'
 import type { AskResponse, AuditEntry, Reason } from './types'
 import { UrgentOptions } from './Urgent'
 import { ValioView } from './Valio'
-import { languageOf, useReadBack, useVoice, voiceSupported } from './useVoice'
+import { useVoice, voiceSupported } from './useVoice'
 import { usePhaseLine } from './usePhaseLine'
 import { MicButton, VoiceStatus } from './Voice'
 import { PhotoButton } from './PhotoButton'
-import { Talk } from './Talk'
+import { Composer } from './Composer'
+import { Conversation, type VoiceLayout } from './Conversation'
+import { Orb } from './Orb'
+import { useLive } from './useLive'
 import { useTalk, useTalkPhotoAvailable } from './useTalk'
 
 type View = 'order' | 'rules' | 'history' | 'valio'
+// The conversation thread: the chef's messages, the agent's lines (partial while voice is still forming them), the
+// responses (decision cards and questions) and errors (with "Ask again" when a question expired).
+type Item =
+  | { id: number; kind: 'user' | 'agent'; text: string; partial?: boolean }
+  | { id: number; kind: 'res'; res: AskResponse; date: string }
+  | { id: number; kind: 'error'; text: string; reask: string | null }
+type NewItem = Item extends infer I ? (I extends Item ? Omit<I, 'id'> : never) : never
 
 const partOfDay = () => {
   const h = Number(new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hourCycle: 'h23', timeZone: 'Europe/Helsinki' }).format(new Date()))
   return h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening'
-}
-// Cmd/Ctrl+Enter sends the form from a textarea.
-const submitOnCmdEnter = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-    e.preventDefault()
-    e.currentTarget.form?.requestSubmit()
-  }
 }
 
 export default function App() {
@@ -62,36 +65,28 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const [waiting, setWaiting] = useState<number | null>(null) // orders still pending your OK (checked, not guessed)
   const [text, setText] = useState('')
   const [date, setDate] = useState(nextMonday)
-  const [dateSet, setDateSet] = useState(false) // the chef picked a date; otherwise the backend reads it from the words
-  const [runDate, setRunDate] = useState(date) // the date the shown result was for (follow-up orders reuse it)
   const [result, setResult] = useState<AskResponse | null>(null)
   // A question wins: "How much cream?" and "Order again?" come with the run attached, but only the question is shown.
   const question = result?.question ? result : null
-  const run = !question && result?.intent === 'order' && 'lines' in result ? result : null
-  const menu = !question && result?.intent === 'menu' && 'lines' in result ? result : null
   const convo = question?.conversation_id ?? null // the question can be answered right here (typed or spoken)
   const convoRef = useRef(convo)
   useEffect(() => {
     convoRef.current = convo
   }, [convo])
-  // A menu without a guest count gets a number field; any other question is said plainly, with the box open.
-  const asksGuests = question?.intent === 'menu' && question.covers == null && /guest|hengel|vier/i.test(question.question)
-  const example = useCyclingExample(text === '', c.EXAMPLES)
-  // Voice: the words land in the box (editable), then the request goes as if typed. The answer is read back.
-  const [byVoice, setByVoice] = useState(false)
-  const readBack = useReadBack()
-  const voice = useVoice(transcribe, (words) => {
-    readBack.forget()
-    setByVoice(true)
-    if (convoRef.current) return void ask(words, convoRef.current) // the spoken answer to the agent's question
-    setText(words)
-    void ask(words)
-  })
+  // ONE thread for text and voice: the chef's messages, the agent's lines, the decision cards, errors.
+  const [thread, setThread] = useState<Item[]>([])
+  const nextId = useRef(0)
+  const push = useCallback((it: NewItem) => setThread((t) => [...t, { ...it, id: ++nextId.current } as Item]), [])
+  const lastRequest = useRef('') // the chef's last request (not an answer): for "Not this one", re-asks, overrides
+  // New words in the thread come into view (a new card scrolls itself: RunResult/MenuResult focus their headline).
+  useEffect(() => {
+    const last = thread[thread.length - 1]
+    if (last && last.kind !== 'res') window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' })
+  }, [thread])
+  // Dictation: the spoken words land in the field, to edit and send (the voice conversation is Talk, below).
+  const voice = useVoice(transcribe, (words) => setText((t) => (t.trim() ? `${t.trim()} ${words}` : words)))
   const micOn = VOICE_READY && voiceSupported()
-  const [editing, setEditing] = useState(false) // phone: the composer is collapsed to a summary row after a result
   const [running, setRunning] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [expired, setExpired] = useState(false) // a follow-up came too late: offer to ask the original again
   const [auditKey, setAuditKey] = useState(0)
   const [deciding, setDeciding] = useState(false) // approve/reject in flight
   const [announce, setAnnounce] = useState('')
@@ -121,20 +116,51 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const phaseLine = usePhaseLine(400)
   const refreshAudit = () => setAuditKey((k) => k + 1)
   const offline = useBackendDown()
-  // HOOK: Talk + photo (Talk.tsx, PhotoButton.tsx, useTalk.ts). Keep these three lines and the two JSX blocks marked HOOK.
+  // Voice (Talk): the voice button starts it inside the tap; its words and results go into the same thread. Dictation
+  // and Talk never hold the mic at once: starting Talk cancels dictation, and the mic button is gone while Talk is on.
   const caps = useTalkPhotoAvailable()
   const talk = useTalk()
-  const talkResult = (r: AskResponse) =>
-    r.question ? (
-      <section className="answer" aria-label={u.question.status}>
-        <p className="status neutral">{u.question.status}</p>
-        <h2 className="answer-text">{c.question(r.question, r.decision?.reasons[0])}</h2>
-      </section>
-    ) : r.intent === 'menu' && 'lines' in r ? (
-      <MenuResult key={r.audit_id} plan={r} covers={r.covers ?? null} requestedDate={r.requested_date ?? date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} />
-    ) : 'lines' in r ? (
-      <RunResult key={r.audit_id} run={r} requestedDate={r.requested_date ?? date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} />
-    ) : null
+  const orbRef = useRef<HTMLButtonElement>(null)
+  const [layout, setLayout] = useState<VoiceLayout>(() => {
+    try {
+      return localStorage.getItem('valio-aimo-voice-layout') === 'thread' ? 'thread' : 'orb'
+    } catch {
+      return 'orb'
+    }
+  })
+  function toggleLayout() {
+    const next = layout === 'orb' ? 'thread' : 'orb'
+    setLayout(next)
+    try {
+      localStorage.setItem('valio-aimo-voice-layout', next)
+    } catch {
+      // storage blocked: remembered for this page only
+    }
+  }
+  const live = useLive(
+    talk.session,
+    {
+      // Live words: a partial line is replaced until it's final (a dot marks the reply being formed).
+      onTranscript: (role, said, final) =>
+        setThread((t) => {
+          const last = t[t.length - 1]
+          const kind = role === 'user' ? 'user' : 'agent'
+          if (last && last.kind === kind && last.partial) return [...t.slice(0, -1), { ...last, text: said, partial: !final }]
+          return [...t, { id: ++nextId.current, kind, text: said, partial: !final }]
+        }),
+      onResult: (r) => {
+        setResult(r)
+        push({ kind: 'res', res: r, date: r.requested_date ?? date })
+      },
+      onError: (message) => push({ kind: 'error', text: message, reask: null }),
+    },
+    orbRef,
+    { denied: u.talk.denied, closed: u.talk.closed },
+  )
+  function startVoice() {
+    voice.cancel() // the mic is the conversation's now
+    talk.open()
+  }
   const onEntries = useCallback((e: AuditEntry[]) => setEntries(e), [])
 
   const needsSetup = !MOCK && (!savedKeys.agentKey || !savedKeys.approverKey)
@@ -188,60 +214,57 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
 
   // A new request, or (with `to`) the answer to the question the agent just asked.
   async function ask(words: string, to?: string, when?: string) {
+    if (!words.trim()) return
+    push({ kind: 'user', text: words.trim() })
+    if (!to) lastRequest.current = words.trim()
+    setText('')
     setRunning(true)
     setAnnounce(u.ask.announce)
-    setError(null)
-    setExpired(false)
-    // An answer keeps its question on screen (with "Sending…" and the progress) until the new result replaces it.
-    if (!to) setResult(null)
-    setEditing(false)
     try {
       phaseLine.reset()
-      const input = to ? { text: '', follow_up: { to, answer: words.trim() } } : { text: words.trim(), ...(when ? { requested_date: when } : dateSet ? { requested_date: date } : {}) }
+      const input = to ? { text: '', follow_up: { to, answer: words.trim() } } : { text: words.trim(), ...(when ? { requested_date: when } : {}) } // the day comes from the words, or the agent asks
       const res = await askAgentStream(input, (p) =>
         phaseLine.push(c.UI.progress.phases[p.phase] ?? p.text),
       )
       await phaseLine.settle() // let the last step be read before the answer replaces it
-      setRunDate(res.requested_date ?? date)
-      if (!dateSet && res.requested_date) setDate(res.requested_date) // show the date that was used
+      if (res.requested_date) setDate(res.requested_date) // the fallback day for cards that don't carry one
       setResult(res)
-      if (res.question) {
-        setAnnounce(c.question(res.question, res.decision?.reasons[0]))
-        setEditing(true) // the answer goes in the box (or the guests field), so keep it open
-      }
+      // The agent's line (the backend's one-sentence `speak`), then the decision card; a question is its own message.
+      if (!res.question && res.speak) push({ kind: 'agent', text: res.speak })
+      push({ kind: 'res', res, date: res.requested_date ?? date })
+      if (res.question) setAnnounce(c.question(res.question, res.decision?.reasons[0]))
     } catch (err) {
       const expired = !!to && err instanceof ApiError && err.status === 404
-      if (expired) {
-        setResult(null) // the question is gone; "Ask again" re-sends the original request
-        setExpired(true)
-        setEditing(true)
-      }
-      setError(expired ? u.question.expired : err instanceof Error && err.message === DROPPED ? u.progress.dropped : errorText(err))
+      if (expired) setResult(null) // the question is gone; "Ask again" re-sends the original request
+      const message = expired ? u.question.expired : err instanceof Error && err.message === DROPPED ? u.progress.dropped : errorText(err)
+      push({ kind: 'error', text: message, reask: expired ? lastRequest.current : null })
       setAnnounce(expired ? u.question.expired : '')
-      if (expired && byVoice) readBack.speak(u.question.expired, { lang: languageOf(text) })
     } finally {
       setRunning(false)
       refreshAudit()
     }
   }
 
-  function submit(e: FormEvent) {
-    e.preventDefault()
-    setByVoice(false)
-    void ask(text)
+  // The bar's Send: voice on -> over the live socket; a pending question -> the answer; otherwise a new request.
+  function send(words: string) {
+    if (talk.session) {
+      push({ kind: 'user', text: words })
+      live.sendText(words)
+      setText('')
+      return
+    }
+    void ask(words, convo ?? undefined)
   }
 
   // "For how many guests?" answered inline: the words go into the box and the agent reads it again.
   function answerGuests(n: number) {
     if (convo) return void ask(String(n), convo)
-    const next = `${text.trim().replace(/[.\s]*$/, '')}. ${u.question.guests(n)}`
-    setText(next)
-    void ask(next)
+    void ask(`${lastRequest.current.replace(/[.\s]*$/, '')}. ${u.question.guests(n)}`)
   }
 
-  // "Not this one": back to the request, cursor at the end, ready for more detail.
+  // "Not this one" / "Edit your request": the last request back in the field, cursor at the end.
   function retry() {
-    setEditing(true)
+    setText(lastRequest.current)
     setView('order')
     requestAnimationFrame(() => {
       const f = field.current
@@ -254,37 +277,92 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   // "Order again?": yes resends it as an answer (or, without a conversation, the same words with "again").
   function orderAgain() {
     if (convo) return void ask(u.question.orderAgain, convo)
-    const again = `${text.trim()} again`
-    setText(again)
-    void ask(again)
+    void ask(`${lastRequest.current} again`)
   }
   function leaveIt() {
     setResult(null)
+    push({ kind: 'agent', text: u.question.leftAlone })
     setAnnounce(u.question.leftAlone)
   }
 
-  // For a request made by voice, the backend's one-sentence read-back is said aloud in the request's language. When it
-  // asked something answerable, the mic then opens by itself for the answer (Cancel stops it; typing works too).
-  const { speak } = readBack
-  const lang = languageOf(text)
-  const voiceRef = useRef(voice)
-  useEffect(() => {
-    voiceRef.current = voice
-  })
-  useEffect(() => {
-    if (!byVoice || !result) return
-    const line = result.speak ?? announce
-    if (!line || line.endsWith('…')) return
-    const listen = result.question && result.conversation_id && micOn
-      ? () => voiceRef.current.state === 'idle' && void voiceRef.current.start(true, true)
-      : undefined
-    speak(line, { lang, onEnd: listen })
-  }, [announce, byVoice, result, speak, lang, micOn])
+  const empty = thread.length === 0 && !running
+  const lastRes = [...thread].reverse().find((it) => it.kind === 'res')?.id ?? null
+  const [opened, setOpened] = useState<Set<number>>(new Set()) // earlier cards the chef reopened
 
-  const empty = !result && !running && !error
-  const collapsed = !!(run || menu) && !editing
-  const urgent = (run || menu)?.urgent_options
-  const urgentBlock = urgent && urgent.length > 0 ? <UrgentOptions options={urgent} /> : null
+  // One response in the thread. Only the newest is a full, actionable card; earlier ones fold to their status and
+  // headline (kept mounted, so a card's own state, e.g. an approval just made, survives), tap to reopen. A question
+  // is the agent's message with its one-tap answers; an earlier one is just the message.
+  function renderRes(it: Extract<Item, { kind: 'res' }>, latest: boolean) {
+    const r = it.res
+    if (r.question) {
+      const said = c.question(r.question, r.decision?.reasons[0])
+      if (!latest)
+        return (
+          <p key={it.id} className="msg msg-agent">
+            {said}
+          </p>
+        )
+      const to = r.conversation_id ?? null
+      const guests = r.intent === 'menu' && r.covers == null && /guest|hengel|vier/i.test(r.question)
+      return guests ? (
+        <GuestsQuestion key={it.id} question={r.question} onAnswer={answerGuests} busy={running} />
+      ) : (
+        <Question
+          key={it.id}
+          question={r.question}
+          more={r.intent === 'unclear'}
+          reason={r.decision?.reasons[0] ?? null}
+          answerable={!!to}
+          busy={running}
+          onAnswer={(words) => to && void ask(words, to)}
+          onAgain={orderAgain}
+          onLeave={leaveIt}
+          onEdit={retry}
+        />
+      )
+    }
+    const isMenu = r.intent === 'menu' && 'lines' in r
+    const isRun = r.intent === 'order' && 'lines' in r
+    if (!isMenu && !isRun) return null
+    const urgent = r.urgent_options
+    const after = urgent && urgent.length > 0 ? <UrgentOptions options={urgent} /> : null
+    const open = latest || opened.has(it.id)
+    const status =
+      isRun && r.order
+        ? { confirmed: u.status.ordered, pending_approval: u.status.yourCall, refused: u.status.notOrdered, rejected: u.status.rejected }[r.order.status]
+        : isRun
+          ? r.decision.outcome === 'DECLINE' ? u.status.notOrdered : u.status.yourCall
+          : u.status.ready
+    const what = isRun ? r.request.summary : c.money(r.cart_total_cents)
+    return (
+      <div key={it.id} className="conv-card">
+        {!open && (
+          <button type="button" className="conv-fold" onClick={() => setOpened((o) => new Set(o).add(it.id))}>
+            <span className="conv-fold-what">{u.conv.folded(status ?? '', what)}</span>
+            <span className="accent-text">{u.conv.open}</span>
+          </button>
+        )}
+        <div hidden={!open}>
+          {isMenu ? (
+            <MenuResult plan={r} covers={r.covers ?? null} requestedDate={it.date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} after={after} />
+          ) : (
+            <RunResult
+              run={r}
+              requestedDate={it.date}
+              onAction={refreshAudit}
+              onBusy={setDeciding}
+              onAnnounce={setAnnounce}
+              onRetry={retry}
+              onHistory={() => setView('history')}
+              onPlain={(need) => void ask(`${lastRequest.current} (regular, not ${need})`, undefined, it.date)} // the backend reads "regular" / "not gluten…" as the buyer's own words
+              onAskFor={(next) => void ask(next, undefined, it.date)} // same delivery day as the result it came from
+              after={after}
+            />
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <>
@@ -324,14 +402,11 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         <AdminKeyForm onSaved={adminSaved} onCancel={() => adminDialog.current?.close()} />
       </dialog>
 
-      {/* HOOK: Talk, full screen while a session is open */}
-      {talk.session && <Talk ctx={talk.session.ctx} mic={talk.session.mic} onEnd={talk.end} renderResult={talkResult} />}
-
       <p className="sr-only" aria-live="polite">
         {announce}
       </p>
 
-      <main className={view === 'order' && empty ? 'roomy' : undefined}>
+      <main>
         {MOCK && (
           <p className="mock" role="note">
             <strong>{u.mock.title}</strong> {u.mock.body}
@@ -395,180 +470,91 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
           <>
             <section hidden={view !== 'order'} aria-label={u.nav.order}>
               <h1 className="sr-only">{u.nav.order}</h1>
-              {empty && waiting !== null && <p className="greeting">{u.greeting(partOfDay(), approver, waiting)}</p>}
-              {collapsed && (
-                <button type="button" className="composer-summary" onClick={retry}>
-                  <span className="composer-text">{text.trim()}</span>
-                  <span className="quiet num">{c.day(runDate)}</span>
-                  <span className="accent-text">{u.ask.edit}</span>
-                </button>
-              )}
-              <form className={`ask${empty ? ' first' : ''}${collapsed ? ' collapsible' : ''}`} onSubmit={submit}>
-                <label className="ask-label" htmlFor="text">
-                  {u.ask.label}
-                </label>
-                <div className="ask-box">
-                <textarea
-                  id="text"
-                  ref={field}
-                  className={`ask-field${micOn ? ' with-mic' : ''}`}
-                  rows={3}
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  onKeyDown={submitOnCmdEnter}
-                  placeholder={example}
-                  aria-describedby="text-help"
-                  required
-                />
-                {micOn && !convo && <MicButton voice={voice} disabled={running || deciding} />}
-                </div>
-                <p className="sr-only" id="text-help">
-                  {u.ask.help(c.EXAMPLES)}
-                </p>
-                {/* HOOK: Talk + photo buttons */}
-                {(caps.photo || caps.talk) && (
-                  <div className="talk-tools">
-                    {caps.talk && (
-                      <button type="button" className="link talk-btn" onClick={talk.open} disabled={running}>
-                        <span className="talk-dot" aria-hidden="true" />
-                        {u.talk.open}
-                      </button>
+              <Conversation
+                voiceOn={!!talk.session}
+                layout={layout}
+                onToggle={toggleLayout}
+                bigOrb={<Orb state={live.state} size="big" label={u.conv.orbToThread} onToggle={toggleLayout} orbRef={orbRef} />}
+                smallOrb={<Orb state={live.state} size="small" label={u.conv.orbToBig} onToggle={toggleLayout} orbRef={orbRef} />}
+                status={
+                  <p role="status" className={live.state === 'error' ? 'bad' : undefined}>
+                    {live.muted ? u.conv.muted : live.state === 'connecting' ? u.talk.connecting : (live.tool ?? u.talk.state[live.state])}
+                  </p>
+                }
+                thread={
+                  <>
+                    {empty && (
+                      <div className="conv-start">
+                        {waiting !== null && <p className="greeting">{u.greeting(partOfDay(), approver, waiting)}</p>}
+                        <p className="try">{MOCK ? u.ask.tryDemo : u.ask.try}</p>
+                        <div className="conv-suggest">
+                          {c.TRY.map((t) => (
+                            <button key={t} type="button" className="chip" onClick={() => setText(t)}>
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+                        <Recent groups={groups.slice(0, 3)} onOpen={() => setView('history')} />
+                      </div>
                     )}
-                    {caps.photo && (
-                      <PhotoButton
-                        disabled={running || deciding}
-                        onRead={(words) => {
-                          setText(words)
-                          setByVoice(false)
-                          void ask(words)
-                        }}
-                      />
+                    {thread.map((it) =>
+                      it.kind === 'user' ? (
+                        <p key={it.id} className={`msg msg-user${it.partial ? ' msg-partial' : ''}`}>
+                          {it.text}
+                        </p>
+                      ) : it.kind === 'agent' ? (
+                        <p key={it.id} className={`msg msg-agent${it.partial ? ' msg-partial' : ''}`}>
+                          {it.text}
+                          {it.partial && <span className="msg-dot" aria-hidden="true" />}
+                        </p>
+                      ) : it.kind === 'error' ? (
+                        <div key={it.id} className="problem" role="alert">
+                          <strong>{u.failed}</strong>
+                          {it.text}
+                          {it.reask && (
+                            <div className="actions">
+                              <button type="button" className="btn" onClick={() => void ask(it.reask!)} disabled={running}>
+                                {u.question.reask}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        renderRes(it as Extract<Item, { kind: 'res' }>, it.id === lastRes)
+                      ),
                     )}
-                  </div>
-                )}
-                <div className="ask-row">
-                  <label className="date-pick">
-                    {u.ask.delivery} <strong className="num">{c.day(date)}</strong>
-                    {!dateSet && <span className="faint small">{u.ask.orDay}</span>}
-                    <input
-                      type="date"
-                      aria-label={u.ask.dateAria}
-                      value={date}
-                      onChange={(e) => {
-                        if (!e.target.value) return
-                        setDate(e.target.value)
-                        setDateSet(true)
-                      }}
-                      onClick={(e) => e.currentTarget.showPicker?.()}
-                      required
+                    {running && (
+                      <div className="working" role="status" aria-label={u.progress.aria}>
+                        {/* Re-keyed per phase, so each step fades in; the status region reads each step out politely. */}
+                        <p key={phaseLine.phase ?? 'start'} className="phase">
+                          {phaseLine.phase ?? u.progress.phases.understanding}
+                        </p>
+                        <div className="working-bar" aria-hidden="true" />
+                      </div>
+                    )}
+                  </>
+                }
+                composer={
+                  <>
+                    {micOn && !talk.session && <VoiceStatus voice={voice} />}
+                    <Composer
+                      voiceOn={!!talk.session}
+                      text={text}
+                      setText={setText}
+                      onSend={send}
+                      placeholder={talk.session ? u.conv.voicePlaceholder : convo ? u.conv.answerHere : u.conv.placeholder}
+                      busy={running}
+                      photo={caps.photo ? <PhotoButton variant="icon" disabled={running || deciding} onRead={(words) => send(words)} /> : null}
+                      mic={micOn ? <MicButton voice={voice} disabled={running || deciding} /> : null}
+                      onVoice={caps.talk ? startVoice : null}
+                      muted={live.muted}
+                      onMute={() => live.setMuted((m) => !m)}
+                      onEnd={talk.end}
+                      fieldRef={field}
                     />
-                  </label>
-                  {/* One primary per screen: once there's an answer, asking again is the quiet option. */}
-                  <button type="submit" className={`btn${result ? ' plain accent-text' : ''}`} disabled={running || deciding || !text.trim()}>
-                    {running ? u.ask.asking : result ? u.ask.again : u.ask.ask}
-                  </button>
-                </div>
-                {micOn && !convo && <VoiceStatus voice={voice} />}
-                {empty && (
-                  <p className="try">
-                    {MOCK ? u.ask.tryDemo : u.ask.try}
-                    {c.TRY.map((t, i) => (
-                      <span key={t}>
-                        {i > 0 && <span className="sep"> · </span>}
-                        <button type="button" className="link accent inline" onClick={() => setText(t)}>
-                          {t}
-                        </button>
-                      </span>
-                    ))}
-                  </p>
-                )}
-              </form>
-
-              {running && (
-                <div className="working" role="status" aria-label={u.progress.aria}>
-                  {/* Re-keyed per phase, so each step fades in; the status region reads each step out politely. */}
-                  <p key={phaseLine.phase ?? 'start'} className="phase">
-                    {phaseLine.phase ?? u.progress.phases.understanding}
-                  </p>
-                  <div className="working-bar" aria-hidden="true" />
-                </div>
-              )}
-              {error && (
-                <div className="problem" role="alert">
-                  <strong>{u.failed}</strong>
-                  {error}
-                  {expired && text.trim() && (
-                    <div className="actions">
-                      <button type="button" className="btn" onClick={() => void ask(text)} disabled={running}>
-                        {u.question.reask}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-              {byVoice && result && readBack.canSpeak && (
-                <p className="voice-status readback">
-                  {readBack.muted ? u.voice.readOff : u.voice.readOn}{' '}
-                  <button type="button" className="link accent inline" aria-pressed={readBack.muted} onClick={readBack.toggle}>
-                    {readBack.muted ? u.voice.turnOn : u.voice.mute}
-                  </button>
-                </p>
-              )}
-              {question && asksGuests && (
-                <GuestsQuestion key={question.audit_id ?? question.question} question={question.question} onAnswer={answerGuests} busy={running} />
-              )}
-              {question && !asksGuests && (
-                <Question
-                  key={question.conversation_id ?? question.question}
-                  question={question.question}
-                  more={question.intent === 'unclear'}
-                  reason={question.decision?.reasons[0] ?? null}
-                  answerable={!!convo}
-                  byVoice={byVoice}
-                  busy={running}
-                  onAnswer={(words) => convo && void ask(words, convo)}
-                  onAgain={orderAgain}
-                  onLeave={leaveIt}
-                  onEdit={retry}
-                  mic={micOn && convo ? <MicButton voice={voice} disabled={running} /> : null}
-                  status={micOn && convo ? <VoiceStatus voice={voice} /> : null}
-                />
-              )}
-              {menu && (
-                <MenuResult
-                  key={menu.audit_id}
-                  plan={menu}
-                  covers={menu.covers ?? null}
-                  requestedDate={runDate}
-                  onAction={refreshAudit}
-                  onBusy={setDeciding}
-                  onAnnounce={setAnnounce}
-                  after={urgentBlock}
-                />
-              )}
-              {run && (
-                <RunResult
-                  key={run.audit_id}
-                  run={run}
-                  requestedDate={runDate}
-                  onAction={refreshAudit}
-                  onBusy={setDeciding}
-                  onAnnounce={setAnnounce}
-                  onRetry={retry}
-                  onHistory={() => setView('history')}
-                  onPlain={(need) => {
-                    const next = `${text.trim()} (regular, not ${need})` // the backend reads "regular" / "not gluten…" as the buyer's own words
-                    setText(next)
-                    void ask(next, undefined, runDate)
-                  }}
-                  onAskFor={(next) => {
-                    setText(next)
-                    void ask(next, undefined, runDate) // same delivery day as the result it came from
-                  }}
-                  after={urgentBlock}
-                />
-              )}
-              {empty && <Recent groups={groups.slice(0, 3)} onOpen={() => setView('history')} />}
+                  </>
+                }
+              />
             </section>
 
             <section hidden={view !== 'rules'} aria-label={u.nav.rules}>
@@ -585,17 +571,6 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   )
 }
 
-// The box's grey example cycles slowly while it's empty, so a milk order, a kebab shop and a menu all see themselves.
-// It's only a placeholder: it disappears as soon as anyone types, and it stays still under reduced motion.
-function useCyclingExample(active: boolean, examples: string[]): string {
-  const [i, setI] = useState(0)
-  useEffect(() => {
-    if (!active || matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    const t = setInterval(() => setI((n) => (n + 1) % examples.length), 3500)
-    return () => clearInterval(t)
-  }, [active, examples.length])
-  return examples[i % examples.length]
-}
 
 // The next n delivery days from tomorrow (Helsinki), as YYYY-MM-DD.
 function nextDays(n: number): string[] {
@@ -652,25 +627,19 @@ function AdminKeyForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: ()
 // spoken question). "Order again?" is two buttons instead. Questions that can't be answered here (off-topic, a date
 // in the past) leave the box open above.
 function Question(p: {
-  question: string; more: boolean; reason: Reason | null; answerable: boolean; byVoice: boolean; busy: boolean
-  onAnswer: (words: string) => void; onAgain: () => void; onLeave: () => void; onEdit: () => void; mic: ReactNode; status: ReactNode
+  question: string; more: boolean; reason: Reason | null; answerable: boolean; busy: boolean
+  onAnswer: (words: string) => void; onAgain: () => void; onLeave: () => void; onEdit: () => void
 }) {
   const c = useCopy()
   const u = c.UI
-  const [words, setWords] = useState('')
   const heading = useRef<HTMLHeadingElement>(null)
-  const field = useRef<HTMLInputElement>(null)
   const again = p.reason?.facts.minutes_ago != null
   // "For which delivery day?": the next days as one-tap answers (sent as "20.11.", which the backend reads exactly).
   const askingDay = p.answerable && /which delivery day/i.test(p.question)
   const days = askingDay ? nextDays(6) : []
   // "Which one did you mean: 1) A; 2) B; 3) C? Or say it more precisely.": the options as one-tap answers ("2").
   const options = p.answerable ? (/^Which one did you mean: (.+)\? Or say it more precisely\.?$/.exec(p.question)?.[1].split('; ').map((o) => o.replace(/^\d\)\s*/, '')) ?? []) : []
-  useEffect(() => {
-    // typing: straight into the answer field; by voice the mic is listening, so focus just brings the question into view
-    if (p.answerable && !again && !p.byVoice) field.current?.focus()
-    else heading.current?.focus()
-  }, [p.answerable, again, p.byVoice])
+  useEffect(() => heading.current?.focus(), []) // the question comes into view; the answer goes in the bar below
   return (
     <section className="answer" aria-label={u.question.status}>
       <p className="status neutral">{p.more ? u.question.more : u.question.status}</p>
@@ -712,37 +681,7 @@ function Question(p: {
             {u.question.leave}
           </button>
         </div>
-      ) : (
-        p.answerable && (
-          <form
-            className="guests"
-            onSubmit={(e) => {
-              e.preventDefault()
-              if (words.trim()) p.onAnswer(words)
-            }}
-          >
-            <div className="ask-inputs">
-              <div className="ask-box answer-box">
-                <input
-                  ref={field}
-                  className={`answer-input${p.mic ? ' with-mic' : ''}`}
-                  aria-label={u.question.answer}
-                  placeholder={u.question.answer}
-                  value={words}
-                  onChange={(e) => setWords(e.target.value)}
-                  disabled={p.busy}
-                  enterKeyHint="send"
-                />
-                {p.mic}
-              </div>
-              <button type="submit" className="btn" disabled={p.busy || !words.trim()}>
-                {p.busy ? u.question.sending : u.question.send}
-              </button>
-            </div>
-            {p.status}
-          </form>
-        )
-      )}
+      ) : null}
     </section>
   )
 }
