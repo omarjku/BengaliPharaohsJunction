@@ -12,33 +12,56 @@ Buyer `lapland-kitchen`, server-side mandate in `backend/app/mandates.py`:
 
 Money is net of VAT. Delivery date: Monday 2026-11-16.
 
-Paths A and B were checked against the deployed API (https://valio-front-door-api.onrender.com). Path C is covered by
-`backend/tests/test_agent.py`.
+Path A was run on Sun 15 Nov 2026 against a local backend with the live Valio mock and live Gemini (the same code
+as the deployment). Path C is covered by `backend/tests/test_agent.py`.
 
-## A. "1000 L lactose-free milk for Monday": confirmed automatically
+## A. "1000 L lactose-free milk for Monday": Gemini picks real milk, the chef signs off
 
-Gemini parses `milk, 1000 L, claims [FREE_FROM_LACTOSE]` and picks the real milks out of the keyword hits (keyword
-search alone ranks "milk ice cream" first). Each candidate is quoted live at Valio. Terminal milks are rejected:
-their cut-off (Thu 12 Nov) has passed and their stock is reported as 999999 (= unknown). Among the orderable ones the
-agent takes the cheapest total that stays within the mandate:
+1. Gemini parses `milk, 1000 L, claims [FREE_FROM_LACTOSE]` and picks the real milks out of the keyword hits.
+   Keyword search alone ranks "milk ice cream" first.
+2. Each candidate is quoted live at Valio. Terminal milks have no line total: their cut-off (Thu 12 Nov) has passed
+   and their stock is reported as 999999 (= unknown).
+3. The Gemini Decisions API then asks, for each orderable candidate, "does this meet the request, and is the
+   quantity right?":
 
-**463335 Valio Eila 3 % milk drink 1 l lactose free**: 1,000 L ÷ 1 L per ST = 1,000 ST × EUR 1.40 = **EUR 1,400.00**.
+| product | Decisions P(yes) | line total | |
+|---|---|---|---|
+| **464201 Valio semi-skimmed milk 1 l lactose free UHT** | **0.96** | EUR 1,560.00 | **chosen** |
+| 464073 Valio whole milk 1 l lactose free UHT | 0.93 | EUR 1,640.00 | alternative |
+| 463335 Valio Eila 3 % milk drink 1 l lactose free | 0.76, below the 0.8 threshold | EUR 1,400.00 | behind every confident line |
 
-This is under the EUR 1,500 auto-approve limit, so the front door re-quotes it and returns **`confirmed`, outcome
-`AUTO`**. The audit log gets two entries: `buyer_agent` (the chef's words, the rejected Terminal options and why) and
-`valio_front_door` (AUTO).
+The cheapest option is a milk *drink*. Gemini is not sure it is what a chef means by milk, so the agent doesn't
+pick it on price. The chosen line's `why` ends with its facts: "on time 100%, 1.1 kg CO2e/kg, origin FI".
 
-## B. "1500 L lactose-free milk for Monday": held for a human
+4. EUR 1,560 is above the EUR 1,500 auto-approve limit. The front door re-quotes the order and holds it:
+   **`pending_approval`, `ASK_HUMAN`, `SPEND_OVER_LIMIT`**.
+5. Sign-off:
+   - `POST /api/orders/{id}/approve` with the **agent key** → **401**. An agent can never approve its own order.
+   - The same call with the buyer's **`X-Approver-Key`** → **200, `confirmed`**. The door re-runs the gate with fresh
+     quotes first: it confirms if nothing changed, a changed price keeps the order pending, and a passed cut-off
+     refuses it. The approver's name comes from the key, never from the body.
+6. The audit log holds the agent's entry (the chef's words, the rejected options and why), the door's entry, and
+   the human sign-off.
 
-The same product: 1,500 ST × EUR 1.40 = **EUR 2,100.00**. The front door holds it as **`pending_approval`,
-`ASK_HUMAN`**, with two reasons:
+## B. "1500 L lactose-free milk for Monday": two limits at once
+
+The same choice: 1,500 ST × EUR 1.56 = **EUR 2,340.00**. It is held for two reasons:
 - `LINE_OVER_CAP`: the line is above the EUR 2,000 per-line cap.
 - `SPEND_OVER_LIMIT`: the order is above the EUR 1,500 auto-approve limit.
 
-Sign-off:
-- `POST /api/orders/{id}/approve` with the **agent key** → **401**. An agent can never approve its own order.
-- The same call with the buyer's **`X-Approver-Key`** → **200**. The door re-runs the gate with fresh quotes first
-  and confirms if nothing changed; a changed price keeps it pending, and a passed cut-off refuses it. `signed_off_by` is the approver key's name, never the body.
+(Worked out from the mandate and path A's prices, not run separately.)
+
+## Menu to cart (`POST /api/agent/menu`): always asks
+
+The second demo path. The chef pastes a menu, the number of covers and the delivery date. Gemini turns each dish
+into ingredients, each with an amount per portion and an assumption the chef can check. Code scales and merges
+them, then runs each through the same pipeline as path A: catalogue, Gemini match, live Valio quotes, quantity,
+gate checks, Decisions confidence and mandate limits. Recipe amounts are guesses, so a menu never orders by itself:
+the decision is always `ASK_HUMAN` with `MENU_ASSUMPTIONS`. The chef orders by posting the returned `order_lines`
+to the front door, which re-checks them.
+
+The live run (reindeer and lingonberry cheesecake for 80 covers, EUR 908.21 cart, with doubted lines flagged by
+their confidence) is in [`docs/GEMINI.md`](GEMINI.md#showcase-2-menu-to-cart-post-apiagentmenu-t15).
 
 ## C. Prompt injection: asked, nothing ordered
 

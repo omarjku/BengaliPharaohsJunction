@@ -97,8 +97,12 @@ show request → Gemini or fallback parse → catalogue → Valio quote → quan
 `backend/app/agent.py` keeps the buyer's text, applies dietary claims and
 allergen exclusions, and uses Gemini to distinguish the requested product from
 keyword neighbours. `backend/app/quantity.py` converts amounts without silently
-guessing. The milk request and chosen alternatives are shown in
-[`docs/m1-e2e.md`](docs/m1-e2e.md).
+guessing. The demo story, the same in every doc: for "1000 L lactose-free milk for
+Monday", Gemini scores the cheapest option, Eila "milk drink", 0.76 (below 0.80). So
+the agent picks Valio lactose-free semi-skimmed milk (0.96) at EUR 1,560. That is over
+the EUR 1,500 limit, so the door holds it (`pending_approval`) and the approver key
+confirms it. 1,500 L is also over the per-line cap. The second path is menu to cart.
+Details: [`docs/m1-e2e.md`](docs/m1-e2e.md), [`docs/GEMINI.md`](docs/GEMINI.md).
 
 ### J3 — Autonomy and controls
 
