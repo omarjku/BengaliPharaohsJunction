@@ -72,7 +72,10 @@ Files are in `frontend/src/`. "App" is the `Screen` component in `App.tsx`.
 
 | Step | What the user sees | Component · handler | API |
 |---|---|---|---|
-| Held for your OK | "Your call", the reason ("€60 over the €1,500 order limit."), **Approve · €…** / Reject (thumb bar on a phone) | `RunResult.decide('approve' / 'reject')` | `POST /api/orders/{id}/approve` or `/reject` (X-Approver-Key, no body) |
+| Decision card | A header strip (status + delivery day), the headline, "Decided by your order limit." (from `primary_reason`), the items table (product, amount, unit price, total; stacked on a phone), the Gemini line, why / other options / what the agent understood below | `RunResult` (+ `RunResult.css`) | (from the ask response) |
+| Held for your OK, one option | "Your call", the reason ("€60 over the €1,500 order limit."), **Approve · €…** / Change quantity / **Decline** (thumb bar on a phone) | `RunResult.decide('approve' / 'reject')` | `POST /api/orders/{id}/approve` or `/reject` (X-Approver-Key, no body) |
+| Held for your OK (or a best guess), two or more deliverable options | "Pick one": option cards with real tags only (**Best match** = the agent's pick, **Cheaper** = lower total, **Local** = origin FI), then **Approve selected · €…** / Change quantity / Decline | `RunResult.approveSelected`: the held order → approve; another option → reject the held order, then order the chosen one | `POST /api/orders/{id}/approve`, or `/reject` + `POST /api/orders` |
+| Change quantity | "New amount" + Ask again: the same product, the new amount, the same delivery day | `RunResult.changeQuantity` → App `onAskFor` | `POST /api/agent/ask/stream` |
 | After the decision | "Ordered ✓" briefly, then "Ordered for Mon 16 Nov.", "Chef Aino approved · 14:05" | `RunResult` `signOff` | `GET /api/orders/{id}` (signed_off_by) |
 | The order changed (409) or was already decided | The backend's message in the card; nothing changes silently | `RunResult.run_` catch | as above |
 | Waiting count on the empty screen | "Good afternoon, Aino. 2 orders are waiting for your OK in History." | App `waiting` | `GET /api/orders/{id}` per held order |
