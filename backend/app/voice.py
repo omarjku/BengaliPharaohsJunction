@@ -18,7 +18,7 @@ import av
 import websockets
 from fastapi import HTTPException
 
-from . import config
+from . import config, conversation
 
 LIVE_URL = ("wss://generativelanguage.googleapis.com/ws/"
             "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent")
@@ -139,4 +139,6 @@ async def transcribe(data: bytes, content_type: str) -> dict:
         raise HTTPException(503, detail="Voice is unavailable right now; type the order instead.") from None
     if not text:
         raise HTTPException(422, detail="No words were heard. Try again, closer to the microphone.")
-    return {"text": text, "seconds": round(seconds, 1), "model": config.GEMINI_LISTEN_MODEL}
+    # "Sata litraa" → "100 litraa": the chef sees digits, and raw_text keeps exactly what was heard
+    return {"text": conversation.spoken_to_digits(text), "raw_text": text, "seconds": round(seconds, 1),
+            "model": config.GEMINI_LISTEN_MODEL}

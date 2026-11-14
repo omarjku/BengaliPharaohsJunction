@@ -405,17 +405,15 @@ def _numbers(text: str) -> set[float]:
     """One reading per number written: 1000, 1,000, 1 000, 1.000 → 1000; 1,5 / 1.5 → 1.5. (Two readings per token
     let '1,000 L' ground a parsed amount of 1.)"""
     out = set()
-    for raw in re.findall(r"\d+(?:[ ,.]\d+)*", text):
+    # Spoken numbers come back as words from voice ("Sata litraa"): read them as digits (Render live check + the
+    # video recording: the Finnish voice order was refused because the amount wasn't written as digits).
+    for raw in re.findall(r"\d+(?:[ ,.]\d+)*", conversation.spoken_to_digits(text)):
         if re.fullmatch(r"\d{1,3}(?:([ ,.])\d{3})(?:\1\d{3})*", raw):  # thousands separators
             out.add(float(re.sub(r"[ ,.]", "", raw)))
             continue
         for part in raw.split():  # "16 1000" is two numbers
             if re.fullmatch(r"\d+(?:[,.]\d+)?", part):  # "1.2.3" is no number
                 out.add(float(part.replace(",", ".")))
-    # Spoken numbers come back as words from voice ("Kymmenen kiloa voita"): read single-word numbers too (Render
-    # live check: the Finnish voice order was refused because "10" wasn't written as digits).
-    low = text.lower()
-    out |= {float(v) for w, v in conversation.NUMBER_WORDS.items() if re.search(rf"(?<![\wäöå]){w}(?![\wäöå])", low)}
     return out
 
 
@@ -452,10 +450,11 @@ def grounding(text: str, item: dict) -> tuple[str | None, set[int]]:
     """Deterministic injection / hallucination guard → (what in a Gemini-parsed item is NOT in the chef's own text,
     indices of the clauses that ground it). Product, amount and unit must all be in the SAME clause, so
     '12 kg butter and 1 L milk' can't become 12 L milk."""
-    words = re.findall(r"[\wäöå]+", item["query"].lower())
+    words = re.findall(r"[\wäöå]+", conversation.spoken_to_digits(item["query"]).lower())  # like the text below
     unit = (item["unit"] or "").lower()
     if unit and unit not in quantity.MEASURES:
         return f"the unit {item['unit']}", set()  # catalogue codes like KI multiply quantities; plain units only
+    text = conversation.spoken_to_digits(text)  # before splitting: "two hundred and fifty" is one amount
     clauses = {i: c for i, c in enumerate(re.split(_SPLIT, text)) if _words_in(words, c)}
     if not clauses:
         return f"the product '{item['query']}'", set()

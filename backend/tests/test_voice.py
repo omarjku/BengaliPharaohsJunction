@@ -70,8 +70,8 @@ def post(body, ctype="audio/wav", key="agent-chef"):
 
 def test_recording_becomes_the_chefs_words(live):
     r = post(wav(1.0))
-    assert r.status_code == 200 and r.json() == {"text": "20 kg butter for Monday.", "seconds": 1.0,
-                                                 "model": config.GEMINI_LISTEN_MODEL}
+    assert r.status_code == 200 and r.json() == {"text": "20 kg butter for Monday.", "raw_text": "20 kg butter for Monday.",
+                                                 "seconds": 1.0, "model": config.GEMINI_LISTEN_MODEL}
     setup, start, *audio, end = live.sent
     assert setup["setup"]["model"] == f"models/{config.GEMINI_LISTEN_MODEL}"
     assert setup["setup"]["realtimeInputConfig"]["automaticActivityDetection"]["disabled"] is True  # push-to-talk
@@ -154,3 +154,11 @@ def test_silence_is_refused_fast_without_calling_gemini(live):
 def test_decoder_errors_are_plain_sentences(live):
     detail = post(b"definitely not audio", "audio/webm").json()["detail"]
     assert detail == "I couldn't read that recording. Try again, or type the order." and "Errno" not in detail
+
+
+def test_spoken_numbers_come_back_as_digits(live, monkeypatch):
+    """Video recording: "Sata litraa ..." was refused; the transcript now carries digits, raw_text the words heard."""
+    monkeypatch.setattr(voice, "connect", FakeLive(text="Sata litraa laktoositonta maitoa maanantaiksi."))
+    r = post(wav(1.0)).json()
+    assert r["text"] == "100 litraa laktoositonta maitoa maanantaiksi."
+    assert r["raw_text"] == "Sata litraa laktoositonta maitoa maanantaiksi."

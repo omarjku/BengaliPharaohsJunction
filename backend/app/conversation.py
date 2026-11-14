@@ -24,15 +24,97 @@ FOLLOW_UP_TTL_S = 600
 MAX_OPEN = 2000
 _lock = threading.Lock()
 
-NUMBER_WORDS = {
-    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-    "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
-    "eighty": 80, "hundred": 100, "a hundred": 100, "one hundred": 100, "two hundred": 200, "thousand": 1000,
-    "a thousand": 1000, "one thousand": 1000, "half": 0.5,
-    "yksi": 1, "yhden": 1, "kaksi": 2, "kahden": 2, "kolme": 3, "neljä": 4, "viisi": 5, "kuusi": 6, "seitsemän": 7,
-    "kahdeksan": 8, "yhdeksän": 9, "kymmenen": 10, "kaksikymmentä": 20, "kolmekymmentä": 30, "viisikymmentä": 50,
-    "sata": 100, "kaksisataa": 200, "tuhat": 1000, "puoli": 0.5,
-}
+# Spoken numbers → digits (voice transcripts write "Sata litraa", "two hundred and fifty"). English as phrases,
+# Finnish as the compound words it writes ("sataviisikymmentä" = 150), plus halves ("kaksi ja puoli", "one and a half").
+_EN = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+       "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17,
+       "eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
+       "seventy": 70, "eighty": 80, "ninety": 90}
+_FI = {"yksi": 1, "yhden": 1, "kaksi": 2, "kahden": 2, "kolme": 3, "neljä": 4, "viisi": 5, "kuusi": 6,
+       "seitsemän": 7, "kahdeksan": 8, "yhdeksän": 9}
+
+
+def _fi(w: str) -> int | None:
+    """One Finnish number word: 'kaksisataaviisikymmentä' → 250, 'tuhat' → 1000; None if it isn't one."""
+    for one, many, mult in (("tuhat", "tuhatta", 1000), ("sata", "sataa", 100)):
+        for form in (many, one):  # "sataa" before "sata"
+            if (i := w.find(form)) < 0 or (form == one) != (i == 0):  # "sata" alone, "kaksisataa" with a multiplier
+                continue
+            left = _fi(w[:i]) if i else 1
+            right = _fi(w[i + len(form):]) if w[i + len(form):] else 0
+            if left is None or right is None or right >= mult or (form == many and left < 2):
+                return None
+            return left * mult + right
+    if w == "kymmenen":
+        return 10
+    if m := re.fullmatch(r"(.+?)toista", w):
+        return 10 + u if (u := _FI.get(m[1])) else None
+    if m := re.fullmatch(r"(.+?)kymmentä(.*)", w):
+        tens, unit = _FI.get(m[1]), _FI.get(m[2]) if m[2] else 0
+        return tens * 10 + unit if tens and tens > 1 and unit is not None else None
+    return _FI.get(w)
+
+
+def _fmt(n: float) -> str:
+    return str(int(n)) if n == int(n) else f"{n:g}"
+
+
+def spoken_to_digits(text: str) -> str:
+    """'Sata litraa' → '100 litraa', 'two hundred and fifty kg' → '250 kg', 'kaksi ja puoli' → '2.5'. Digits and
+    every other word stay as they are. 'a'/'and'/'ja' join numbers only inside a number phrase."""
+    toks = re.findall(r"[\wäöåÄÖÅ]+|[^\wäöåÄÖÅ]+", text)
+    out, i = [], 0
+    while i < len(toks):
+        low = toks[i].lower()
+        if low in ("puoli", "half"):  # "half a kilo" → "0.5 kilo"
+            skip = 3 if low == "half" and i + 2 < len(toks) and toks[i + 2].lower() == "a" else 1
+            out.append("0.5"); i += skip; continue
+        if low == "puolitoista":
+            out.append("1.5"); i += 1; continue
+        total = cur = None
+        j, last = i, i - 1
+        while j < len(toks):
+            w = toks[j].lower()
+            nxt = toks[j + 2].lower() if j + 2 < len(toks) and not toks[j + 1].strip() else None
+            if w.isspace():
+                j += 1; continue
+            if (v := _EN.get(w, _fi(w))) is not None:  # "twenty five" → 25
+                cur = (cur or 0) + v
+            elif w in ("hundred", "thousand") or (w == "a" and nxt in ("hundred", "thousand") and cur is None
+                                                 and total is None):
+                if w == "a":
+                    cur = 1
+                elif w == "hundred":
+                    if cur is None and total is None:
+                        break
+                    cur = (cur or 1) * 100
+                else:
+                    if cur is None and total is None:
+                        break
+                    total, cur = (total or 0) + (cur or 1) * 1000, None
+            elif w in ("and", "ja") and (cur is not None or total is not None) and nxt is not None:
+                after = toks[j + 4].lower() if j + 4 < len(toks) else None
+                if nxt in ("puoli",) or (nxt == "a" and after == "half"):  # "kaksi ja puoli", "one and a half"
+                    value = (total or 0) + (cur or 0) + 0.5
+                    last = j + (2 if nxt == "puoli" else 4)
+                    total, cur = value, None
+                    j = last + 1
+                    break
+                if nxt in _EN and w == "and":  # "two hundred and fifty"
+                    j += 1; continue
+                break
+            else:
+                break
+            last = j
+            j += 1
+        if last >= i:
+            out.append(_fmt((total or 0) + (cur or 0)))
+            i = last + 1
+        else:
+            out.append(toks[i]); i += 1
+    return "".join(out)
+
+
 UNIT_WORDS = {"l": "L", "litre": "L", "litres": "L", "liter": "L", "liters": "L", "litra": "L", "litraa": "L",
               "dl": "dl", "desi": "dl", "kg": "kg", "kilo": "kg", "kilos": "kg", "kiloa": "kg", "kilograms": "kg",
               "g": "g", "gram": "g", "grams": "g", "grammaa": "g", "pcs": "pcs", "pieces": "pcs", "piece": "pcs",
@@ -42,14 +124,9 @@ NO = re.compile(r"^\s*(no|nope|cancel|don'?t|ei|älä|peru)\b", re.I)
 
 
 def number_in(answer: str) -> float | None:
-    """'5', '1,5', 'five', 'kaksikymmentä' → the number; None if the answer has none (never guessed)."""
-    low = answer.lower()
-    if m := re.search(r"\d+(?:[.,]\d+)?", low):
-        return float(m[0].replace(",", "."))
-    for words in sorted(NUMBER_WORDS, key=len, reverse=True):
-        if re.search(rf"\b{words}\b", low):
-            return float(NUMBER_WORDS[words])
-    return None
+    """'5', '1,5', 'five', 'kaksikymmentä', 'sataviisikymmentä' → the number; None if the answer has none."""
+    m = re.search(r"\d+(?:[.,]\d+)?", spoken_to_digits(answer))
+    return float(m[0].replace(",", ".")) if m else None
 
 
 def amount_in(answer: str, default_unit: str | None = None) -> tuple[float, str] | None:
