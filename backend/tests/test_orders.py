@@ -146,4 +146,6 @@ def test_valio_failure_is_503_without_leaking_details(shop, monkeypatch):
     monkeypatch.setattr("app.valio.get_quotes", boom)
     r = order([("463335", 1)])
     assert r.status_code == 503 and "secret" not in r.text and "key" not in r.text
-    assert audit() == [] and orders._store() == {}
+    [entry] = audit()  # the failure is on the record (ENGINE_ERROR), without the upstream details
+    assert entry["decision"]["primary_reason"]["code"] == "ENGINE_ERROR" and orders._store() == {}
+    assert "secret" not in orders.AUDIT_FILE.read_text()

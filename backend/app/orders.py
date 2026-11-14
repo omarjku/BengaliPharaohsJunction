@@ -157,12 +157,17 @@ def _spent_7d(buyer_id: str, now: datetime, skip: str | None = None) -> int:
                and o["status"] == "confirmed" and o["updated_at"] >= since)
 
 
-async def _gate(*args, **kwargs) -> gate.GateResult:
+async def _gate(audit: dict, lines, requested_date, mandate, oid, **kwargs) -> gate.GateResult:
+    """gate.check; if Valio can't be asked, the failure is audited (ENGINE_ERROR, `audit` = actor / buyer_id /
+    action / status for the line) and the caller gets a clean 503. Raw errors stay in the server log."""
     try:
-        return await gate.check(*args, **kwargs)
+        return await gate.check(lines, requested_date, mandate, oid, **kwargs)
     except Exception:
-        # Raw errors (URLs, upstream bodies) stay in the server log; nothing was ordered.
         log.exception("front-door gate failed")
+        now = kwargs.get("now") or datetime.now(timezone.utc)
+        res = gate.engine_error(lines, oid, now)
+        await _audit(audit["actor"], oid, audit["buyer_id"], requested_date.isoformat(), res.lines, mandate, res,
+                     now=now, action=audit["action"], status=audit["status"])
         raise HTTPException(503, detail="Valio availability check failed; nothing was ordered. Retry shortly.")
 
 
@@ -202,7 +207,8 @@ async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | N
     for _ in range(MAX_RETRIES):
         now = datetime.now(timezone.utc)
         spent = _spent_7d(buyer_id, now)
-        res = await _gate(lines, requested_date, mandate, oid, spent_7d_cents=spent, now=now)  # Valio calls, no lock
+        res = await _gate({"actor": FRONT_DOOR, "buyer_id": buyer_id, "action": "order", "status": "failed"},
+                          lines, requested_date, mandate, oid, spent_7d_cents=spent, now=now)  # Valio calls, no lock
         async with _order_lock:
             if _spent_7d(buyer_id, now) != spent:
                 continue  # another order of this buyer was confirmed meanwhile: decide again on the new budget
@@ -266,7 +272,9 @@ async def approve(order_id: str, who: Principal, seen_decided_at: datetime | Non
     mandate = mandates.get(o["buyer_id"])  # the buyer's CURRENT rules, not the snapshot taken at order time
     lines = [SimpleNamespace(product_id=li["product_id"], quantity=li["quantity"]) for li in o["lines"]]
     spent = _spent_7d(o["buyer_id"], now, skip=order_id)
-    res = await _gate(lines, date.fromisoformat(o["requested_date"]), mandate, order_id, spent_7d_cents=spent,
+    res = await _gate({"actor": f"human:{who.name}:approve", "buyer_id": o["buyer_id"], "action": "approval_failed",
+                       "status": "pending_approval"},
+                      lines, date.fromisoformat(o["requested_date"]), mandate, order_id, spent_7d_cents=spent,
                       approved_prices={li["product_id"]: li["unit_price_cents"] for li in o["lines"]}, now=now)
     async with _order_lock:
         o = _pending(order_id, who.buyer_id)  # 409 if someone else approved / rejected it meanwhile

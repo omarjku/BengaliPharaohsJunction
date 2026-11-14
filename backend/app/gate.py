@@ -434,8 +434,19 @@ def _alternative_order(lines: list, info: list[dict], rejected: list[str], quote
 
 def _no_mandate(lines: list, request_id: str, now: datetime) -> GateResult:
     """No stored mandate = nobody has said what this buyer may order: refuse without asking Valio anything."""
-    r = _r(C.MANDATE_MISSING, ASK, "No mandate is on file for this buyer, so nothing can be ordered on its behalf.",
-           None, "Set up the buyer's mandate with Valio, then order again.")
+    return _unanswered(lines, request_id, now, _r(
+        C.MANDATE_MISSING, ASK, "No mandate is on file for this buyer, so nothing can be ordered on its behalf.",
+        None, "Set up the buyer's mandate with Valio, then order again."))
+
+
+def engine_error(lines: list, request_id: str, now: datetime) -> GateResult:
+    """Valio couldn't be asked (down, timeout, 5xx, broken JSON): nothing decided, nothing ordered; for the audit."""
+    return _unanswered(lines, request_id, now, _r(
+        C.ENGINE_ERROR, ASK, "Valio's price and availability check failed, so nothing was decided or ordered.",
+        None, "Retry shortly."))
+
+
+def _unanswered(lines: list, request_id: str, now: datetime, r: Reason) -> GateResult:
     info = [{"product_id": ln.product_id, "name": (catalogue.get(ln.product_id) or {}).get("name_en") or ln.product_id,
              "quantity": ln.quantity, "unit": None, "unit_price_cents": None, "line_total_cents": None} for ln in lines]
     decision = Decision(request_id=request_id, outcome="ASK_HUMAN", reasons=[r], alternatives=[],
