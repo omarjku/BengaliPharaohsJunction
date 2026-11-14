@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
+from zoneinfo import ZoneInfo
 
 from trade_contracts import (Alternative, Decision, Mandate, Quote, Reason, ReasonCode as C, RejectedOption, Severity,
                              eur_to_cents)
@@ -22,6 +23,7 @@ from trade_contracts.common import RuleKind, UncertaintyPolicy
 from . import catalogue, valio
 
 RULES_VERSION = "t07-front-door-0.2"
+HELSINKI = ZoneInfo("Europe/Helsinki")
 log = logging.getLogger(__name__)
 ASK, DECLINE, INFO = Severity.ASK_HUMAN, Severity.DECLINE, Severity.INFO
 _RANK = {INFO: 0, ASK: 1, DECLINE: 2}
@@ -540,7 +542,8 @@ async def check(lines: list, requested: date, m: Mandate | None, request_id: str
         if not codes:
             order_rs.append(_r(C.MANDATE_INVALID, ASK, f"Can't map the excluded allergen '{v}' to Valio's allergen data.",
                                None, "Restate it as a GS1 allergen code (e.g. AP = peanuts).", rule_value=str(v)))
-    if requested < now.date():  # routes reject this too; the gate must hold whoever calls it
+    local_today = now.astimezone(HELSINKI).date() if now.tzinfo else now.date()
+    if requested < local_today:  # routes reject this too; the gate must hold whoever calls it
         order_rs.append(_r(C.DATE_NOT_HONOURED, ASK, f"The delivery date {requested} is in the past.", None,
                            "Pick a delivery date from today on.", requested_date=requested.isoformat(), not_approvable=True))
     if m.expires_at and m.expires_at <= now:

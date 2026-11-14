@@ -1,7 +1,7 @@
 """Room 3 engine-v2 understanding and routing contract tests."""
 import asyncio
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -10,6 +10,17 @@ from app import understand
 
 
 TODAY = date(2026, 11, 14)
+
+
+def next_monday(today):
+    return today + timedelta(days=7 - today.weekday())
+
+
+def next_delivery_weekday(today):
+    when = today + timedelta(days=1)
+    while when.weekday() >= 5:
+        when += timedelta(days=1)
+    return when
 
 
 def run(coro):
@@ -503,8 +514,8 @@ def test_v2_plan_period_uses_next_monday_and_kitchen_covers(monkeypatch, tmp_pat
     monkeypatch.setattr(ask.menu, "parse_menu", fake_parse)
     monkeypatch.setattr(ask.menu, "propose", fake_propose)
     body = run(ask.ask("food for next week", None, "chef"))
-    assert seen == {"covers": 120, "when": date(2026, 11, 16)}
-    assert body["covers_source"] == "kitchen" and body["requested_date"] == "2026-11-16"
+    assert seen == {"covers": 120, "when": next_monday(datetime.now(ask.TZ).date())}
+    assert body["covers_source"] == "kitchen" and body["requested_date"] == next_monday(datetime.now(ask.TZ).date()).isoformat()
 
 
 def test_v2_cart_questions_use_only_last_card(monkeypatch, tmp_path):
@@ -607,16 +618,17 @@ def test_v2_urgent_defaults_to_today_and_fallback_stays_offline(monkeypatch, tmp
     real_understand = understand.understand
 
     async def fake_understand(*_args):
-        return {"source": "gemini", "actions": [_action("urgent", when=TODAY.isoformat())]}
+        return {"source": "gemini", "actions": [_action("urgent", when=datetime.now(ask.TZ).date().isoformat())]}
 
     async def fake_run(_text, when, _buyer, **_kwargs):
         captured["when"] = when
-        return _order_card(when=TODAY.isoformat())
+        return _order_card(when=when.isoformat())
 
     monkeypatch.setattr(ask.understand, "understand", fake_understand)
     monkeypatch.setattr(agent, "run", fake_run)
     urgent_body = run(ask.ask("I need cream in 30 minutes", None, "chef"))
-    assert captured["when"] == TODAY and urgent_body["requested_date"] == TODAY.isoformat()
+    today = datetime.now(ask.TZ).date()
+    assert captured["when"] == today and urgent_body["requested_date"] == today.isoformat()
 
     async def down(*_args, **_kwargs):
         return None
@@ -711,10 +723,11 @@ def test_plain_order_assumes_next_weekday_and_marks_the_order_for_confirmation(m
 
     body = run(ask.ask("25 kg butter", None, "chef"))
 
-    assert captured["when"] == date(2026, 11, 16)
-    assert body["requested_date"] == "2026-11-16" and body["date_source"] == "assumed"
+    assert captured["when"] == next_delivery_weekday(datetime.now(ask.TZ).date())
+    expected = next_delivery_weekday(datetime.now(ask.TZ).date())
+    assert body["requested_date"] == expected.isoformat() and body["date_source"] == "assumed"
     assert body["date_assumed"] is True
-    assert any("Assumed Monday 16 Nov, the next delivery" in x for x in body["assumptions"])
+    assert any(f"Assumed {expected:%A %-d %b}, the next delivery" in x for x in body["assumptions"])
     assert captured["item"]["approval_required"]["delivery_assumed"] is True
 
 
@@ -739,7 +752,7 @@ def test_plain_order_moves_assumption_to_later_quoted_delivery_date(monkeypatch,
 
     body = run(ask.ask("25 kg butter", None, "chef"))
 
-    assert calls == [date(2026, 11, 16), date(2026, 11, 18)]
+    assert calls == [next_delivery_weekday(datetime.now(ask.TZ).date()), date(2026, 11, 18)]
     assert body["requested_date"] == "2026-11-18" and body["date_assumed"] is True
     assert any("Assumed Wednesday 18 Nov, the next delivery" in x for x in body["assumptions"])
 
@@ -811,7 +824,9 @@ def test_bare_number_follow_up_uses_the_pending_question_unit(monkeypatch, tmp_p
     _patch_v2_guards(monkeypatch)
     captured = {}
 
-    async def fake_understand(*_args):
+    async def fake_understand(*_args, **kwargs):
+        if kwargs.get("pending"):
+            return {"source": "gemini", "actions": [{"intent": "answer", "answer": {"slot": "amount", "value": "50"}}]}
         return {"source": "gemini", "actions": [_action(name="milk", amount=None, unit=None)]}
 
     async def fake_run(_text, _when, _buyer, pre=None):
@@ -820,14 +835,15 @@ def test_bare_number_follow_up_uses_the_pending_question_unit(monkeypatch, tmp_p
 
     monkeypatch.setattr(ask.understand, "understand", fake_understand)
     monkeypatch.setattr(agent, "run", fake_run)
-    question = run(ask.ask("milk", TODAY, "chef"))
+    today = datetime.now(ask.TZ).date()
+    question = run(ask.ask("milk", today, "chef"))
     question["request"] = {"items": [{"query": "milk", "amount": None, "unit": None}]}
     question["decision"] = {"outcome": "ASK_HUMAN", "reasons": [{
         "code": "QTY_AMBIGUOUS", "message": "How much milk?", "severity": "ASK_HUMAN",
         "facts": {"amount_question": "How much milk?", "unit": "L"}}]}
     question["question"] = "How much milk?"
     question["conversation_id"] = conversation.save("chef", "amount", {
-        "text": "milk", "requested": TODAY.isoformat(), "request": question["request"], "item": 0,
+        "text": "milk", "requested": today.isoformat(), "request": question["request"], "item": 0,
         "options": [], "amount_question": "How much milk?", "unit": "L"})
 
     run(ask.ask("", None, "chef", {"to": question["conversation_id"], "answer": "50"}))

@@ -1,7 +1,7 @@
 """One input for everyone: POST /api/agent/ask routes to the order or menu flow (Gemini faked, shop offline)."""
 import asyncio
 import json
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from conftest import REQ
 from fastapi.testclient import TestClient
@@ -67,7 +67,8 @@ def test_unclear_no_date_and_conflicting_dates_ask(shop1, monkeypatch):  # noqa:
     assumed = post("20 kg butter", requested=None)
     assert assumed["date_assumed"] is True and assumed["date_source"] == "assumed"
     assert post("20 kg butter tomorrow", requested=None)["date_source"] == "text"
-    body = post("20 kg butter tomorrow", requested=REQ)  # REQ is today + 2, the text says tomorrow → ask which
+    conflict_date = datetime.now(ask.TZ).date() + timedelta(days=2)
+    body = post("20 kg butter tomorrow", requested=conflict_date)
     assert body["question"].startswith("Which delivery day") and "lines" not in body
 
 
