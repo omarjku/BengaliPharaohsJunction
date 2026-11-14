@@ -1,0 +1,21 @@
+/* The bottom bar: one rounded pill. The mic (.mic from index.css) sits in it as a normal flex item here. */
+.composer {
+  display: flex; align-items: flex-end; gap: var(--s2); padding: var(--s2); min-height: 56px;
+  border: 1px solid var(--field-line); border-radius: 28px; background: var(--surface);
+  box-shadow: 0 6px 18px rgba(28, 31, 35, 0.08);
+}
+.composer:focus-within { border-color: var(--accent); }
+.composer-field {
+  flex: 1; min-width: 0; resize: none; border: 0; outline: none; background: none; color: var(--ink);
+  font: var(--t-body); padding: 10px var(--s1); max-height: 140px; line-height: 1.4;
+}
+.composer-btn, .composer .mic, .composer .photo-icon {
+  position: static; flex: none; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+  border: 0; background: none; color: var(--ink-2); cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.composer .photo-icon { border: 0; }
+.composer-btn:active { transform: scale(0.95); }
+.composer-btn:disabled { opacity: 0.5; cursor: default; }
+.composer-btn.on { color: var(--bad); }
+.composer-voice, .composer-send { background: var(--accent); color: #fff; }
+.composer-end { background: var(--ink); color: var(--surface); }

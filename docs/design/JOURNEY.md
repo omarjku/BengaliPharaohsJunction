@@ -33,20 +33,20 @@ Files are in `frontend/src/`. "App" is the `Screen` component in `App.tsx`.
 
 | Step | What the user sees | Component · handler | API |
 |---|---|---|---|
-| Type a request, press Ask (or Cmd/Ctrl+Enter, or a "Try:" example) | Button "Asking…" | App `submit` → `ask(text)` | `POST /api/agent/ask/stream` (SSE: `phase` events, then `result` or `error`); falls back to `POST /api/agent/ask` only if the stream never opened (404/405) |
+| Type a request in the bar, Enter or the send arrow (a "Try:" chip fills the field) | Your message as a bubble on the right, then the progress line in the thread | `Composer` → App `send` → `ask(text)` | `POST /api/agent/ask/stream` (SSE: `phase` events, then `result` or `error`); falls back to `POST /api/agent/ask` only if the stream never opened (404/405) |
 | Progress | One calm line, each step at least 400 ms ("Reading your request…", "Searching Valio's catalogue…", …), read out politely | App `phaseLine` (`usePhaseLine`) in `.working[role=status]` | the SSE `phase` events |
 | Stream drops mid-way | "The connection dropped… Check History before asking again" (never retried, so no double order) | `api.askAgentStream` throws `DROPPED` | none |
-| Delivery day | "Delivery Mon 16 Nov · or the day you write", a native date picker | App `date` / `dateSet` | sent as `requested_date` only when picked |
+| Delivery day | Said in the words ("for Monday"), or the agent asks "For which delivery day?" with day chips (the date picker is gone) | App `ask` | `requested_date` only for re-asks from a card (same day) |
 | Result: ordered / your call / not ordered | Status, a headline, what and how much, total, the Gemini line ("Matched by Gemini · 84%"), "Sent to Valio's front door: confirmed · See it in History" | `RunResult` | (from the ask response) |
 | Result: menu | "A cart for 80 guests, €…", the cart per ingredient, "Order this cart · €…" | `MenuResult` | (from the ask response) |
-| Phone, after a result | The box folds into one row ("… · Mon 16 Nov · Edit"); action bar at the thumb once the reasons are seen | App `collapsed`, `.decide.floating` | none |
+| More than one result | The newest card is full and actionable; earlier ones fold to "Your call: … Open" (tap to reopen, state kept); the agent's `speak` sentence sits above each card | App `renderRes`, `Conversation.css` | none |
 
 ## 3. Answering the agent's question (follow-ups)
 
 | Step | What the user sees | Component · handler | API |
 |---|---|---|---|
-| A question that can be answered here (`conversation_id`) | The question, an answer box (with the mic inside it) and Send; Enter sends | `Question` → `onAnswer` → App `ask(words, convo)` | `POST /api/agent/ask/stream` with `{"text": "", "follow_up": {"to": conversation_id, "answer": "…"}}` |
-| While the answer is sent | The question **stays**, with "Sending…", inputs disabled, the progress line; then the new result replaces it | App `ask` keeps `result` when `to` is set | as above |
+| A question that can be answered here (`conversation_id`) | The agent's message with its one-tap answers; anything else is typed (or dictated) in the bar, whose placeholder says "Type your answer" | `Question` chips → `onAnswer`; the bar → App `send` → `ask(words, convo)` | `POST /api/agent/ask/stream` with `{"text": "", "follow_up": {"to": conversation_id, "answer": "…"}}` |
+| While the answer is sent | Your answer as a bubble, the progress line, then the new card or question below | App `ask` | as above |
 | "For which delivery day?" | Six one-tap day chips (Mon 16 Nov, …) plus the box | `Question` `nextDays` → `onAnswer('16.11.')` | follow_up |
 | "Which one did you mean: 1) A; 2) B; 3) C?" | "Which one did you mean?" with the products as one-tap chips | `Question` `options` → `onAnswer('2')` | follow_up |
 | "For how many guests?" | A number box + "Plan the cart" | `GuestsQuestion` → App `answerGuests` | follow_up (or the number appended, if no conversation) |
@@ -92,21 +92,24 @@ Files are in `frontend/src/`. "App" is the `Screen` component in `App.tsx`.
 | History | Requests grouped by day, outcome per request, steps inside | `AuditLog` (`history.ts` `groupHistory`) | `GET /api/audit` (X-Approver-Key) |
 | Valio view (Valio staff only) | "Valio view" link asks for the admin key; feed per kitchen, security events in red, filters, **Check the signature** → "Signed by the front door ✓" | `ValioView` | `GET /api/admin/audit` (X-Valio-Admin-Key), `POST /api/verify` |
 
-## 7. Voice, Talk and photo
+## 7. The conversation screen: text, voice + text, voice only
+
+One thread for all three modes (`Conversation.tsx`, `Composer.tsx`, `Orb.tsx`, `useLive.ts`, `useTalk.ts`). Decisions
+are never chat bubbles: every result is the decision card in the thread.
 
 | Step | What the user sees | Component · handler | API |
 |---|---|---|---|
-| Mic (first time) | A short note: "Hold to order by voice…" + Start talking / Not now; then the browser's mic prompt | `MicButton` → `useVoice.start` (intro), `acceptIntro` | none |
-| Mic: phone | Tap to start ("Listening… tap the mic to send."), tap again to send | `MicButton` (`pointerType === 'touch'`) | `POST /api/voice/transcribe` (body: the recording, X-Agent-Key) |
-| Mic: desktop | Hold to talk and let go to send, or tap to toggle; Enter/Space toggles | `MicButton` `down` / `up` / `key` | as above |
-| The words | Appear in the box, then go as if typed | App `useVoice(… onText)` → `ask(words)` | ask |
-| Read-back | The backend's `speak` sentence spoken in the request's language (unlocked by the first tap on iOS); "Read aloud. Mute" | `useReadBack.speak`, `unlockSpeech` | none |
-| A spoken question | It's spoken, then the mic opens by itself: "Listening for your answer… tap the mic to send. Cancel" | App effect → `voice.start(true, true)` | follow_up |
-| Voice failures | "The microphone is blocked. You can type instead…", "I didn't hear any words…", "Couldn't start the microphone…" | `VoiceStatus` | — |
-| One voice button (for the order box) | `<VoiceButton voice={voice} talk={{ available: caps.talk, open: talk.open }} disabled={…} />`: opens Talk when /api/health says talk: true, else it is the push-to-talk mic | `VoiceButton` (`Voice.tsx`) | as Talk / as the mic |
-| Talk | "Talk" opens a full-screen conversation: a circle (listening / checking / speaking), captions, "Checking Valio prices…", the result card (approve on screen), **End** | App `openTalk` → `Talk` | WebSocket `/api/live` (auth message first; PCM16 audio both ways) |
-| Photo (inside the box) | `<PhotoButton variant="icon" …/>`: a round 44 px camera button like the mic; what was read floats under the box with a close button | `PhotoButton` | as Photo |
-| Photo | "Photo" (camera or library) → "Reading your photo…" with a thumbnail → what was read and what couldn't be → the text goes into the box and is asked | `PhotoButton` → `onRead` → App `ask(text)` | `POST /api/vision/read` (multipart `image`, X-Agent-Key) |
+| Text only | The thread (your messages right in a bubble, the agent's lines left), the bar at the bottom: **+** (photo), the field, the **mic** (dictation), the round **voice** button | `Conversation`, `Composer` | ask, as above |
+| Dictation (mic) | Tap to start, tap again (or let go of a hold on a desktop): the words land in the field to edit and send. "Listening… tap the mic to send." above the bar | `MicButton` → `useVoice` → `setText` | `POST /api/voice/transcribe` |
+| Photo (+) | Camera or library → "Reading your photo…" with a thumbnail → what was read → the text is sent as your message | `PhotoButton variant="icon"` → App `send` | `POST /api/vision/read` (multipart `image`) |
+| Start voice | The voice button: dictation stops, the big orb appears (thread hidden) | App `startVoice` → `voice.cancel()`, `useTalk.open` (inside the tap: AudioContext + mic, iOS) | WebSocket `/api/live` (auth message first) |
+| Voice only | The big orb in the middle: listening (follows your voice), thinking (with the tool line, e.g. "Checking Valio prices…"), speaking; the bar: +, the field, **mute**, **X** | `Orb size="big"`, `useLive` | audio both ways (PCM16) |
+| Voice + text | Tap the orb (or "Show the conversation"): the thread with live words (a dot marks the reply being formed), a small orb above the bar; tap it (or "Voice only") to go back; the last layout is remembered | `Orb size="small"`, App `toggleLayout` (`valio-aimo-voice-layout`) | as above |
+| Typing while voice is on | Your words go over the socket | App `send` → `useLive.sendText` | `{"type":"text"}` |
+| Mute | The mic stops sending; the session stays ("Microphone off.") | `useLive.setMuted` | no audio chunks |
+| A result by voice | The decision card in the thread (Approve / Choose / Decline on the card: the voice agent can't approve) | `useLive.onResult` → App `push` | `{"type":"result"}` |
+| End voice (X) | Back to text only; the thread is kept | `useTalk.end` (stops the mic, closes the audio) | `{"type":"stop"}` |
+| Voice failures | "The microphone is blocked…", "The conversation ended. Tap Talk to start again.", the server's error, as an error in the thread; the orb turns red | `useLive.onError` | — |
 
 ## How to check it
 
