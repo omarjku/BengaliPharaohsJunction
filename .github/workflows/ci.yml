@@ -83,21 +83,14 @@ jobs:
 
   provenance:
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'pull_request'
-    runs-on: craci
+    # Only calls the CRACI API about the jobs above (which ran on CRACI). CRACI runners can't reach api.craci.com
+    # (its proxy answers 403 "Access denied" even to a fake token), so this one job runs on a GitHub-hosted runner.
+    runs-on: ubuntu-latest
     needs:
       - backend-tests
       - packages-tests
       - frontend
     steps:
-      # CRACI runs jobs behind its firewall; the API needs an explicit direct TLS connection (docs: setup-action-network).
-      - uses: cracicorp/setup@v1
-        with:
-          network: |
-            default: allow
-            connections:
-              - tls:
-                  serverNamePatterns: [api.craci.com]
-                  ports: [443]
       - name: Check out repository
         uses: actions/checkout@v4
       - name: Collect CRACI SBOM and network evidence
