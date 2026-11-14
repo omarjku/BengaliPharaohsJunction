@@ -800,6 +800,7 @@ class AskRequest(BaseModel):
 
 class ChatRequest(AskRequest):
     """A text turn for the Gemini tool-calling chat agent; its follow-up shape matches /ask."""
+    conversation_id: Annotated[str | None, StringConstraints(pattern=r"^[0-9a-f]{32}$")] = None
 
 
 @app.post("/api/agent/ask")
@@ -824,7 +825,7 @@ async def agent_chat(req: ChatRequest, who: Agent) -> dict:
     token = auth.CURRENT_AGENT.set(who)
     try:
         return await chat_agent.chat(req.text, who.buyer_id, req.requested_date,
-                                     req.follow_up and req.follow_up.model_dump(), req.have)
+                                     req.follow_up and req.follow_up.model_dump(), req.have, req.conversation_id)
     finally:
         auth.CURRENT_AGENT.reset(token)
 

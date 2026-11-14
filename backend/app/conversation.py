@@ -225,8 +225,9 @@ MAX_TURN_TEXT = 1_000
 _turns_lock = threading.Lock()
 
 
-def _history_path(buyer_id: str):
-    digest = hashlib.sha256(str(buyer_id).encode("utf-8")).hexdigest()
+def _history_path(buyer_id: str, conversation_id: str | None = None):
+    scope = str(buyer_id) if conversation_id is None else f"{buyer_id}\x00{conversation_id}"
+    digest = hashlib.sha256(scope.encode("utf-8")).hexdigest()
     # Existing tests (and local callers) isolate the legacy follow-up store by replacing STORE. Keep the v2 history
     # beside that isolated store while production continues to use DATA_DIR/conversations.
     root = STORE.parent / "conversations" if STORE != _DEFAULT_STORE else config.DATA_DIR / "conversations"
@@ -360,6 +361,16 @@ def _pruned_history(data: dict, now: float) -> tuple[dict, bool]:
             data.pop("last_card", None)
             data.pop("last_card_time", None)
             changed = True
+    pending_time = data.get("pending_time")
+    if pending_time is not None:
+        try:
+            pending_expired = float(pending_time) < cutoff
+        except (TypeError, ValueError):
+            pending_expired = True
+        if pending_expired:
+            data.pop("pending_state", None)
+            data.pop("pending_time", None)
+            changed = True
     return data, changed
 
 
@@ -377,12 +388,12 @@ def _write_history(path, data: dict) -> None:
 
 
 def record_turn(buyer_id: str, role: str, text: str, card: dict | None = None,
-                pending: dict | None = None) -> None:
+                pending: dict | None = None, conversation_id: str | None = None) -> None:
     """Atomically append one bounded turn and optionally replace the buyer's compact last card."""
     if role not in {"user", "assistant"}:
         raise ValueError("role must be user or assistant")
     now = time.time()
-    path = _history_path(buyer_id)
+    path = _history_path(buyer_id, conversation_id)
     with _turns_lock:
         data, _ = _pruned_history(_read_history(path), now)
         data["turns"].append({"role": role, "text": _bounded_text(text), "time": now})
@@ -396,16 +407,20 @@ def record_turn(buyer_id: str, role: str, text: str, card: dict | None = None,
         if pending is not None:
             if pending:
                 data["pending_state"] = {"pending_slot": str(pending.get("pending_slot") or "")[:120],
-                                          "choices": list(pending.get("choices") or [])[:4]}
+                                          "choices": list(pending.get("choices") or [])[:4],
+                                          "question": _bounded_text(pending.get("question")),
+                                          "default": _bounded_text(pending.get("default"))}
+                data["pending_time"] = now
             else:
                 data.pop("pending_state", None)
+                data.pop("pending_time", None)
         _write_history(path, data)
 
 
-def turns(buyer_id: str) -> list[dict]:
+def turns(buyer_id: str, conversation_id: str | None = None) -> list[dict]:
     """Return this buyer's unexpired turns in chronological order."""
     now = time.time()
-    path = _history_path(buyer_id)
+    path = _history_path(buyer_id, conversation_id)
     with _turns_lock:
         data = _read_history(path)
         data, changed = _pruned_history(data, now)
@@ -414,10 +429,10 @@ def turns(buyer_id: str) -> list[dict]:
         return list(data.get("turns", []))
 
 
-def last_card(buyer_id: str) -> dict | None:
+def last_card(buyer_id: str, conversation_id: str | None = None) -> dict | None:
     """Return the unexpired compact result card for this buyer, if one exists."""
     now = time.time()
-    path = _history_path(buyer_id)
+    path = _history_path(buyer_id, conversation_id)
     with _turns_lock:
         data = _read_history(path)
         data, changed = _pruned_history(data, now)
@@ -427,16 +442,28 @@ def last_card(buyer_id: str) -> dict | None:
         return json.loads(json.dumps(card, ensure_ascii=False)) if isinstance(card, dict) else None
 
 
-def pending_state(buyer_id: str) -> dict | None:
+def pending_state(buyer_id: str, conversation_id: str | None = None) -> dict | None:
     """Return the typed slot a chat turn is waiting for, bounded by the same history TTL."""
     now = time.time()
-    path = _history_path(buyer_id)
+    path = _history_path(buyer_id, conversation_id)
     with _turns_lock:
         data, changed = _pruned_history(_read_history(path), now)
         if changed and path.exists():
             _write_history(path, data)
         value = data.get("pending_state")
         return json.loads(json.dumps(value, ensure_ascii=False)) if isinstance(value, dict) else None
+
+
+def is_stale(buyer_id: str, conversation_id: str) -> bool:
+    """Return true only for a known conversation whose last turn is older than the conversation TTL."""
+    path = _history_path(buyer_id, conversation_id)
+    with _turns_lock:
+        data = _read_history(path)
+        had_turns = bool(data.get("turns"))
+        data, changed = _pruned_history(data, time.time())
+        if changed and path.exists():
+            _write_history(path, data)
+        return had_turns and not data.get("turns")
 
 
 def current_order(buyer_id: str) -> dict:
