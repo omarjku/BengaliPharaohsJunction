@@ -98,7 +98,8 @@ async function errorDetail(res: Response): Promise<string> {
   try {
     const { detail } = await res.json()
     if (typeof detail === 'string') return detail
-    if (typeof detail?.error === 'string') return detail.error // e.g. 409 {error, changes}, 422 {error, open_questions}
+    if (typeof detail?.error === 'string') // e.g. 409 {error, changes}, 422 {error, open_questions} or {error, problems}
+      return [detail.error, ...(Array.isArray(detail.problems) ? detail.problems.filter((p: unknown) => typeof p === 'string') : [])].join(' ')
     if (Array.isArray(detail)) {
       const msgs = detail.map((d) => d?.msg).filter((m): m is string => typeof m === 'string')
       return msgs.length ? msgs.join('; ') : 'invalid request'
@@ -123,7 +124,8 @@ export const transcribe = (audio: Blob): Promise<string> =>
     ? mock().then((m) => m.transcribe(audio))
     : fetch(`${BASE}/api/voice/transcribe`, { method: 'POST', body: audio, headers: { 'Content-Type': audio.type || 'audio/webm', 'X-Agent-Key': getKeys().agentKey } })
         .then(async (r) => {
-          if (!r.ok) throw new Error(`Couldn’t understand the recording (${r.status}). Try again, or type it.`)
+          // The voice endpoint's errors are plain sentences for the chef ("I didn't hear any words…"); show them as they are.
+          if (!r.ok) throw new Error([413, 415, 422, 503].includes(r.status) ? await errorDetail(r) : `Couldn’t understand the recording (${r.status}). Try again, or type it.`)
           return ((await r.json()) as { text: string }).text
         })
 

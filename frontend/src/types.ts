@@ -216,8 +216,10 @@ type AskMeta = {
   date_source?: 'text' | 'request' | null
   covers?: number | null
   urgent_options?: UrgentOption[] | null
+  speak?: string | null // one sentence to read back, in the request's language
+  conversation_id?: string | null // set when the question can be answered with a follow_up
 }
-export type AskInput = { text: string; requested_date?: string }
+export type AskInput = { text: string; requested_date?: string; follow_up?: { to: string; answer: string } }
 export type AskResponse =
   | (AskMeta & { intent: 'order'; question?: null } & AgentRun)
   | (AskMeta & { intent: 'menu'; question?: null } & MenuRun)

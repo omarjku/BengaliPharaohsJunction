@@ -4,6 +4,7 @@
 // Some strings come from the backend in English (Reason.message, mandate source_text and guidance, rule-change
 // text). They are shown as they are, until the backend speaks Finnish; those spots are marked "backend English".
 import type { Mandate, RuleChange, Reason } from './types'
+import { ownWords } from './format'
 
 // Language-neutral: same values as the English module.
 export { CONFIDENT_AT, tidyName } from './copy'
@@ -17,6 +18,25 @@ const euro = (cents: number) => {
 }
 const num = (v: unknown) => (typeof v === 'number' ? v : null)
 const n = (v: number) => v.toLocaleString('fi-FI')
+
+const DOOR_STATUS: Record<string, string> = { confirmed: 'vahvistettu', pending_approval: 'odottaa hyväksyntääsi', refused: 'hylätty', rejected: 'hylkäsit' }
+
+// The backend's questions (English) in Finnish. Unknown ones are shown as the backend wrote them.
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+const QUESTIONS: Record<string, string> = {
+  'For which delivery day?': 'Mille päivälle toimitus?',
+  'For how many guests?': 'Kuinka monelle hengelle?',
+  'I can only help with ordering from Valio. What do you need?': 'Autan vain Valion tilauksissa. Mitä tarvitset?',
+}
+export function question(q: string, r?: Reason | null): string {
+  const mins = num(r?.facts.minutes_ago)
+  if (mins !== null) return `Tilasit tämän ${mins} min sitten. Tilataanko uudelleen?`
+  const past = /^\w+ (\d{1,2}) (\w+) (\d{4}) is in the past\./.exec(q)
+  const month = past ? MONTHS.indexOf(past[2]) + 1 : 0
+  if (past && month) return `${day(`${past[3]}-${String(month).padStart(2, '0')}-${past[1].padStart(2, '0')}`)} on jo mennyt. Mille päivälle toimitus?`
+  if (/^How much .+\?$/.test(q)) return 'Kuinka paljon tarvitset?'
+  return QUESTIONS[q] ?? q
+}
 
 export function headline(r: Reason): string {
   const f = r.facts
@@ -63,6 +83,12 @@ export function headline(r: Reason): string {
       break
     case 'PRICE_CHANGED':
       return 'Hinta on muuttunut sen jälkeen, kun näit sen.'
+    case 'CONFIDENCE_OK':
+      if (num(f.confidence) !== null) return `${matched(num(f.confidence)!)}.`
+      break
+    case 'FRONT_DOOR':
+      if (typeof f.status === 'string') return `Lähetetty Valion etuovelle: ${DOOR_STATUS[f.status] ?? f.status}.`
+      break
   }
   return r.message // backend English
 }
@@ -120,10 +146,10 @@ const cents = (v: unknown) => euro(Math.round(Number(v)))
 // A claim code in Finnish when we know it; otherwise the code in plain words (English).
 const words = (v: unknown) => CLAIMS[String(v).toUpperCase()] ?? String(v).toLowerCase().replace(/_/g, ' ')
 
-export function ruleLines(m: Mandate): { text: string; said: string | null }[] {
-  const out: { text: string; said: string | null }[] = []
+export function ruleLines(m: Mandate): { text: string; said: string | null; words?: string }[] {
+  const out: { text: string; said: string | null; words?: string }[] = []
   for (const r of m.hard_rules) {
-    const said = r.source_text?.startsWith('Default:') ? null : r.source_text // the chef's own words, as written
+    const said = ownWords(m, r.source_text) // the chef's own words, as written
     switch (r.kind) {
       case 'excluded_allergen': out.push({ text: `Ei koskaan tuotteita, joissa on: ${allergen(r.value)}.`, said }); break
       case 'required_claim': out.push({ text: `Vain tuotteita, joissa on merkintä: ${words(r.value)}.`, said }); break
@@ -137,26 +163,20 @@ export function ruleLines(m: Mandate): { text: string; said: string | null }[] {
   }
   out.push({ text: `Yhdestä tuotteesta enintään ${euro(m.per_line_cap_cents)} tilausta kohden.`, said: null })
   if (m.weekly_budget_cents) out.push({ text: `Viikkobudjetti ${euro(m.weekly_budget_cents)}.`, said: null })
-  if (m.blocklist.length) out.push({ text: m.blocklist.length > 1 ? `${m.blocklist.length} tuotetta on estetty.` : '1 tuote on estetty.', said: null })
+  if (m.blocklist.length)
+    out.push({ text: m.blocklist.length > 1 ? `${m.blocklist.length} tuotetta on estetty.` : '1 tuote on estetty.', said: null, words: `Älä koskaan tilaa tuotetta ${m.blocklist.join(', ')}.` })
   out.push({
     text: { ask: 'Kun agentti ei voi tarkistaa jotain, se kysyy sinulta.', decline: 'Kun agentti ei voi tarkistaa jotain, se jättää tilaamatta.', approve: 'Kun agentti ei voi tarkistaa jotain, se tilaa silti.' }[m.uncertainty_policy] ?? '',
     said: null,
   })
   for (const g of m.guidance) out.push({ text: `Toive: ${g.text}`, said: null }) // g.text: backend English unless the chef wrote it in Finnish
-  if (m.expires_at) out.push({ text: `Säännöt ovat voimassa ${new Date(m.expires_at).toLocaleDateString('fi-FI', { day: 'numeric', month: 'long' })} asti.`, said: null })
+  if (m.expires_at)
+    out.push({ text: `Säännöt ovat voimassa ${new Date(m.expires_at).toLocaleDateString('fi-FI', { day: 'numeric', month: 'long' })} asti.`, said: null, words: `Säännöt ovat voimassa ${m.expires_at.slice(0, 10)} asti.` })
   return out
 }
 
 // Starting text when the chef edits their rules. The compiler reads Finnish too, so the limits are written in Finnish.
-export const ruleWords = (m: Mandate) =>
-  [
-    ...new Set([
-      ...m.hard_rules.map((r) => r.source_text).filter((t): t is string => !!t && !t.startsWith('Default:')),
-      `Yhdestä tuotteesta enintään ${euro(m.per_line_cap_cents)} tilausta kohden.`,
-      ...(m.weekly_budget_cents ? [`Viikkobudjetti ${euro(m.weekly_budget_cents)}.`] : []),
-      ...m.guidance.map((g) => g.text),
-    ]),
-  ].join('\n')
+export const ruleWords = (m: Mandate) => [...new Set(ruleLines(m).map((l) => l.words ?? l.text).filter(Boolean))].join('\n')
 
 const CHANGE_WORD: Record<string, string> = { tighter: 'Tiukempi', looser: 'Väljempi', changed: 'Muutettu' }
 export const changeWord = (c: RuleChange) => CHANGE_WORD[c.change] ?? c.change
@@ -245,6 +265,15 @@ export const UI = {
     plan: 'Laadi ostoskori',
     planning: 'Laaditaan…',
     guests: (v: number) => `${v} hengelle.`,
+    answer: 'Vastauksesi',
+    send: 'Lähetä',
+    sending: 'Lähetetään…',
+    orderAgain: 'Tilaa uudelleen',
+    leave: 'Ei, anna olla',
+    leftAlone: 'Mitään ei tilattu.',
+    listening: 'Kuuntelen vastaustasi… napauta mikrofonia lähettääksesi.',
+    cancel: 'Peru',
+    expired: 'Kysymys on vanhentunut. Sano koko tilaus uudelleen.',
   },
   keys: {
     title: 'Avaimet',
@@ -264,6 +293,8 @@ export const UI = {
   result: {
     aria: 'Agentin vastaus',
     orderedFor: (d: string) => `Tilattu toimitukseen ${d}`,
+    frontDoor: (s: string) => `Lähetetty Valion etuovelle: ${DOOR_STATUS[s] ?? s.replace(/_/g, ' ')}.`,
+    seeHistory: 'Katso historiasta',
     rejected: 'Hylätty. Mitään ei tilattu.',
     of: (amount: string, name: string) => `${amount}: ${name}`,
     products: (v: number) => `${v} tuotetta`,
@@ -347,7 +378,7 @@ export const UI = {
     changesAnnounce: (v: number) => `${v} ${kpl(v, 'muutos', 'muutosta')} sääntöihisi. Ei vielä tallennettu.`,
     injectionTitle: 'Osa tekstistä näyttää agentille annetulta käskyltä, ei säännöltä.',
     injectionBody: 'Tarkista tekstin alkuperä ennen tallentamista.',
-    fallback: 'Gemini ei ollut käytettävissä, joten käytettiin yksinkertaisempaa lukijaa. Tarkista muutokset huolella.',
+    fallback: 'Sääntöjä ei saatu luettua, joten mikään ei muuttuisi. Kirjoita ne lyhyinä, selkeinä lauseina ja tarkista uudelleen.',
     before: 'Ennen tallentamista',
     skipped: (q: string) => `Ohitettu: ${q}`,
     undo: 'Kumoa',

@@ -12,6 +12,7 @@ type Props = {
   onBusy: (busy: boolean) => void
   onAnnounce: (headline: string) => void
   onRetry?: () => void // "Not this one": back to the request field
+  onHistory?: () => void // "See it in History", from the front-door line
   after?: ReactNode // shown right under the answer (e.g. "Need it sooner?"), before the details
 }
 type Busy = 'approve' | 'reject' | 'place' | null
@@ -43,7 +44,7 @@ function useSeen<T extends Element>(): [RefObject<T | null>, boolean] {
 const orderable = (l: Line) => l.quote != null && l.quote.orderable && l.quantity?.quantity != null && l.line_total_cents != null
 const lineOrder = (l: Line) => ({ product_id: l.product.id, quantity: l.quantity!.quantity! })
 
-export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, onRetry, after }: Props) {
+export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, onRetry, onHistory, after }: Props) {
   const [busy, setBusy] = useState<Busy>(null)
   const [result, setResult] = useState<OrderResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -141,7 +142,9 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   const decide = (action: 'approve' | 'reject') => run_(action, () => decideOrder(order!.order_id!, action))
   const place = (lines: OrderInput['lines']) => run_('place', () => placeOrder({ requested_date: requestedDate, lines }))
 
-  const otherReasons = decision.reasons.slice(1)
+  // Calm notes stay out of "Also worth knowing": the Gemini line says the confidence, the front-door line the hand-off.
+  const otherReasons = decision.reasons.slice(1).filter((r) => r.code !== 'CONFIDENCE_OK' && r.code !== 'FRONT_DOOR')
+  const sentToDoor = run.decision.reasons.some((r) => r.code === 'FRONT_DOOR') && order ? order.status : null
   const query = run.request.items.length === 1 ? run.request.items[0].query : null
 
   return (
@@ -170,6 +173,16 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
           <p className={`sure num${confidence < CONFIDENT_AT ? ' unsure' : ''}`}>
             {c.matched(confidence)}
             {confidence < CONFIDENT_AT && chosen[0]?.confidence_reason && <span className="quiet">. {chosen[0].confidence_reason}</span>}
+          </p>
+        )}
+        {sentToDoor && (
+          <p className="quiet small">
+            {t.frontDoor(sentToDoor)}{' '}
+            {onHistory && (
+              <button type="button" className="link accent inline" onClick={onHistory}>
+                {t.seeHistory}
+              </button>
+            )}
           </p>
         )}
 

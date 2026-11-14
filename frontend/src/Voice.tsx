@@ -65,7 +65,17 @@ export function MicButton({ voice, disabled }: { voice: ReturnType<typeof useVoi
 
 // What the voice is doing, in one quiet line under the box.
 export function VoiceStatus({ voice }: { voice: ReturnType<typeof useVoice> }) {
-  const t = useCopy().UI.voice
+  const u = useCopy().UI
+  const t = u.voice
+  if (voice.state === 'listening' && voice.mode === 'answer')
+    return (
+      <p className="voice-status live" role="status">
+        {u.question.listening}{' '}
+        <button type="button" className="link accent inline" onClick={voice.cancel}>
+          {u.question.cancel}
+        </button>
+      </p>
+    )
   if (voice.state === 'intro')
     return (
       <div className="voice-note" role="dialog" aria-label={t.mic}>

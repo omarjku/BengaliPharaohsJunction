@@ -30,10 +30,11 @@ export const voiceSupported = () =>
 
 export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (text: string) => void) {
   const [state, setState] = useState<VoiceState>('idle')
-  const [mode, setMode] = useState<'hold' | 'toggle'>('hold')
+  const [mode, setMode] = useState<'hold' | 'toggle' | 'answer'>('hold') // answer: opened by itself after a spoken question
   const [message, setMessage] = useState<string | null>(null)
   const levelEl = useRef<HTMLElement | null>(null) // the ring that breathes with the voice level
   const rec = useRef<{ recorder: MediaRecorder; stream: MediaStream; ctx: AudioContext; raf: number } | null>(null)
+  const discard = useRef(false) // Cancel: stop listening and throw the recording away
 
   function cleanup() {
     const r = rec.current
@@ -46,13 +47,13 @@ export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (
   }
   useEffect(() => cleanup, [])
 
-  async function start(asToggle: boolean) {
+  async function start(asToggle: boolean, forAnswer = false) {
     if (!store.get(INTRO_KEY)) {
       setState('intro') // explain once, before the browser asks for the microphone
       return
     }
     setMessage(null)
-    setMode(asToggle ? 'toggle' : 'hold')
+    setMode(forAnswer ? 'answer' : asToggle ? 'toggle' : 'hold')
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const recorder = new MediaRecorder(stream)
@@ -61,6 +62,11 @@ export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (
       recorder.onstop = async () => {
         const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' })
         cleanup()
+        if (discard.current) {
+          discard.current = false
+          setState('idle')
+          return
+        }
         setState('thinking')
         try {
           onText(await transcribe(blob))
@@ -98,6 +104,12 @@ export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (
   function stop() {
     if (rec.current && rec.current.recorder.state === 'recording') rec.current.recorder.stop()
   }
+  function cancel() {
+    if (rec.current && rec.current.recorder.state === 'recording') {
+      discard.current = true
+      rec.current.recorder.stop()
+    } else setState('idle')
+  }
 
   function acceptIntro() {
     store.set(INTRO_KEY, '1')
@@ -106,7 +118,7 @@ export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (
     void start(true) // the button press is the gesture the browser needs; tap the mic again to send
   }
 
-  return { state, mode, message, levelEl, start, stop, acceptIntro, dismiss: () => {
+  return { state, mode, message, levelEl, start, stop, cancel, acceptIntro, dismiss: () => {
     setState('idle')
     levelEl.current?.focus()
   } }
@@ -117,14 +129,21 @@ export function useReadBack() {
   const [muted, setMuted] = useState(() => store.get(MUTE_KEY) === '1')
   const canSpeak = typeof window !== 'undefined' && 'speechSynthesis' in window
   const said = useRef('') // each sentence once, however often React re-renders
+  // onEnd runs once the sentence has been said (or straight away when muted), e.g. to open the mic for an answer.
   const speak = useCallback(
-    (text: string) => {
-      if (!canSpeak || muted || said.current === text) return
+    (text: string, opts: { lang?: 'fi' | 'en'; onEnd?: () => void } = {}) => {
+      if (!canSpeak || muted || said.current === text) return void opts.onEnd?.()
       said.current = text
       speechSynthesis.cancel()
       const u = new SpeechSynthesisUtterance(spoken(text))
-      u.lang = 'en-GB'
+      u.lang = opts.lang === 'fi' ? 'fi-FI' : 'en-GB'
       u.rate = 1.02
+      if (opts.onEnd) {
+        let done = false
+        const end = () => !done && ((done = true), opts.onEnd!())
+        u.onend = end
+        u.onerror = end
+      }
       speechSynthesis.speak(u)
     },
     [canSpeak, muted],
@@ -146,3 +165,7 @@ export const spoken = (text: string) =>
     .replace(/€([\d,]+)\.(\d\d)\b/g, '$1 euros $2')
     .replace(/€([\d,]+)/g, '$1 euros')
     .replace(/euros (order|weekly|per-line|auto-approve|limit|budget)/g, 'euro $1') // "the 1,500 euro order limit"
+
+// The request's language, for the read-back voice (the same test the backend uses for `speak`).
+export const languageOf = (text: string): 'fi' | 'en' =>
+  /[äö]|\b(maito\w*|kerma\w*|voi(ta|n)?|litraa|kiloa|heti|tänään|huomenna|maanantai\w*|tarvitsen|tilaa|kpl)\b/i.test(text) ? 'fi' : 'en'

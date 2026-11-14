@@ -1,6 +1,6 @@
 // Everything the chef reads that isn't data lives here, so wording can be tuned in one place.
 // Voice: a calm colleague. Short sentences, plain words, the number that matters, no system-speak.
-import { flagLabel, formatCents, formatDateTime, formatDay, formatEuro, stockText } from './format'
+import { flagLabel, formatCents, formatDateTime, formatDay, formatEuro, ownWords, stockText } from './format'
 import type { Mandate, RuleChange, Reason } from './types'
 
 const euro = (cents: number) => {
@@ -12,6 +12,17 @@ const euro = (cents: number) => {
 const num = (v: unknown) => (typeof v === 'number' ? v : null)
 
 // The headline for a reason, built from its facts when we know the code; otherwise the backend's own sentence.
+const DOOR_STATUS: Record<string, string> = { confirmed: 'confirmed', pending_approval: 'held for your OK', refused: 'refused', rejected: 'rejected' }
+
+// The backend's questions back to the chef, said in this language. Unknown ones are shown as the backend wrote them.
+export function question(q: string, r?: Reason | null): string {
+  const mins = num(r?.facts.minutes_ago)
+  if (mins !== null) return `You ordered this ${mins} minute${mins === 1 ? '' : 's'} ago. Order again?`
+  const past = /^\w+ (\d{1,2} \w+ \d{4}) is in the past\./.exec(q)
+  if (past) return `${past[1].replace(/^0/, '')} is in the past. Which delivery day?`
+  return q
+}
+
 export function headline(r: Reason): string {
   const f = r.facts
   switch (r.code) {
@@ -59,6 +70,12 @@ export function headline(r: Reason): string {
       break
     case 'PRICE_CHANGED':
       return 'The price changed since you last saw it.'
+    case 'CONFIDENCE_OK':
+      if (num(f.confidence) !== null) return `${matched(num(f.confidence)!)}.`
+      break
+    case 'FRONT_DOOR':
+      if (typeof f.status === 'string') return `Sent to Valio’s front door: ${DOOR_STATUS[f.status] ?? f.status}.`
+      break
   }
   return r.message
 }
@@ -118,10 +135,11 @@ const cents = (v: unknown) => euro(Math.round(Number(v)))
 const words = (v: unknown) => String(v).toLowerCase().replace(/_/g, ' ')
 
 // The rules in force, one plain sentence each, with the chef's own words when the rule came from them.
-export function ruleLines(m: Mandate): { text: string; said: string | null }[] {
-  const out: { text: string; said: string | null }[] = []
+// `words`, when set, is how the line is written back into the editable text (exact ids and dates).
+export function ruleLines(m: Mandate): { text: string; said: string | null; words?: string }[] {
+  const out: { text: string; said: string | null; words?: string }[] = []
   for (const r of m.hard_rules) {
-    const said = r.source_text?.startsWith('Default:') ? null : r.source_text
+    const said = ownWords(m, r.source_text)
     switch (r.kind) {
       case 'excluded_allergen': out.push({ text: `Never anything with ${allergen(r.value)}.`, said }); break
       case 'required_claim': out.push({ text: `Only products that are ${words(r.value)}.`, said }); break
@@ -135,27 +153,22 @@ export function ruleLines(m: Mandate): { text: string; said: string | null }[] {
   }
   out.push({ text: `At most ${euro(m.per_line_cap_cents)} for one product in an order.`, said: null })
   if (m.weekly_budget_cents) out.push({ text: `A budget of ${euro(m.weekly_budget_cents)} a week.`, said: null })
-  if (m.blocklist.length) out.push({ text: `${m.blocklist.length} product${m.blocklist.length > 1 ? 's are' : ' is'} never ordered.`, said: null })
+  if (m.blocklist.length)
+    out.push({ text: `${m.blocklist.length} product${m.blocklist.length > 1 ? 's are' : ' is'} never ordered.`, said: null, words: `Never order product ${m.blocklist.join(', ')}.` })
   out.push({
     text: { ask: 'When the agent can’t check something, it asks you.', decline: 'When the agent can’t check something, it doesn’t order.', approve: 'When the agent can’t check something, it orders anyway.' }[m.uncertainty_policy] ?? '',
     said: null,
   })
   for (const g of m.guidance) out.push({ text: `Preference: ${g.text}`, said: null })
-  if (m.expires_at) out.push({ text: `These rules end on ${new Date(m.expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}.`, said: null })
+  if (m.expires_at)
+    out.push({ text: `These rules end on ${new Date(m.expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}.`, said: null, words: `These rules end on ${m.expires_at.slice(0, 10)}.` })
   return out
 }
 
-// The chef's own words for the current rules: the starting text when they change them, so nothing drops by accident.
-// Limits without the chef's own words (per-line cap, weekly budget) are written out too, or recompiling would drop them.
-export const ruleWords = (m: Mandate) =>
-  [
-    ...new Set([
-      ...m.hard_rules.map((r) => r.source_text).filter((t): t is string => !!t && !t.startsWith('Default:')),
-      `At most ${euro(m.per_line_cap_cents)} for one product in an order.`,
-      ...(m.weekly_budget_cents ? [`A budget of ${euro(m.weekly_budget_cents)} a week.`] : []),
-      ...m.guidance.map((g) => g.text),
-    ]),
-  ].join('\n')
+// The starting text when the chef changes their rules: every rule as one plain sentence (blocked products and the end
+// date included), so recompiling it keeps everything and only what the chef edits changes. Not the source quotes: the
+// compiler may give every rule the whole original text.
+export const ruleWords = (m: Mandate) => [...new Set(ruleLines(m).map((l) => l.words ?? l.text).filter(Boolean))].join('\n')
 
 const CHANGE_WORD: Record<string, string> = { tighter: 'Stricter', looser: 'Looser', changed: 'Changed' }
 export const changeWord = (c: RuleChange) => CHANGE_WORD[c.change] ?? c.change
@@ -231,6 +244,15 @@ export const UI = {
     plan: 'Plan the cart',
     planning: 'Planning…',
     guests: (n: number) => `For ${n} guests.`,
+    answer: 'Your answer',
+    send: 'Send',
+    sending: 'Sending…',
+    orderAgain: 'Order again',
+    leave: 'No, leave it',
+    leftAlone: 'Nothing was ordered.',
+    listening: 'Listening for your answer… tap the mic to send.',
+    cancel: 'Cancel',
+    expired: 'That question has expired. Please say the whole order again.',
   },
   keys: {
     title: 'Keys',
@@ -250,6 +272,8 @@ export const UI = {
   result: {
     aria: 'Agent result',
     orderedFor: (d: string) => `Ordered for ${d}.`,
+    frontDoor: (s: string) => `Sent to Valio’s front door: ${DOOR_STATUS[s] ?? s.replace(/_/g, ' ')}.`,
+    seeHistory: 'See it in History',
     rejected: 'Rejected. Nothing was ordered.',
     of: (amount: string, name: string) => `${amount} of ${name}`,
     products: (n: number) => `${n} products`,
@@ -333,7 +357,7 @@ export const UI = {
     changesAnnounce: (n: number) => `${n} ${plural(n, 'change', 'changes')} to your rules. Not saved yet.`,
     injectionTitle: 'Part of this reads like an instruction to the agent, not a rule.',
     injectionBody: 'Check where the text came from before you save.',
-    fallback: 'Gemini wasn’t available, so a simpler reader was used. Check the changes carefully.',
+    fallback: 'These rules couldn’t be read, so nothing would change. Write them as short, plain sentences and check again.',
     before: 'Before you save',
     skipped: (q: string) => `Skipped: ${q}`,
     undo: 'Undo',

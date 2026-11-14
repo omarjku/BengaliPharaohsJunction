@@ -86,6 +86,12 @@ A kebab shop ordering döner meat shouldn't be asked "for how many guests". So t
 - **Lighthouse (mobile, production build):** performance 95, accessibility 100, best practices 96, SEO 100. The missing points come from having no backend in the local run: the offline banner shifts the layout and the console logs the failed health check. With the mock build the scores are 99/100/100/100. There are no web fonts and no images; the JS is 96 KB gzipped.
 - Final deck/video screenshots from the real backend are in `screens/final/` (`frontend/scripts/capture.mjs`).
 
+## Answering the agent (follow-ups)
+- When the agent asks something it can continue from ("How much cream?", "For which delivery day?", "Order again?"), only the question shows, with the answer right under it: a field with the mic inside it and **Send**, or **Order again / No, leave it**. The answer goes back as a `follow_up` to the same request, for as many rounds as it takes.
+- When the request was made by voice, the backend's `speak` sentence is read aloud in the request's language, then the mic opens by itself ("Listening for your answer… tap the mic to send", with Cancel). Typing works just as well. An expired question (404) is shown and said: "That question has expired. Please say the whole order again."
+- Questions that can't be answered inline (off-topic, a date in the past) are said plainly, in Finnish too, and leave the box open.
+- `CONFIDENCE_OK` is the calm "Matched by Gemini · 84%" line, never a warning. `FRONT_DOOR` is one quiet line under it, "Sent to Valio's front door: confirmed", with a link to History. Both stay out of "Also worth knowing".
+
 ## Known gaps
 - Product names come straight from Valio's catalogue ("Valio Eila® 3 % milk drink 1 l lactose free"). Cleaning them up would need a naming pass in the data.
 - History can't tell "Valio held for your OK" apart from "Valio refused" when the front door's outcome was an ask, because the audit entry doesn't store the order status. The opening screen's waiting count avoids this by checking each order's real status.
