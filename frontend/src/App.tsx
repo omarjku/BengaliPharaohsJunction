@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { ApiError, askAgentStream, DROPPED, getAdminKey, getHealth, getKeys, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
+import { ApiError, askAgentStream, DROPPED, getAdminKey, getHealth, getKeys, KEYS_FROM_LINK, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
 import { buyerLabel, errorText, nextMonday } from './format'
 import { groupHistory } from './history'
@@ -95,6 +95,13 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const [auditKey, setAuditKey] = useState(0)
   const [deciding, setDeciding] = useState(false) // approve/reject in flight
   const [announce, setAnnounce] = useState('')
+  // Opened from a setup link: say once, quietly, that the keys were saved (api.ts read and removed the link).
+  const [fromLink, setFromLink] = useState(KEYS_FROM_LINK)
+  useEffect(() => {
+    if (!fromLink) return
+    const t = setTimeout(() => setFromLink(false), 6000)
+    return () => clearTimeout(t)
+  }, [fromLink])
   const phaseLine = usePhaseLine(400)
   const refreshAudit = () => setAuditKey((k) => k + 1)
   const offline = useBackendDown()
@@ -312,6 +319,11 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         {MOCK && (
           <p className="mock" role="note">
             <strong>{u.mock.title}</strong> {u.mock.body}
+          </p>
+        )}
+        {fromLink && (
+          <p className="note banner" role="status">
+            {u.keys.fromLink}
           </p>
         )}
         {offline && (
@@ -748,6 +760,7 @@ function KeysForm({
           {title}
         </h1>
         {intro && <p className="note">{intro}</p>}
+        <p className="note small">{k.tip}</p>
       </div>
       <SecretField id="agent-key" label={k.agent} help={k.agentHelp} value={keys.agentKey} onChange={(v) => setDraft({ ...keys, agentKey: v })} />
       <SecretField id="approver-key" label={k.approver} help={k.approverHelp} value={keys.approverKey} onChange={(v) => setDraft({ ...keys, approverKey: v })} />

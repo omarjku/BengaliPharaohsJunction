@@ -275,6 +275,8 @@ export const UI = {
     agentHelp: 'Lets the agent place orders for your kitchen.',
     approver: 'Approver key',
     approverHelp: 'Yours alone. It approves orders and shows the history.',
+    tip: 'Tip: a setup link fills these in.',
+    fromLink: 'Keys saved on this device.',
     show: 'Show',
     hide: 'Hide',
   },

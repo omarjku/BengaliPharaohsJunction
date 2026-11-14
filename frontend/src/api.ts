@@ -35,6 +35,20 @@ export const setKeys = (next: ApiKeys) => {
   }
 }
 
+// One-tap setup link: <site>/#agent=<key>&approver=<key> (either part optional) saves the keys on this device when
+// the page loads, before any API call. The hash never reaches a server, is never logged, and is removed from the
+// address bar at once, so it isn't left in history or screenshots. A part missing from the link keeps the saved key.
+export const KEYS_FROM_LINK = (() => {
+  if (typeof window === 'undefined' || !window.location.hash) return false
+  const link = new URLSearchParams(window.location.hash.slice(1))
+  const agentKey = link.get('agent')?.trim()
+  const approverKey = link.get('approver')?.trim()
+  if (!agentKey && !approverKey) return false
+  setKeys({ agentKey: agentKey || keys.agentKey, approverKey: approverKey || keys.approverKey })
+  window.history.replaceState(null, '', window.location.pathname + window.location.search)
+  return true
+})()
+
 // Valio staff's own key (read-only across buyers), kept apart from the kitchen's keys.
 const ADMIN_STORAGE = 'valio-aimo-admin-key'
 let adminKey = (() => {
