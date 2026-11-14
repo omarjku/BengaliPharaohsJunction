@@ -244,10 +244,13 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
     items = ingredients  # agent.canonical() tells the judge which dishes each ingredient is for
     needs = sorted({c for i in ingredients for c in i.get("claims") or []})
     if needs:  # said once for the cart, in plain words; each unlabelled line then says "check the label"
-        words = " and ".join(agent._claim_words(needs))
-        reasons.append(gate._r(C.MENU_ASSUMPTIONS, gate.INFO, f"{words.capitalize()}: I only pick products Valio "
-                               f"labels {words}. Where Valio labels none (often cheese, oil or butter), the closest "
-                               "product is shown and the line says 'check the label'.", None, None, claims=", ".join(needs)))
+        words = agent._claim_words(needs)
+        rule = (f"{words[0].capitalize()}: I only pick products Valio labels {words[0]}." if len(words) == 1 else
+                f"{' and '.join(words).capitalize()}: where an ingredient needs it, I only pick products Valio labels "
+                "that way.")
+        reasons.append(gate._r(C.MENU_ASSUMPTIONS, gate.INFO, rule + " Where Valio labels none (often cheese, oil or "
+                               "butter), the closest product is shown and the line says 'check the label'.", None, None,
+                               claims=", ".join(needs)))
 
     res, checks = await asyncio.gather(  # pricing and the assumption checks run side by side
         agent._pipeline(menu_text, items, requested, buyer_id, m, excluded, now, reasons, True),

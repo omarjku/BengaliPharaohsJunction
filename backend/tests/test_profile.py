@@ -203,3 +203,38 @@ def test_a_doubted_menu_line_is_not_in_order_lines(shop1, monkeypatch):  # noqa:
     assert body["check_lines"] and all(x["product_id"] not in in_order for x in body["check_lines"])
     assert "mozzarella" in body["check_lines"][0]["name"].lower()
     assert any(r["message"].startswith("Left out of the order lines") for r in reasons(body))
+
+
+def test_gemini_down_a_product_word_still_asks_the_amount(shop1, monkeypatch, tmp_path):  # noqa: F811
+    """Black-box B3: with Gemini timing out, 'lactose-free milk for Monday' was called off-topic."""
+    from app import conversation
+    monkeypatch.setattr(conversation, "STORE", tmp_path / "conv.json")
+
+    async def down(*a, **k):
+        return None
+    monkeypatch.setattr(agent, "_gemini", down)
+    body = post("lactose-free milk for Monday")
+    assert body["intent"] == "order" and body["question"].startswith("How much milk?") and body["conversation_id"]
+
+
+def test_an_unsure_order_asks_which_one_and_the_answer_continues(shop1, monkeypatch, tmp_path):  # noqa: F811
+    """Black-box #8: 'cream' at 0.50 ended with no question, no conversation and no order."""
+    from app import conversation
+    monkeypatch.setattr(conversation, "STORE", tmp_path / "conv.json")
+    pizza_shop(shop1)
+    fake(monkeypatch, [{"query": "mozzarella", "amount": 2, "unit": "L", "dietary": []}])
+    real = agent.judge_line
+    seen = []
+
+    async def judge(text, p, expl):
+        seen.append(text)
+        conf, why, weakest = await real(text, p, expl)
+        return 0.5, why, weakest
+    monkeypatch.setattr(agent, "judge_line", judge)
+    body = post("2 L mozzarella for Monday")
+    assert body["order"] is None and body["question"].startswith("Which one did you mean: 1) Mozzarella")
+    assert body["conversation_id"]
+    r = c.post("/api/agent/ask", json={"follow_up": {"to": body["conversation_id"], "answer": "the second"}},
+               headers={"X-Agent-Key": "agent-lk"})
+    assert r.status_code == 200, r.text
+    assert r.json()["intent"] == "order"  # the request re-ran with the chosen product added
