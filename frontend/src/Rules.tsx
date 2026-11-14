@@ -1,17 +1,22 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { compileRules, getKeys, getMandate, MOCK, saveMandate } from './api'
-import { changeText, changeWord, loosenSentence, ruleLines, ruleWords } from './copy'
+import { ApiError, compileRules, getKeys, getMandate, MOCK, saveMandate } from './api'
 import { errorText } from './format'
+import { useCopy } from './i18n'
 import type { CompileResult, Mandate } from './types'
 
 type Props = { refreshKey: number; onAction: () => void; onAnnounce: (text: string) => void }
 
 // The chef's rules: read them in plain words, rewrite them in plain words, check what changes, then save.
 // Compile never saves; saving needs every open question answered or skipped, and a second yes for anything looser.
+// Saves carry the version the chef was looking at (If-Match), so nobody silently overwrites someone else's change.
 export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
+  const c = useCopy()
+  const t = c.UI.rules
   const approverKey = getKeys().approverKey
   const canRead = MOCK || Boolean(approverKey)
   const [current, setCurrent] = useState<Mandate | null | undefined>(undefined) // undefined = loading
+  const [version, setVersion] = useState<string | null>(null) // the ETag of the rules on screen
+  const [reload, setReload] = useState(0)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [text, setText] = useState<string | null>(null) // null until the current rules prefill it
   const [proposal, setProposal] = useState<CompileResult | null>(null)
@@ -20,6 +25,7 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
   const [busy, setBusy] = useState<'check' | 'save' | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [conflict, setConflict] = useState(false) // someone else saved first: the latest rules are shown
   const [saved, setSaved] = useState<string | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
 
@@ -28,35 +34,36 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
     setLoadError(null)
     if (!canRead) return
     getMandate().then(
-      (m) => {
+      ({ mandate, etag }) => {
         if (cancelled) return
-        setCurrent(m)
-        setText((t) => t ?? (m ? ruleWords(m) : ''))
+        setCurrent(mandate)
+        setVersion(etag)
+        setText((old) => old ?? (mandate ? c.ruleWords(mandate) : ''))
       },
       (e) => !cancelled && setLoadError(errorText(e)),
     )
     return () => {
       cancelled = true
     }
-  }, [canRead, approverKey, refreshKey])
+  }, [canRead, approverKey, refreshKey, reload, c])
 
   useEffect(() => {
-    if (proposal || saved) heading.current?.focus()
-  }, [proposal, saved])
+    if (proposal || saved || conflict) heading.current?.focus()
+  }, [proposal, saved, conflict])
 
   async function check(withText: string) {
     setBusy('check')
     setError(null)
     setSaved(null)
+    setConflict(false)
     setConfirming(false)
-    onAnnounce('Reading your rules…')
+    onAnnounce(t.readingAnnounce)
     try {
       const res = await compileRules(withText)
       setProposal(res)
       setAnswers({})
       setSkipped(new Set())
-      const n = res.diff_from_current.length
-      onAnnounce(`${n} change${n === 1 ? '' : 's'} to your rules. Not saved yet.`)
+      onAnnounce(t.changesAnnounce(res.diff_from_current.length))
     } catch (err) {
       setError(errorText(err))
     } finally {
@@ -80,7 +87,7 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
   const questions = proposal?.open_questions ?? []
   const open = questions.map((_, i) => i).filter((i) => !skipped.has(i))
   const typed = open.some((i) => answers[i]?.trim())
-  const looser = proposal?.diff_from_current.filter((c) => c.change === 'looser') ?? []
+  const looser = proposal?.diff_from_current.filter((ch) => ch.change === 'looser') ?? []
 
   async function save() {
     if (!proposal || open.length) return
@@ -94,46 +101,61 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
       const keep = proposal.proposed_mandate.open_questions.filter((_, i) => !skipped.has(i))
       const res = await saveMandate(
         { ...proposal.proposed_mandate, open_questions: keep },
-        proposal.diff_from_current.some((c) => c.needs_confirmation),
+        proposal.diff_from_current.some((ch) => ch.needs_confirmation),
+        version,
       )
       setCurrent(res.mandate)
-      setText(ruleWords(res.mandate))
+      setVersion(res.etag)
+      setText(c.ruleWords(res.mandate))
       setProposal(null)
       setConfirming(false)
-      const n = res.changes.length
-      setSaved(n ? `Saved. ${n} change${n === 1 ? '' : 's'} to your rules.` : 'Saved. Your rules are the same as before.')
-      onAnnounce('Rules saved.')
+      setSaved(t.saved(res.changes.length))
+      onAnnounce(t.savedAnnounce)
       onAction()
     } catch (err) {
-      setError(errorText(err))
       setConfirming(false)
+      if (err instanceof ApiError && err.status === 412) {
+        // Someone saved first. Show their rules; the chef's text stays in the box to check again.
+        setProposal(null)
+        setConflict(true)
+        setReload((n) => n + 1)
+        onAnnounce(t.conflict)
+      } else setError(errorText(err))
     } finally {
       setBusy(null)
     }
   }
 
-  if (!canRead) return <p className="problem">Add your approver key under Keys to see and change your rules.</p>
+  if (!canRead) return <p className="problem">{t.needKey}</p>
 
   return (
     <>
       <div className="ask">
-        <h1 className="title">Your rules</h1>
-        <p className="note">What the agent follows on every order. Valio’s front door checks them again.</p>
+        <h1 className="title">{t.title}</h1>
+        <p className="note">{t.intro}</p>
       </div>
+      {conflict && (
+        <div className="problem" role="status">
+          <strong ref={heading} tabIndex={-1}>
+            {t.conflict}
+          </strong>
+          {t.conflictSub}
+        </div>
+      )}
       {loadError && (
         <div className="problem" role="alert">
-          <strong>Couldn’t load your rules.</strong>
+          <strong>{t.loadFailed}</strong>
           {loadError}
         </div>
       )}
-      {current === undefined && !loadError && <p className="note empty">Loading your rules…</p>}
-      {current === null && <p className="note empty">No rules yet. Until you add some, the agent asks you about every order.</p>}
+      {current === undefined && !loadError && <p className="note empty">{t.loading}</p>}
+      {current === null && <p className="note empty">{t.none}</p>}
       {current && (
         <ul className="rules">
-          {ruleLines(current).map((r, i) => (
+          {c.ruleLines(current).map((r, i) => (
             <li key={i}>
               <p>{r.text}</p>
-              {r.said && <p className="quiet small">You said: “{r.said}”</p>}
+              {r.said && <p className="quiet small">{t.youSaid(r.said)}</p>}
             </li>
           ))}
         </ul>
@@ -142,9 +164,9 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
       {text !== null && (
         <form className="ask section-gap" onSubmit={submit}>
           <label className="ask-label" htmlFor="rules-text">
-            Tell the agent your rules
+            {t.tell}
           </label>
-          <p className="note">Write them the way you’d tell a new cook. Anything you leave out goes back to the safe default.</p>
+          <p className="note">{t.tellHelp}</p>
           <textarea
             id="rules-text"
             className="ask-field rules-field"
@@ -152,13 +174,13 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
             maxLength={4000}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Never anything with peanuts. Order on your own up to €1,500; above that, ask me."
+            placeholder={t.placeholder}
             required
           />
           <div className="ask-row">
-            <p className="note">Nothing changes until you save.</p>
+            <p className="note">{t.nothingChanges}</p>
             <button type="submit" className="btn" disabled={busy !== null || !text.trim()}>
-              {busy === 'check' ? 'Reading…' : 'Check the changes'}
+              {busy === 'check' ? t.reading : t.check}
             </button>
           </div>
         </form>
@@ -166,51 +188,47 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
 
       {busy === 'check' && (
         <div className="working">
-          <p>Reading your rules and comparing them with the ones in force…</p>
+          <p>{t.readingLong}</p>
           <div className="working-bar" aria-hidden="true" />
         </div>
       )}
       {error && (
         <div className="problem" role="alert">
-          <strong>That didn’t go through.</strong>
+          <strong>{c.UI.failed}</strong>
           {error}
         </div>
       )}
 
       {saved && !proposal && (
-        <section className="answer" aria-label="Saved">
-          <p className="status good">Saved</p>
+        <section className="answer" aria-label={t.savedStatus}>
+          <p className="status good">{t.savedStatus}</p>
           <h2 ref={heading} tabIndex={-1} className="answer-text">
             {saved}
           </h2>
-          <p className="answer-sub">The agent uses them from the next order. The change is in History.</p>
+          <p className="answer-sub">{t.savedSub}</p>
         </section>
       )}
 
       {proposal && (
-        <section className="answer" aria-label="Proposed rules">
-          <p className="status neutral">Not saved yet</p>
+        <section className="answer" aria-label={t.notSaved}>
+          <p className="status neutral">{t.notSaved}</p>
           <h2 ref={heading} tabIndex={-1} className="answer-text">
-            {proposal.diff_from_current.length
-              ? `${proposal.diff_from_current.length} change${proposal.diff_from_current.length === 1 ? '' : 's'} to your rules.`
-              : 'No changes to your rules.'}
+            {t.changes(proposal.diff_from_current.length)}
           </h2>
           {proposal.injection_flagged && (
             <div className="problem">
-              <strong>Part of this reads like an instruction to the agent, not a rule.</strong>
-              Check where the text came from before you save.
+              <strong>{t.injectionTitle}</strong>
+              {t.injectionBody}
             </div>
           )}
-          {proposal.used_fallback && (
-            <p className="sure unsure">Gemini wasn’t available, so a simpler reader was used. Check the changes carefully.</p>
-          )}
+          {proposal.used_fallback && <p className="sure unsure">{t.fallback}</p>}
 
           {proposal.diff_from_current.length > 0 && (
             <ul className="changes">
-              {proposal.diff_from_current.map((c, i) => (
+              {proposal.diff_from_current.map((ch, i) => (
                 <li key={i} className="change">
-                  <span className={`change-word ${c.change}`}>{changeWord(c)}</span>
-                  <span>{changeText(c)}</span>
+                  <span className={`change-word ${ch.change}`}>{c.changeWord(ch)}</span>
+                  <span>{c.changeText(ch)}</span>
                 </li>
               ))}
             </ul>
@@ -218,13 +236,13 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
 
           {questions.length > 0 && (
             <div className="questions">
-              <h3 className="title">Before you save</h3>
+              <h3 className="title">{t.before}</h3>
               {questions.map((q, i) =>
                 skipped.has(i) ? (
                   <p key={i} className="note">
-                    Skipped: {q.question}{' '}
+                    {t.skipped(q.question)}{' '}
                     <button type="button" className="link accent" onClick={() => setSkipped((s) => new Set([...s].filter((x) => x !== i)))}>
-                      Undo
+                      {t.undo}
                     </button>
                   </p>
                 ) : (
@@ -234,7 +252,7 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
                     <div className="field-row">
                       <input id={`q-${i}`} value={answers[i] ?? ''} onChange={(e) => setAnswers((a) => ({ ...a, [i]: e.target.value }))} />
                       <button type="button" className="btn plain" onClick={() => setSkipped((s) => new Set(s).add(i))}>
-                        Skip
+                        {t.skip}
                       </button>
                     </div>
                   </div>
@@ -243,7 +261,7 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
               {typed && (
                 <div>
                   <button type="button" className="btn plain accent-text" onClick={applyAnswers} disabled={busy !== null}>
-                    Add my answers and check again
+                    {t.addAnswers}
                   </button>
                 </div>
               )}
@@ -253,7 +271,7 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
           {proposal.assumptions.length > 0 && (
             <div className="more flush">
               <details>
-                <summary>What the agent assumed ({proposal.assumptions.length})</summary>
+                <summary>{t.assumed(proposal.assumptions.length)}</summary>
                 <ul className="more-body">
                   {proposal.assumptions.map((a, i) => (
                     <li key={i}>
@@ -268,31 +286,31 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
           {confirming ? (
             <div className="confirm" role="alertdialog" aria-labelledby="confirm-title">
               <p className="title" id="confirm-title">
-                Are you sure?
+                {t.sure}
               </p>
               <ul>
-                {looser.map((c, i) => (
-                  <li key={i}>{loosenSentence(c)}</li>
+                {looser.map((ch, i) => (
+                  <li key={i}>{c.loosenSentence(ch)}</li>
                 ))}
               </ul>
               <div className="actions">
                 <button type="button" className="btn" onClick={save} disabled={busy !== null}>
-                  {busy === 'save' ? 'Saving…' : 'Yes, save these rules'}
+                  {busy === 'save' ? t.saving : t.yesSave}
                 </button>
                 <button type="button" className="btn plain" onClick={() => setConfirming(false)}>
-                  Go back
+                  {t.goBack}
                 </button>
               </div>
             </div>
           ) : (
             <div className="decide">
               <button type="button" className="btn" onClick={save} disabled={busy !== null || open.length > 0}>
-                {busy === 'save' ? 'Saving…' : 'Save rules'}
+                {busy === 'save' ? t.saving : t.save}
               </button>
               <button type="button" className="btn plain" onClick={() => setProposal(null)}>
-                Discard
+                {t.discard}
               </button>
-              {open.length > 0 && <p className="hint note">Answer or skip the questions above first.</p>}
+              {open.length > 0 && <p className="hint note">{t.answerFirst}</p>}
             </div>
           )}
         </section>

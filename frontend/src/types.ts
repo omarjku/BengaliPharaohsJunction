@@ -199,15 +199,29 @@ export type CompileResult = {
 }
 export type SaveResult = { mandate: Mandate; changes: RuleChange[]; audit_id: string }
 
-// POST /api/agent/ask: one box for everything. The intent says which body came back.
-// Assumed until Room 3 sends the final shape: requested_date = the date used (from the text or the override);
-// a menu without a guest count comes back with `question` and no cart; 'unclear' comes back with `question`.
+// POST /api/agent/ask: one box for everything (backend/app/ask.py). The intent says which body came back; a question
+// (guests, which delivery day, unclear) comes back with no cart. requested_date is the date used, from the words or the
+// override; urgent_options are suggestions when the chef needs it sooner (walk-in, Click & Collect, next delivery).
+export type UrgentOption = {
+  kind: 'walk_in' | 'click_and_collect' | 'next_delivery' | string
+  label: string
+  text: string
+  address?: string
+  hours?: string
+  phone?: string
+  assumption: boolean
+}
+type AskMeta = {
+  requested_date?: string | null
+  date_source?: 'text' | 'request' | null
+  covers?: number | null
+  urgent_options?: UrgentOption[] | null
+}
 export type AskInput = { text: string; requested_date?: string }
 export type AskResponse =
-  | ({ intent: 'order'; requested_date?: string } & AgentRun)
-  | ({ intent: 'menu'; requested_date?: string; covers?: number; question?: undefined } & MenuRun)
-  | { intent: 'menu'; requested_date?: string; question: string; audit_id?: string }
-  | { intent: 'unclear'; question: string; requested_date?: string; audit_id?: string }
+  | (AskMeta & { intent: 'order'; question?: null } & AgentRun)
+  | (AskMeta & { intent: 'menu'; question?: null } & MenuRun)
+  | (AskMeta & { intent: 'order' | 'menu' | 'unclear'; question: string; decision?: Decision; audit_id?: string })
 
 export type RunInput = { text: string; requested_date: string; buyer_id?: string }
 export type OrderInput = { requested_date: string; lines: { product_id: string; quantity: number }[] }
