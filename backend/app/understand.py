@@ -515,6 +515,15 @@ def _expand_standing_order(action: dict, message: str, buyer_id: str) -> dict:
 
     recent = profile.recent_order_for_weekday(buyer_id, day)
     day_name = day.capitalize()
+    extras = _fallback_items(_standing_remainder(message, marker))
+    if extras:
+        slots = dict(action.get("slots") or _default_slots(message))
+        slots["items"] = extras
+        expanded = [f"{item['amount']:g} {item['unit']} {item['name']}"
+                    if item.get("amount") is not None and item.get("unit") else item["name"] for item in extras]
+        return dict(action, intent="order_items", slots=slots, question=None, choices=[],
+                    interpretation=action.get("interpretation") or f"No saved {day} standing order; handling the named extra.",
+                    _expanded_text=", ".join(expanded))
     if recent and recent.get("lines"):
         lines = ", ".join(line.get("text", "") for line in recent["lines"] if line.get("text"))
         question = (f"No saved {day_name} standing order exists. I found your most recent {day_name} order "

@@ -301,14 +301,16 @@ def _busy() -> HTTPException:
     return HTTPException(409, detail="The buyer's orders changed while this one was being checked; retry.")
 
 
-async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | None) -> dict:
+async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | None,
+                forced_reasons: list | None = None) -> dict:
     """`mandate` is the buyer's stored one (mandates.get), never the client's; None → refused (MANDATE_MISSING)."""
     oid = str(uuid4())
     for _ in range(MAX_RETRIES):
         now = datetime.now(timezone.utc)
         spent = _spent_7d(buyer_id, now)
         res = await _gate({"actor": FRONT_DOOR, "buyer_id": buyer_id, "action": "order", "status": "failed"},
-                          lines, requested_date, mandate, oid, spent_7d_cents=spent, now=now)  # Valio calls, no lock
+                          lines, requested_date, mandate, oid, spent_7d_cents=spent, now=now,
+                          forced_reasons=forced_reasons)  # Valio calls, no lock
         async with _order_lock:
             if _spent_7d(buyer_id, now) != spent:
                 continue  # another order of this buyer was confirmed meanwhile: decide again on the new budget

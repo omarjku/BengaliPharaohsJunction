@@ -896,6 +896,8 @@ async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str,
                 item["profile_unlabelled"] = sorted(profile_claims)
     elif profile_claims:
         item["profile_applied"] = sorted(profile_claims)
+        item["product_assumed"] = True
+        item["product_assumption"] = item.get("profile_why")
     if not hits:
         return [], True
     ids = await match(item, hits)
@@ -1178,7 +1180,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             amount_assumptions.append({"item": n, "query": it["query"], "amount": proposal["amount"],
                                        "unit": proposal["unit"], "text": proposal["assumption"], "source": "gemini"})
 
-    lines, checked, alternatives, chosen, per_item, failed, item_reasons = [], [], [], [], [], set(), []
+    lines, checked, alternatives, chosen, per_item, failed = [], [], [], [], [], set()
+    item_reasons, approval_reasons = [], []
     threshold = mandates.confidence_threshold(buyer_id)
     limits = gate._nums(m, RuleKind.AUTO_APPROVE_LIMIT_CENTS)
     spent = orders._spent_7d(buyer_id, now)
@@ -1306,7 +1309,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                                 and (ln["confidence"] or 0) > (best["confidence"] or 0)), None)
             best["usual"] = best["product"]["id"] in usual
             reasons += _label_reasons(it, best)
-            if it.get("amount_assumed"):
+            if it.get("amount_assumed") and not it.get("approval_required"):
                 assumed = f"{gate._qty(it['amount'])} {it['unit']} {it['query']}"
                 r = gate._r(C.QTY_AMBIGUOUS, ASK, f"I assumed {assumed}: {it['amount_assumption']} Nothing is ordered "
                             "until you approve this amount or change it.", best["product"]["id"],
@@ -1316,6 +1319,26 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             dietary_reasons = _dietary_reasons(it, best["product"], best["diet_checks"])
             reasons += dietary_reasons
             dietary_reason = _dietary_line_reason(best["product"], best["diet_checks"])
+            approval = it.get("approval_required") or {}
+            if approval or it.get("product_assumed"):
+                details = []
+                if approval.get("product_from") and approval.get("product_to"):
+                    details.append(f"Changed the product from {approval['product_from']} to {approval['product_to']}.")
+                if approval.get("amount_assumed") and approval.get("amount") is not None:
+                    details.append(
+                        f"The amount was proposed as {gate._qty(approval['amount'])} {approval.get('unit') or it['unit']}."
+                        + (f" {approval['assumption']}" if approval.get("assumption") else ""))
+                if it.get("product_assumed"):
+                    details.append(f"The product was selected using the kitchen profile ("
+                                   f"{it.get('product_assumption') or 'a profile preference'}).")
+                details.append("Held for the chef's approval; nothing is auto-confirmed.")
+                r = gate._r(C.ASSUMPTION_CONFIRM, ASK, " ".join(details), best["product"]["id"],
+                            "Approve this order on screen, or state the product and amount explicitly.",
+                            assumption_type="amount" if approval.get("amount_assumed") else "product",
+                            product_from=approval.get("product_from"), product_to=approval.get("product_to"),
+                            amount=approval.get("amount"), unit=approval.get("unit"))
+                reasons.append(r)
+                approval_reasons.append(r)
             late = next((r for r in best_asks if r.code is C.DATE_NOT_HONOURED), None)  # QA VT-05: say it plainly
             when = (f"orderable, but it arrives {late.facts.get('available_date')}, not {requested}" if late
                     else f"orderable for {requested}")
@@ -1353,7 +1376,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                         f"Also matches {label}: {_name(line['product'])}, {_offer(line)}.")))
         finally:  # problems found for THIS item: it is withheld, the other items can still be ordered
             item_reasons.extend(reasons[mark:])
-            if any(r.severity is not INFO for r in reasons[mark:]):
+            if any(r.severity is not INFO and r.code is not C.ASSUMPTION_CONFIRM for r in reasons[mark:]):
                 failed.add(n)
 
     # Guard (Gemini Decisions): is the chosen quantity believable for this kitchen? Only adds a question.
@@ -1381,7 +1404,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
     rejected = [RejectedOption(product_id=line["product"]["id"], reasons=gate._sorted(rs)) for line, rs in checked
                 if not line["chosen"] and any(r.severity is not INFO for r in rs)]
     return {"lines": lines, "chosen": chosen, "alternatives": alternatives, "rejected": rejected, "quotes": quotes,
-            "failed_items": failed, "item_reasons": item_reasons, "assumptions": amount_assumptions}
+            "failed_items": failed, "item_reasons": item_reasons, "assumptions": amount_assumptions,
+            "approval_reasons": approval_reasons}
 
 
 
@@ -1606,8 +1630,8 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
                                "Say what to order and how much, e.g. '1000 L lactose-free milk'."))
 
     res = await _pipeline(text, request["items"], requested, buyer_id, m, excluded, now, reasons, parsed_by_gemini)
-    lines, chosen, alternatives, rejected, quotes, assumptions = (res[k] for k in ("lines", "chosen", "alternatives",
-                                                                                       "rejected", "quotes", "assumptions"))
+    lines, chosen, alternatives, rejected, quotes, assumptions, approval_reasons = (res[k] for k in (
+        "lines", "chosen", "alternatives", "rejected", "quotes", "assumptions", "approval_reasons"))
     contract_quotes = [cq.model_copy(update={"product_name": _name(catalogue.get(pid) or {"id": pid})})
                        for pid, q in quotes.items() if (cq := valio.to_contract_quote(q))]
 
@@ -1650,7 +1674,8 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
                 progress.phase("ordering")
                 order = await orders.place(buyer_id, requested, [SimpleNamespace(product_id=ln["product"]["id"],
                                                                                  quantity=ln["quantity"]["quantity"])
-                                                                 for ln in orderable], mandate)
+                                                                 for ln in orderable], mandate,
+                                      forced_reasons=approval_reasons)
             except HTTPException as e:
                 reasons.append(gate._r(C.ENGINE_ERROR, ASK, f"The front door couldn't take the order: {e.detail}", None,
                                        "Retry in a moment."))

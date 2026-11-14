@@ -324,6 +324,32 @@ def _line_refused(entry: dict) -> dict:
                 "Say the whole order again.")
 
 
+def _product_words(answer: str) -> str | None:
+    """Read product words from an amount answer, leaving the catalogue to match them again.
+
+    The answer is chef data, not a second structured parse. Strip only quantity and conversational wrapper words;
+    product words, including Finnish ones such as ``kaurajuoma``, remain untouched.
+    """
+    value = conversation.spoken_to_digits(answer).strip()
+    value = re.sub(r"^\s*(?:please\s+)?(?:replace|swap)\s+.+?\s+(?:with|by|to)\s+", "", value,
+                   flags=re.I)
+    value = re.sub(r"^\s*(?:please\s+)?(?:make|switch|change|use|set)\s+(?:it|this|that|the\s+product|the\s+item)?"
+                   r"\s*(?:to|with|as)?\s*", "", value, flags=re.I)
+    value = re.sub(r"^\s*(?:please\s+)?(?:i(?:'d| would)?\s+like|i\s+want(?:\s+to)?|vaihda|käytä|tee\s+siitä)\s+",
+                   "", value, flags=re.I)
+    value = re.split(r"\b(?:instead\s+of|rather\s+than)\b", value, maxsplit=1, flags=re.I)[0]
+    value = re.sub(r"\b(?:instead|please|thanks?|thank\s+you)\b.*$", "", value, flags=re.I)
+    value = re.sub(r"^\s*\d[\d,.]*(?:\s*x\s*\d[\d,.]*)?\s*"
+                   r"(?:litres?|liters?|litraa|kappaletta|pieces?|pcs?|kpl|kiloa|kilograms?|l|dl|cl|ml|kg|g)?\b\s*"
+                   r"(?:of\s+)?", "", value, flags=re.I)
+    value = re.sub(r"\b(?:for|by|on|delivered)\b.*$", "", value, flags=re.I)
+    words = re.findall(r"[\wäöåÄÖÅ'-]+", value)
+    stop = {"a", "an", "as", "it", "the", "to", "with", "of", "please", "product", "item", "vaihda",
+            "käytä", "tee", "siitä"}
+    words = [word for word in words if word.lower() not in stop]
+    return " ".join(words)[:120].strip() or None
+
+
 async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, date | None]:
     """Fill only the asked field from the answer, then re-run every check. → (response, original text, date)."""
     text, kind = entry["text"], entry["kind"]
@@ -379,24 +405,58 @@ async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, d
             return await _flow(merged, requested, buyer_id, parsed=(one, True)), merged, requested
         merged = f"{text} ({choice})"  # same clause: the amount the chef gave stays with the product
         return await _flow(merged, requested, buyer_id), merged, requested
-    # amount: only the asked item's amount and unit change; the stored parse, buyer and mandate stay
+    # amount: the stored parse, buyer and mandate stay, but a product named in the answer replaces the old query.
     request, n_item = entry["request"], entry["item"]
     item = request["items"][n_item]
     unit = entry.get("unit") or item.get("unit") or agent.natural_unit(item)[0]
+    product = _product_words(answer)
     got = conversation.amount_in(answer, unit)
-    if got is None:
+    if got is None and product is None:
         question = entry.get("amount_question") or agent.amount_question(item, unit=unit)
         return again(question, agent.amount_example(item, unit=unit)), text, requested
-    item["amount"], item["unit"] = got
+
+    prior_amount_assumed = item.get("amount_assumed")
+    prior_amount_assumption = item.get("amount_assumption")
+    prior_product_assumed = item.get("product_assumed")
+    prior_approval = dict(item.get("approval_required") or {})
+    change = None
+    if product:
+        old_query = item["query"]
+        if product.lower() != old_query.lower():
+            item["query"], item["source"] = product, product
+            change = {"item": n_item, "from": old_query, "to": product}
+            prior_approval.update(product_from=old_query, product_to=product)
+        prior_approval.update(product_changed=True)
+    if got is not None:
+        item["amount"], item["unit"] = got
+    if prior_amount_assumed or prior_product_assumed:
+        prior_approval.update(
+            amount_assumed=bool(prior_amount_assumed),
+            amount=item.get("amount"),
+            unit=item.get("unit"),
+            assumption=prior_amount_assumption,
+            product_assumed=bool(prior_product_assumed),
+        )
+    if prior_approval:
+        item["approval_required"] = prior_approval
     item.pop("amount_assumed", None)
     item.pop("amount_assumption", None)
     item.pop("amount_options", None)
-    merged = f"{text}. {got[0]:g} {got[1]} {item['query']}"  # grounding finds amount + unit + product in one clause
+    amount = item.get("amount")
+    amount_unit = item.get("unit") or unit
+    amount_words = f"{amount:g} {amount_unit} " if amount is not None and amount_unit else ""
+    merged = f"{text}. {amount_words}{item['query']}"  # grounding finds amount + unit + product in one clause
     if entry.get("line_only"):  # one held line of a list: the lines already ordered are not sent again
         if not _line_grounded(entry):
             return _line_refused(entry), text, requested
-        request, merged = {**request, "items": [item]}, f"{got[0]:g} {got[1]} {item['query']}"
-    return await _flow(merged, requested, buyer_id, parsed=(request, True)), merged, requested
+        request, merged = {**request, "items": [item]}, f"{amount_words}{item['query']}"
+    out = await _flow(merged, requested, buyer_id, parsed=(request, True))
+    if change:
+        if out.get("_v2") and out["_v2"].get("cards"):
+            out["_v2"]["cards"][0] = dict(out["_v2"]["cards"][0], changes=[change])
+        else:
+            out["changes"] = [change]
+    return out, merged, requested
 
 
 def _legacy_intent(intent: str) -> str:
@@ -430,10 +490,18 @@ def _parsed_action(action: dict, source: str, text: str) -> tuple[dict, bool]:
     for item in slots.get("items") or []:
         if not item.get("name"):
             continue
-        parsed = agent._item(item["name"], item.get("amount"), item.get("unit"), tags, source=item["name"])
+        parsed = agent._item(item["name"], item.get("amount"), item.get("unit"), agent._diet_tags(item, tags),
+                             source=item.get("source") or item["name"])
         if item.get("_standing_order"):
-            parsed.update(amount_assumed=True,
-                          amount_assumption="from your saved standing order; confirm this remembered line before ordering")
+            assumption = "from your saved standing order; confirm this remembered line before ordering"
+            parsed.update(amount_assumed=True, amount_assumption=assumption)
+            if parsed.get("amount") is not None and parsed.get("unit"):
+                parsed["approval_required"] = {"amount_assumed": True, "amount": parsed["amount"],
+                                                 "unit": parsed["unit"], "assumption": assumption}
+        for key in ("approval_required", "product_assumed", "product_assumption", "amount_assumed", "amount_assumption"):
+            if key in item:
+                value = item[key]
+                parsed[key] = dict(value) if key == "approval_required" and isinstance(value, dict) else value
         items.append(parsed)
     return {"summary": text, "items": items}, source == "gemini"
 
@@ -663,8 +731,15 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
                             "diets": [], "exclusions": [], "language": conversation.language(text)},
                   "question": None, "choices": [], "reply": None, "topic": None, "interpretation": None}
         if parsed is not None:
-            action["slots"]["items"] = [{"name": item["query"], "amount": item.get("amount"), "unit": item.get("unit")}
-                                         for item in parsed[0].get("items") or []]
+            action["slots"]["items"] = []
+            for item in parsed[0].get("items") or []:
+                row = {"name": item["query"], "amount": item.get("amount"), "unit": item.get("unit")}
+                for key in ("source", "claims", "exclude_allergens", "approval_required", "product_assumed",
+                            "product_assumption", "amount_assumed", "amount_assumption"):
+                    if key in item:
+                        value = item[key]
+                        row[key] = dict(value) if key == "approval_required" and isinstance(value, dict) else value
+                action["slots"]["items"].append(row)
         source = "fallback"
         actions = [action]
     else:

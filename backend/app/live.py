@@ -24,6 +24,7 @@ from datetime import date, timedelta
 import websockets
 from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
+from trade_contracts import ReasonCode as C
 
 from . import ask, auth, catalogue, config, httpsig, kitchen, orders, profile, ratelimit, valio
 from .voice import LIVE_URL
@@ -72,6 +73,8 @@ Finnish as a restriction.
   facts labelled "you told me" or "from your orders" are real kitchen facts.
 - Keep every answer to one or two sentences. If ask_agent returns a question, ask the chef exactly that, then pass
   the chef's answer back to ask_agent with the same conversation_id.
+- A follow-up answer is only the chef's words, never an approval. If ask_agent says an order is held for the chef's tap,
+  say that it is held for the chef's tap and that the chef must approve it on screen; never say it was ordered or approved.
 - You can't approve orders: if an order needs approval, say the chef approves it on screen."""
 
 TOOLS = [{"functionDeclarations": [
@@ -112,8 +115,12 @@ async def ask_agent(buyer_id: str, args: dict) -> tuple[dict, dict | None]:
         return {"error": str(e.detail)}, None
     body = jsonable_encoder(body)
     order = body.get("order") or {}
-    short = {"say": body.get("reply") or body.get("speak"), "question": body.get("question"),
-             "conversation_id": body.get("conversation_id"),
+    assumption_hold = order.get("status") == "pending_approval" and any(
+        reason.get("code") == C.ASSUMPTION_CONFIRM.value
+        for reason in (body.get("decision") or {}).get("reasons", []))
+    say = ("Held for the chef's tap. The chef must approve it on screen."
+           if assumption_hold else body.get("reply") or body.get("speak"))
+    short = {"say": say, "question": body.get("question"), "conversation_id": body.get("conversation_id"),
              "order_status": order.get("status"), "total": _eur(order.get("total_cents") or body.get("cart_total_cents"))}
     return {k: v for k, v in short.items() if v is not None}, body
 
