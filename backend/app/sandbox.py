@@ -84,7 +84,7 @@ def _record_credential(buyer_id: str, record: dict, key: str, role: str, now: da
 
 def lookup(key: str | None, role: str) -> Credential | None:
     """Return a live credential for exactly one sandbox role, never the secret itself."""
-    if not key or role not in ("agent", "approver"):
+    if not config.SANDBOX_ENABLED or not key or role not in ("agent", "approver"):
         return None
     now = datetime.now(timezone.utc)
     with _lock:
@@ -95,7 +95,7 @@ def lookup(key: str | None, role: str) -> Credential | None:
 
 
 def lookup_any(key: str | None) -> Credential | None:
-    if not key:
+    if not config.SANDBOX_ENABLED or not key:
         return None
     for role in ("agent", "approver"):
         if credential := lookup(key, role):

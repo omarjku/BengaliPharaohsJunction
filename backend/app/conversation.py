@@ -13,8 +13,9 @@ import os
 import re
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
@@ -37,6 +38,7 @@ _FI = {"yksi": 1, "yhden": 1, "kaksi": 2, "kahden": 2, "kolme": 3, "neljä": 4, 
 
 
 _DOZEN = ("dozen", "tusina", "tusinaa")
+HELSINKI = ZoneInfo("Europe/Helsinki")
 
 
 def _fi(w: str) -> int | None:
@@ -151,9 +153,13 @@ def amount_in(answer: str, default_unit: str | None = None) -> tuple[float, str]
 
 
 def language(text: str) -> str:
-    return "fi" if re.search(r"\b(maito\w*|kerma\w*|voi(ta|n)?|litraa|kiloa|heti|tänää|tänään|huomenna|maanantai\w*|"
-                             r"tarvitsen|tarviin|tilaa|kaura\w*|juoma\w*|ruokaa|safka|kiitti|joo|mä|kpl)\b",
-                             text, re.I) else "en"
+    if re.search(r"\b(maito\w*|kerma\w*|voi(ta|n)?|litraa|kiloa|heti|tänää|tänään|huomenna|maanantai\w*|"
+                 r"tarvitsen|tarviin|tilaa|kaura\w*|juoma\w*|ruokaa|safka|kiitti|joo|mä|kpl)\b", text, re.I):
+        return "fi"
+    if re.search(r"\b(mjölk|grädde|smör|liter|kilo|idag|imorgon|måndag\w*|tisdag\w*|onsdag\w*|torsdag\w*|"
+                 r"fredag\w*|lördag\w*|söndag\w*|behöver|beställ|beställa|till|för|och|tack|ja|nej)\b", text, re.I):
+        return "sv"
+    return "en"
 
 
 # --- store
@@ -415,7 +421,7 @@ def current_order(buyer_id: str) -> dict:
     """Return bounded order facts for this buyer's coming delivery days, without catalogue search or price lookups."""
     from . import catalogue, orders
 
-    today = date.today()
+    today = datetime.now(HELSINKI).date()
     rows = []
     for order in orders._store().values():
         if not isinstance(order, dict) or order.get("buyer_id") != buyer_id:
@@ -450,10 +456,27 @@ def current_order(buyer_id: str) -> dict:
 # --- the spoken sentence
 FI = {"For which delivery day?": "Mille päivälle toimitus?", "For how many guests?": "Kuinka monelle hengelle?",
       "I can only help with ordering from Valio. What do you need?": "Autan vain Valion tilauksissa. Mitä tarvitset?"}
+SV = {"For which delivery day?": "Vilken leveransdag gäller?", "For how many guests?": "För hur många gäster?",
+      "I can only help with ordering from Valio. What do you need?": "Jag kan bara hjälpa till med beställningar från Valio. Vad behöver du?"}
 
 
-def _eur(cents: int | None) -> str:
-    return "" if cents is None else f"{cents / 100:,.2f} euros".replace(",", " ")
+def _eur(cents: int | None, lang: str = "en") -> str:
+    if cents is None:
+        return ""
+    unit = {"fi": "euroa", "sv": "euro", "en": "euros"}.get(lang, "euros")
+    return f"{cents / 100:,.2f} {unit}".replace(",", " ")
+
+
+def _line_text(line: dict, lang: str) -> str:
+    quantity = line.get("quantity") if isinstance(line.get("quantity"), dict) else {}
+    requested = quantity.get("requested") if isinstance(quantity.get("requested"), dict) else quantity
+    amount, unit = requested.get("amount"), requested.get("unit")
+    if isinstance(amount, float) and amount.is_integer():
+        amount = int(amount)
+    unit = {"ST": {"fi": "pakkausta", "sv": "förpackningar", "en": "packs"}.get(lang, "packs")}.get(unit, unit)
+    product = line.get("product") if isinstance(line.get("product"), dict) else {}
+    name = (product.get("name_en") or product.get("name_fi") or line.get("name") or "item").strip()
+    return " ".join(str(value) for value in (amount, unit, name) if value not in (None, ""))
 
 
 def speak(body: dict, lang: str) -> str:
@@ -468,24 +491,37 @@ def speak(body: dict, lang: str) -> str:
     if q:
         if lang == "fi" and q in FI:
             return finish(FI[q])
+        if lang == "sv" and q in SV:
+            return finish(SV[q])
         if lang == "fi" and q.startswith("How much "):
             return finish("Kuinka paljon tarvitset?")
+        if lang == "sv" and q.startswith("How much "):
+            return finish("Hur mycket behöver du?")
         return finish(q if q.endswith("?") else q.split(". ")[0] + ".")
     order, decision = body.get("order"), body.get("decision") or {}
-    lines = [ln for ln in body.get("lines", []) if ln.get("chosen")]
+    all_lines = [ln for ln in body.get("lines", []) if isinstance(ln, dict)]
+    lines = ([ln for ln in all_lines if ln.get("chosen")] if any("chosen" in ln for ln in all_lines)
+             else all_lines)
     first = lines[0] if lines else None
-    what = ""
-    if first and first.get("quantity"):
-        qd = first["quantity"]
-        what = f"{qd['requested']['amount']:g} {qd['requested']['unit']} {(first['product'].get('name_en') or '').strip()}"
+    what = "; ".join(_line_text(line, lang) for line in lines)
     day = body.get("requested_date") or ""
     if order and order.get("status") == "confirmed":
-        return finish(f"Tilattu: {what}, toimitus {day}." if lang == "fi" else f"Ordered: {what}, arriving {day}.")
-    if order and order.get("status") == "pending_approval":
-        reason = (decision.get("primary_reason") or {}).get("message", "")
         if lang == "fi":
-            return finish(f"Tarvitsee hyväksyntäsi: {what}, {_eur(order.get('total_cents'))}.")
-        return finish(f"Needs your OK: {what}, {_eur(order.get('total_cents'))}. {reason.split('. ')[0]}.")
+            return finish(f"Tilattu: {what}, toimitus {day}.")
+        if lang == "sv":
+            return finish(f"Beställt: {what}, leverans {day}.")
+        return finish(f"Ordered: {what}, arriving {day}.")
+    if order and order.get("status") == "pending_approval":
+        changes = [str(change.get("to")) for change in body.get("changes") or []
+                   if isinstance(change, dict) and change.get("to")]
+        change_note = (f"Changed to {', '.join(changes)}. " if changes and lang == "en" else
+                       f"Muutettu: {', '.join(changes)}. " if changes and lang == "fi" else
+                       f"Ändrad till {', '.join(changes)}. " if changes else "")
+        if lang == "fi":
+            return finish(f"{change_note}Odottaa hyväksyntääsi: {what}, {_eur(order.get('total_cents'), lang)}.")
+        if lang == "sv":
+            return finish(f"{change_note}Väntar på ditt godkännande: {what}, {_eur(order.get('total_cents'), lang)}.")
+        return finish(f"{change_note}Waiting for your approval: {what}, {_eur(order.get('total_cents'), lang)}.")
     coverage = body.get("cart_coverage") or {}
     ingredient_count, in_cart = coverage.get("ingredients"), coverage.get("in_cart")
     if (isinstance(ingredient_count, int) and ingredient_count and isinstance(in_cart, int)

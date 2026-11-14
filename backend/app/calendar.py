@@ -2,6 +2,7 @@
 import copy
 import json
 import os
+import re
 import threading
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -23,6 +24,16 @@ SEED = Path(__file__).with_name("calendar_seed.json")
 SEEDS = json.loads(SEED.read_text(encoding="utf-8"))
 MAX_RANGE_DAYS = 62
 _file_lock = threading.Lock()
+_BUYER_ID = re.compile(r"^[a-z0-9-]{1,64}$")
+
+
+def _buyer_path(folder: str, buyer_id: str) -> Path:
+    if not _BUYER_ID.fullmatch(str(buyer_id)):
+        raise ValueError("invalid buyer id")
+    root = (config.DATA_DIR / folder).resolve()
+    path = (root / f"{buyer_id}.json").resolve()
+    path.relative_to(root)
+    return path
 
 
 class PerCover(BaseModel):
@@ -92,11 +103,11 @@ def _today() -> date:
 
 
 def _menu_path(buyer_id: str) -> Path:
-    return config.DATA_DIR / "menus" / f"{buyer_id}.json"
+    return _buyer_path("menus", buyer_id)
 
 
 def _skip_path(buyer_id: str) -> Path:
-    return config.DATA_DIR / "calendar" / f"{buyer_id}.json"
+    return _buyer_path("calendar", buyer_id)
 
 
 def _canonical_weekday(value: str) -> str:
