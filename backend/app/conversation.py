@@ -34,6 +34,9 @@ _FI = {"yksi": 1, "yhden": 1, "kaksi": 2, "kahden": 2, "kolme": 3, "neljä": 4, 
        "seitsemän": 7, "kahdeksan": 8, "yhdeksän": 9}
 
 
+_DOZEN = ("dozen", "tusina", "tusinaa")
+
+
 def _fi(w: str) -> int | None:
     """One Finnish number word: 'kaksisataaviisikymmentä' → 250, 'tuhat' → 1000; None if it isn't one."""
     for one, many, mult in (("tuhat", "tuhatta", 1000), ("sata", "sataa", 100)):
@@ -66,11 +69,15 @@ def spoken_to_digits(text: str) -> str:
     out, i = [], 0
     while i < len(toks):
         low = toks[i].lower()
+        if low.isspace():  # a number phrase starts on a word, never on the space before it
+            out.append(toks[i]); i += 1; continue
         if low in ("puoli", "half"):  # "half a kilo" → "0.5 kilo"
             skip = 3 if low == "half" and i + 2 < len(toks) and toks[i + 2].lower() == "a" else 1
             out.append("0.5"); i += skip; continue
         if low == "puolitoista":
             out.append("1.5"); i += 1; continue
+        if low in ("a", "an") and i + 2 < len(toks) and toks[i + 1].isspace() and toks[i + 2].lower() in UNIT_WORDS:
+            out.append("1"); i += 1; continue  # "a kilo of butter" → "1 kilo"; "a litre" → "1 litre"
         total = cur = None
         j, last = i, i - 1
         while j < len(toks):
@@ -80,10 +87,12 @@ def spoken_to_digits(text: str) -> str:
                 j += 1; continue
             if (v := _EN.get(w, _fi(w))) is not None:  # "twenty five" → 25
                 cur = (cur or 0) + v
-            elif w in ("hundred", "thousand") or (w == "a" and nxt in ("hundred", "thousand") and cur is None
-                                                 and total is None):
-                if w == "a":
+            elif w in ("hundred", "thousand", *_DOZEN) or (w in ("a", "an") and nxt in ("hundred", "thousand", *_DOZEN) and cur is None
+                                 and total is None):
+                if w in ("a", "an"):
                     cur = 1
+                elif w in _DOZEN:  # "a dozen" 12, "two dozen" 24, "tusina" 12, "kaksi tusinaa" 24
+                    cur = (cur or 1) * 12
                 elif w == "hundred":
                     if cur is None and total is None:
                         break
