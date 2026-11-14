@@ -254,6 +254,17 @@ def test_menu_candidate_amounts_are_scored_in_one_batch_and_low_winner_is_not_ke
     assert result[0]["ingredients"][0]["kept"] is True
 
 
+def test_menu_candidate_score_is_carried_on_the_proposal_card(shop1, monkeypatch, decisions):
+    dish = {"name": "Porridge", "ingredients": [{
+        "name": "milk", "per_cover": 0.2, "unit": "L", "candidate_amounts": [0.15, 0.2],
+        "assumption": "200 ml milk per portion", "dietary": [],
+    }]}
+    fake_gemini(monkeypatch, [dish])
+    body = post("Porridge with milk", covers=10).json()
+
+    assert body["assumptions"][0]["p_yes"] == 0.95
+    assert body["assumptions"][0]["kept"] is True
+
 def test_menu_parse_is_capped(shop1, monkeypatch, decisions):
     """Security review: a steered parse can't fan out hundreds of paid checks."""
     dish = {"name": "Porridge", "ingredients": [{"name": f"spice{n}", "per_cover": 1, "unit": "g", "assumption": "x",

@@ -132,7 +132,7 @@ def test_gemini_failure_falls_back_to_the_existing_ask_path(monkeypatch):
 
 
 def test_chat_endpoint_uses_agent_auth_and_returns_chat_envelope(shop, monkeypatch):
-    async def fake_chat(text, buyer_id, requested_date=None, follow_up=None, have=None):
+    async def fake_chat(text, buyer_id, requested_date=None, follow_up=None, have=None, conversation_id=None):
         return {"reply": f"Checked {text} for {buyer_id}.", "cards": [], "conversation_id": "c1", "tools_used": []}
 
     monkeypatch.setattr(chat_agent, "chat", fake_chat)
@@ -228,6 +228,130 @@ def test_provider_400_is_loud_and_does_not_use_legacy_fallback(monkeypatch):
     assert result["provider_call_ok"] is False
     assert result["provider_error"]["status"] == 400
     assert result["cards"] == []
+
+
+def test_history_is_scoped_to_the_chat_conversation_id(monkeypatch, tmp_path):
+    monkeypatch.setattr(chat_agent.config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(chat_agent.conversation, "STORE", tmp_path / "conv.json")
+    first, second = "a" * 32, "b" * 32
+    chat_agent.conversation.record_turn("chef", "user", "vegan pizza for 2", conversation_id=first)
+    chat_agent.conversation.record_turn("chef", "assistant", "Planning vegan pizza.", conversation_id=first)
+    chat_agent.conversation.record_turn("chef", "user", "reindeer meat", conversation_id=second)
+
+    assert chat_agent.conversation.turns("chef", second) == [
+        {"role": "user", "text": "reindeer meat", "time": chat_agent.conversation.turns("chef", second)[0]["time"]}
+    ]
+    assert "vegan pizza" not in str(chat_agent.conversation.turns("chef", second))
+    assert "vegan pizza" in str(chat_agent.conversation.turns("chef", first))
+
+
+def test_chat_without_a_conversation_id_starts_a_new_history(monkeypatch, tmp_path):
+    monkeypatch.setattr(chat_agent.config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(chat_agent.conversation, "STORE", tmp_path / "conv.json")
+
+    async def fake_generate(*_args, **_kwargs):
+        return {"candidates": [{"content": {"role": "model", "parts": [{"text": "Noted."}]}}]}
+
+    monkeypatch.setattr(chat_agent, "_generate_content", fake_generate)
+    first = asyncio.run(chat_agent.chat("vegan pizza for 2", "chef"))
+    second = asyncio.run(chat_agent.chat("reindeer meat", "chef"))
+
+    assert first["conversation_id"] != second["conversation_id"]
+    assert "vegan pizza" not in str(chat_agent.conversation.turns("chef", second["conversation_id"]))
+
+
+def test_chat_restarts_a_conversation_after_thirty_minutes(monkeypatch, tmp_path):
+    monkeypatch.setattr(chat_agent.config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(chat_agent.conversation, "STORE", tmp_path / "conv.json")
+    clock = [1000.0]
+    monkeypatch.setattr(chat_agent.conversation.time, "time", lambda: clock[0])
+    cid = "d" * 32
+    chat_agent.conversation.record_turn("chef", "user", "old topic", conversation_id=cid)
+    clock[0] += chat_agent.conversation.TURNS_TTL_S + 1
+
+    async def fake_generate(*_args, **_kwargs):
+        return {"candidates": [{"content": {"role": "model", "parts": [{"text": "Fresh topic."}]}}]}
+
+    monkeypatch.setattr(chat_agent, "_generate_content", fake_generate)
+    result = asyncio.run(chat_agent.chat("new topic", "chef", conversation_id=cid))
+
+    assert result["conversation_id"] != cid
+
+
+def test_pending_choice_and_delegation_resolve_the_stored_slot():
+    state = {"pending_slot": "assumption:pasta", "choices": ["80 g", "100 g"], "default": "100 g"}
+
+    assert chat_agent._resolve_pending_input("1", state) == ("80 g", True)
+    assert chat_agent._resolve_pending_input("the first one", state) == ("80 g", True)
+    assert chat_agent._resolve_pending_input("assume", state) == ("100 g", True)
+    assert chat_agent._pending_default("Which amount?", ["80 g", "100 g"], "Is 100g per person right?") == "100 g"
+    assert chat_agent._pending_choices("Which day?", "- Tomorrow, Sun\n- Monday, Mon\n- Tuesday, Tue") == [
+        "Tomorrow, Sun", "Monday, Mon", "Tuesday, Tue"]
+    assert chat_agent._pending_choices("Which delivery date?", "I have 80 g and 6 kg. Which delivery date?") == []
+    assert chat_agent._pending_choices("Which delivery day?", "I have 6 kg or 100 g. Which delivery day?") == []
+    assert chat_agent._pending_choices("Which delivery day: tomorrow or Monday?", "Which delivery day: tomorrow or Monday?") == [
+        "tomorrow", "Monday"]
+
+
+def test_explicit_per_person_correction_scales_against_the_current_request():
+    args = {"items": [{"text": "pasta", "amount": 6, "unit": "g"}]}
+    corrected = chat_agent._correct_explicit_portion(
+        "100g per person", "I need enough pasta to feed 50 people with 20% extra", args)
+
+    assert corrected["items"] == [{"text": "6 kg pasta", "amount": 6, "unit": "kg"}]
+    changed = chat_agent._correct_explicit_portion(
+        "100g per person", "I need enough pasta to feed 50 people with 20% extra",
+        {"changes": [{"name": "pasta", "amount": 6, "unit": "g"}]})
+    assert changed["changes"] == [{"name": "pasta", "amount": 6, "unit": "kg"}]
+
+
+def test_delegation_scores_default_then_continues_to_propose_order(monkeypatch, tmp_path):
+    monkeypatch.setattr(chat_agent.config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(chat_agent.conversation, "STORE", tmp_path / "conv.json")
+    cid = "c" * 32
+    state = {"pending_slot": "assumption:pasta", "question": "Use 80 g or 100 g pasta per person?",
+             "choices": ["80 g", "100 g"], "default": "100 g"}
+    chat_agent.conversation.record_turn("chef", "assistant", state["question"], conversation_id=cid, pending=state)
+    dispatched = []
+    scored = []
+    responses = iter([
+        {"candidates": [{"content": {"role": "model", "parts": [{"functionCall": {
+            "name": "propose_order", "args": {"items": [{"text": "100 g pasta per person"}],
+                                                     "delivery_date": "2026-11-16"}}}]}}]},
+        {"candidates": [{"content": {"role": "model", "parts": [{"text": "I will use 100 g per person."}]}}]},
+    ])
+
+    async def fake_generate(*_args, **_kwargs):
+        return next(responses)
+
+    async def fake_check(args, *_args, **_kwargs):
+        scored.extend(args["questions"])
+        return [{"id": "pasta", "p_yes": 0.91}]
+
+    async def fake_dispatch(name, args, *_args, **_kwargs):
+        dispatched.append((name, args))
+        return {"status": "proposal", "card": {"intent": "order", "lines": []}}
+
+    monkeypatch.setattr(chat_agent, "_generate_content", fake_generate)
+    monkeypatch.setattr(chat_agent, "_check_assumptions", fake_check)
+    monkeypatch.setattr(chat_agent, "_dispatch_tool", fake_dispatch)
+    result = asyncio.run(chat_agent.chat("assume", "chef", conversation_id=cid))
+
+    assert scored and "100 g" in scored[0]["context"]
+    assert dispatched[0][0] == "propose_order"
+    assert result["awaiting_user"] is False
+
+
+def test_timeout_returns_a_continue_message_instead_of_a_failed_turn(monkeypatch):
+    async def timed_out(*_args, **_kwargs):
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr(chat_agent, "_generate_content", timed_out)
+    monkeypatch.setattr(chat_agent, "GEMINI_TIMEOUT_S", 0.01)
+    result = asyncio.run(chat_agent.chat("plan a menu for 2", "timeout-chef"))
+
+    assert result["provider_call_ok"] is True
+    assert "continue" in result["reply"].lower()
 
 
 def test_reply_is_plain_text_without_markdown_emphasis():
