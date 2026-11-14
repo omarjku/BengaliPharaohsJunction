@@ -147,7 +147,9 @@ async def check_assumption(dish: str, ingredient: str, per_cover, unit, text: st
 
 
 async def parse_menu(menu_text: str) -> list[dict] | None:
-    out = await agent._gemini(MENU_PROMPT, agent._wrap(menu_text), _MENU_SCHEMA)
+    # thinkingBudget 0: 4.8-6.1 s instead of 6.8-8.0 s, same ingredients (measured, room3-menu-speed); every
+    # assumption is still checked by Gemini Decisions afterwards
+    out = await agent._gemini(MENU_PROMPT, agent._wrap(menu_text), _MENU_SCHEMA, {"thinkingBudget": 0})
     if not out or not isinstance(out.get("dishes"), list):
         return None
     return [{"name": str(d.get("name") or "").strip(), "ingredients": [dict(i) for i in d.get("ingredients") or []
@@ -155,7 +157,8 @@ async def parse_menu(menu_text: str) -> list[dict] | None:
             for d in out["dishes"] if isinstance(d, dict) and str(d.get("name") or "").strip()][:MAX_DISHES]
 
 
-async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -> dict:
+async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, dishes_task=None) -> dict:
+    """`dishes_task`: parse_menu(menu_text) already started by the caller (ask._flow starts it at t=0)."""
     agent.start_budget(agent.DECISIONS_PER_MENU)
     run_id, now = str(uuid4()), datetime.now(timezone.utc)
     mandate = mandates.get(buyer_id)
@@ -174,7 +177,7 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -
     excluded = set().union(*(gate._allergen_codes(str(v)) for v in gate._rules(m, RuleKind.EXCLUDED_ALLERGEN)))
 
     progress.phase("planning")
-    dishes, steer = await asyncio.gather(parse_menu(menu_text), agent.steering(menu_text))
+    dishes, steer = await asyncio.gather(dishes_task or parse_menu(menu_text), agent.steering(menu_text))
     if steer is not None and steer >= agent.INJECTION_MAX:
         reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, "This menu seems to try to change limits, delivery, invoicing or "
                                f"approvals, or claims special authority (Gemini Decisions: {agent._pct(steer)}).", None,
