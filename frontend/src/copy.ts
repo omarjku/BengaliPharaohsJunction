@@ -437,6 +437,7 @@ export const UI = {
     scope: { always: 'always', this_order: 'this order only' } as Record<string, string>,
     revoke: 'Revoke',
     revoking: 'Revoking…',
+    updateKitchen: 'Update my kitchen',
     revokeNeedsKey: 'Add your approver key under Keys to revoke a remembered preference.',
     loadFailed: 'Couldn’t load your rules.',
     loading: 'Loading your rules…',

@@ -12,9 +12,11 @@ import { UrgentOptions } from './Urgent'
 import { ValioView } from './Valio'
 import { useVoice, voiceSupported } from './useVoice'
 import { usePhaseLine } from './usePhaseLine'
-import { MicButton, VoiceStatus } from './Voice'
+import { DictationMic, MicButton, VoiceStatus } from './Voice'
 import { PhotoButton } from './PhotoButton'
 import { Composer } from './Composer'
+import { Onboarding } from './Onboarding'
+import { useOnboarded } from './onboardingApi'
 import { Conversation, type VoiceLayout } from './Conversation'
 import { Orb } from './Orb'
 import { useLive } from './useLive'
@@ -118,6 +120,27 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const offline = useBackendDown()
   // Voice (Talk): the voice button starts it inside the tap; its words and results go into the same thread. Dictation
   // and Talk never hold the mic at once: starting Talk cancels dictation, and the mic button is gone while Talk is on.
+  // First run: Room 2's onboarding (Onboarding.tsx) asks about the kitchen once keys are set; skippable (remembered on
+  // this device), and reachable later from the memory panel ("Update my kitchen").
+  const onboarding = useOnboarded()
+  const [onboardingSkipped, setOnboardingSkipped] = useState(() => {
+    try {
+      return localStorage.getItem('valio-aimo-onboarding-skipped') === '1'
+    } catch {
+      return false
+    }
+  })
+  const [onboardingAsked, setOnboardingAsked] = useState(false) // opened from the memory panel
+  const onboardingOpen = onboardingAsked || (onboarding.onboarded === false && !onboardingSkipped)
+  function closeOnboarding() {
+    setOnboardingAsked(false)
+    setOnboardingSkipped(true)
+    try {
+      localStorage.setItem('valio-aimo-onboarding-skipped', '1')
+    } catch {
+      // storage blocked: skipped for this page only
+    }
+  }
   const caps = useTalkPhotoAvailable()
   const talk = useTalk()
   const orbRef = useRef<HTMLButtonElement>(null)
@@ -208,6 +231,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
 
   function keysSaved() {
     setSavedKeys(getKeys())
+    onboarding.refresh()
     keysDialog.current?.close()
     refreshAudit()
   }
@@ -470,95 +494,114 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
           <>
             <section hidden={view !== 'order'} aria-label={u.nav.order}>
               <h1 className="sr-only">{u.nav.order}</h1>
-              <Conversation
-                voiceOn={!!talk.session}
-                layout={layout}
-                onToggle={toggleLayout}
-                bigOrb={<Orb state={live.state} size="big" label={u.conv.orbToThread} onToggle={toggleLayout} orbRef={orbRef} />}
-                smallOrb={<Orb state={live.state} size="small" label={u.conv.orbToBig} onToggle={toggleLayout} orbRef={orbRef} />}
-                status={
-                  <p role="status" className={live.state === 'error' ? 'bad' : undefined}>
-                    {live.muted ? u.conv.muted : live.state === 'connecting' ? u.talk.connecting : (live.tool ?? u.talk.state[live.state])}
-                  </p>
-                }
-                thread={
-                  <>
-                    {empty && (
-                      <div className="conv-start">
-                        {waiting !== null && <p className="greeting">{u.greeting(partOfDay(), approver, waiting)}</p>}
-                        <p className="try">{MOCK ? u.ask.tryDemo : u.ask.try}</p>
-                        <div className="conv-suggest">
-                          {c.TRY.map((t) => (
-                            <button key={t} type="button" className="chip" onClick={() => setText(t)}>
-                              {t}
-                            </button>
-                          ))}
-                        </div>
-                        <Recent groups={groups.slice(0, 3)} onOpen={() => setView('history')} />
-                      </div>
-                    )}
-                    {thread.map((it) =>
-                      it.kind === 'user' ? (
-                        <p key={it.id} className={`msg msg-user${it.partial ? ' msg-partial' : ''}`}>
-                          {it.text}
-                        </p>
-                      ) : it.kind === 'agent' ? (
-                        <p key={it.id} className={`msg msg-agent${it.partial ? ' msg-partial' : ''}`}>
-                          {it.text}
-                          {it.partial && <span className="msg-dot" aria-hidden="true" />}
-                        </p>
-                      ) : it.kind === 'error' ? (
-                        <div key={it.id} className="problem" role="alert">
-                          <strong>{u.failed}</strong>
-                          {it.text}
-                          {it.reask && (
-                            <div className="actions">
-                              <button type="button" className="btn" onClick={() => void ask(it.reask!)} disabled={running}>
-                                {u.question.reask}
+              {onboardingOpen ? (
+                <Onboarding
+                  onDone={() => {
+                    onboarding.refresh()
+                    closeOnboarding()
+                  }}
+                  onSkip={closeOnboarding}
+                  mic={micOn ? (append) => <DictationMic onText={append} /> : undefined}
+                />
+              ) : (
+                <Conversation
+                  voiceOn={!!talk.session}
+                  layout={layout}
+                  onToggle={toggleLayout}
+                  bigOrb={<Orb state={live.state} size="big" label={u.conv.orbToThread} onToggle={toggleLayout} orbRef={orbRef} />}
+                  smallOrb={<Orb state={live.state} size="small" label={u.conv.orbToBig} onToggle={toggleLayout} orbRef={orbRef} />}
+                  status={
+                    <p role="status" className={live.state === 'error' ? 'bad' : undefined}>
+                      {live.muted ? u.conv.muted : live.state === 'connecting' ? u.talk.connecting : (live.tool ?? u.talk.state[live.state])}
+                    </p>
+                  }
+                  thread={
+                    <>
+                      {empty && (
+                        <div className="conv-start">
+                          {waiting !== null && <p className="greeting">{u.greeting(partOfDay(), approver, waiting)}</p>}
+                          <p className="try">{MOCK ? u.ask.tryDemo : u.ask.try}</p>
+                          <div className="conv-suggest">
+                            {c.TRY.map((t) => (
+                              <button key={t} type="button" className="chip" onClick={() => setText(t)}>
+                                {t}
                               </button>
-                            </div>
-                          )}
+                            ))}
+                          </div>
+                          <Recent groups={groups.slice(0, 3)} onOpen={() => setView('history')} />
                         </div>
-                      ) : (
-                        renderRes(it as Extract<Item, { kind: 'res' }>, it.id === lastRes)
-                      ),
-                    )}
-                    {running && (
-                      <div className="working" role="status" aria-label={u.progress.aria}>
-                        {/* Re-keyed per phase, so each step fades in; the status region reads each step out politely. */}
-                        <p key={phaseLine.phase ?? 'start'} className="phase">
-                          {phaseLine.phase ?? u.progress.phases.understanding}
-                        </p>
-                        <div className="working-bar" aria-hidden="true" />
-                      </div>
-                    )}
-                  </>
-                }
-                composer={
-                  <>
-                    {micOn && !talk.session && <VoiceStatus voice={voice} />}
-                    <Composer
-                      voiceOn={!!talk.session}
-                      text={text}
-                      setText={setText}
-                      onSend={send}
-                      placeholder={talk.session ? u.conv.voicePlaceholder : convo ? u.conv.answerHere : u.conv.placeholder}
-                      busy={running}
-                      photo={caps.photo ? <PhotoButton variant="icon" disabled={running || deciding} onRead={(words) => send(words)} /> : null}
-                      mic={micOn ? <MicButton voice={voice} disabled={running || deciding} /> : null}
-                      onVoice={caps.talk ? startVoice : null}
-                      muted={live.muted}
-                      onMute={() => live.setMuted((m) => !m)}
-                      onEnd={talk.end}
-                      fieldRef={field}
-                    />
-                  </>
-                }
-              />
+                      )}
+                      {thread.map((it) =>
+                        it.kind === 'user' ? (
+                          <p key={it.id} className={`msg msg-user${it.partial ? ' msg-partial' : ''}`}>
+                            {it.text}
+                          </p>
+                        ) : it.kind === 'agent' ? (
+                          <p key={it.id} className={`msg msg-agent${it.partial ? ' msg-partial' : ''}`}>
+                            {it.text}
+                            {it.partial && <span className="msg-dot" aria-hidden="true" />}
+                          </p>
+                        ) : it.kind === 'error' ? (
+                          <div key={it.id} className="problem" role="alert">
+                            <strong>{u.failed}</strong>
+                            {it.text}
+                            {it.reask && (
+                              <div className="actions">
+                                <button type="button" className="btn" onClick={() => void ask(it.reask!)} disabled={running}>
+                                  {u.question.reask}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          renderRes(it as Extract<Item, { kind: 'res' }>, it.id === lastRes)
+                        ),
+                      )}
+                      {running && (
+                        <div className="working" role="status" aria-label={u.progress.aria}>
+                          {/* Re-keyed per phase, so each step fades in; the status region reads each step out politely. */}
+                          <p key={phaseLine.phase ?? 'start'} className="phase">
+                            {phaseLine.phase ?? u.progress.phases.understanding}
+                          </p>
+                          <div className="working-bar" aria-hidden="true" />
+                        </div>
+                      )}
+                    </>
+                  }
+                  composer={
+                    <>
+                      {micOn && !talk.session && <VoiceStatus voice={voice} />}
+                      <Composer
+                        voiceOn={!!talk.session}
+                        text={text}
+                        setText={setText}
+                        onSend={send}
+                        placeholder={talk.session ? u.conv.voicePlaceholder : convo ? u.conv.answerHere : u.conv.placeholder}
+                        busy={running}
+                        photo={caps.photo ? <PhotoButton variant="icon" disabled={running || deciding} onRead={(words) => send(words)} /> : null}
+                        mic={micOn ? <MicButton voice={voice} disabled={running || deciding} /> : null}
+                        onVoice={caps.talk ? startVoice : null}
+                        muted={live.muted}
+                        onMute={() => live.setMuted((m) => !m)}
+                        onEnd={talk.end}
+                        fieldRef={field}
+                      />
+                    </>
+                  }
+                />
+              )}
             </section>
 
             <section hidden={view !== 'rules'} aria-label={u.nav.rules}>
-              <Rules refreshKey={auditKey} onAction={refreshAudit} onAnnounce={setAnnounce} />
+              <Rules
+                refreshKey={auditKey}
+                onAction={refreshAudit}
+                onAnnounce={setAnnounce}
+                onUpdateKitchen={() => {
+                  setOnboardingAsked(true)
+                  setView('order')
+                }}
+              />
             </section>
 
             <section hidden={view !== 'history'} aria-label={u.nav.history}>
