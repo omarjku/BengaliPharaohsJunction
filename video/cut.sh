@@ -12,12 +12,11 @@ cut() { # shot source trim_in_s slot_s
   printf '%s %.2fx\n' "$1" "$speed"
 }
 cut hook e-injection 1.0 5
-cut finnish a-finnish 1.0 10
-cut voice a-voice 1.0 10
-cut held b-held 1.0 9
-cut approve c-approve-phone 1.0 8
+cut voice-fi a-voice-fi 1.0 12
+cut held b-held 1.0 10
+cut approve c-approve-phone 1.0 9
 cut sugar d-sugar 1.0 6
-cut menu f-menu 1.0 10
-cut urgent g-urgent-hb 1.0 8
+cut menu f-menu 1.0 11
+cut urgent-voice g-urgent-voice 1.0 13
 cut history h-history 0.8 4
 cut rules i-rules 0.8 4
