@@ -931,5 +931,82 @@
   "group": "phone-test",
   "text": "200 kg potatoes for Monday",
   "expect": "A normal order: potatoes quoted and either ordered or held for the chef by the rules. Not refused, no 'I can only help' reply."
+ },
+ {
+  "id": "phone-regression-01",
+  "group": "phone-regression",
+  "text": "vegan pizza for 20",
+  "expect": "Proposes a non-empty vegan pizza ingredient cart for 20 people with explicit quantity assumptions, using suitable vegan products or clearly marked substitutes. It does not refuse because ordinary ingredients lack a vegan label and does not auto-order."
+ },
+ {
+  "id": "phone-regression-02",
+  "group": "phone-regression",
+  "text": "vegan lasagna for 20 on Friday",
+  "expect": "Resolves Friday, proposes a non-empty vegan lasagna ingredient cart for 20 people with explicit assumptions, and keeps all dairy, egg, and other animal products out. It does not ask for a date already supplied or auto-order."
+ },
+ {
+  "id": "phone-regression-03",
+  "group": "phone-regression",
+  "buyer": "helsinki-bistro",
+  "text": "salmon soup for 20",
+  "expect": "Uses the buyer's gluten-free kitchen context and proposes a non-empty salmon-soup cart containing salmon, carrot, leek, and dill or close equivalents, with gluten-safe choices for at-risk ingredients. It does not reject naturally gluten-free ingredients or auto-order."
+ },
+ {
+  "id": "phone-regression-04",
+  "group": "phone-regression",
+  "text": "20 kg potatoes next week",
+  "expect": "Resolves 'next week' to a concrete delivery date without asking which day again, quotes the potato request, and orders or holds it according to the kitchen mandate."
+ },
+ {
+  "id": "phone-regression-05",
+  "group": "phone-regression",
+  "turns": [
+   "I need butter for Monday",
+   "assume"
+  ],
+  "text": "assume",
+  "expect": "Treats 'assume' as permission to use a clearly stated sensible butter amount or product assumption, then proposes or holds a correctly priced cart instead of repeating the same question or refusing."
+ },
+ {
+  "id": "phone-regression-06",
+  "group": "phone-regression",
+  "turns": [
+   "I need butter for Monday",
+   "you decide"
+  ],
+  "text": "you decide",
+  "expect": "Treats 'you decide' as permission to choose a sensible butter amount or product, states the assumption, and proposes or holds a correctly priced cart instead of silently inventing an unsafe order."
+ },
+ {
+  "id": "phone-regression-07",
+  "group": "phone-regression",
+  "turns": [
+   "I need butter for Monday",
+   "2"
+  ],
+  "text": "2",
+  "expect": "Accepts the bare numeric answer as the chef's response to the pending choice, applies it to the butter request, and does not repeat the question or treat 2 as an unrelated product request."
+ },
+ {
+  "id": "phone-regression-08",
+  "group": "phone-regression",
+  "text": "1000 L lactose-free milk by Monday",
+  "expect": "Finds a lactose-free milk option for 1000 L by Monday, quotes live price and availability, and holds for chef approval when the mandate requires it; it never self-approves and never substitutes coffee milk merely because it is cheaper."
+ },
+ {
+  "id": "phone-regression-09",
+  "group": "phone-regression",
+  "turns": [
+   "10 kg butter for Monday",
+   "other options"
+  ],
+  "text": "other options",
+  "expect": "Answers about other butter options for the same 10 kg request, showing same-kind products with usable pack sizes and plausible prices; it must not offer tiny portion packs or absurdly expensive alternatives and must retain the delivery date."
+ },
+ {
+  "id": "phone-regression-10",
+  "group": "phone-regression",
+  "text": "Tarvitsen 10 kg voita maanantaiksi",
+  "expect": "Understands the Finnish request as 10 kg of butter for Monday, quotes suitable Valio options and price/availability, and orders or holds it according to the mandate without asking for a date already stated."
  }
 ]
