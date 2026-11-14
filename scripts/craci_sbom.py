@@ -262,6 +262,8 @@ def _job_ids(repository: str, run_id: str, sha: str, token: str, warnings: list[
     for job in jobs:
         if str(job.get("run_id", run_id)) != str(run_id):
             continue
+        if "craci" not in [str(label).lower() for label in job.get("labels") or []]:
+            continue
         if job.get("conclusion") == "success" and job.get("id") is not None:
             selected.append(str(job["id"]))
     if not selected:
@@ -312,12 +314,12 @@ def main() -> int:
                 "application/vnd.cyclonedx+json; version=1.7",
             )
             records.append((job_id, json.loads(raw), raw))
-        except (CraciAPIError, json.JSONDecodeError):
-            warnings.append(f"CRACI SBOM unavailable for job {job_id}")
+        except (CraciAPIError, json.JSONDecodeError) as exc:
+            warnings.append(f"CRACI SBOM unavailable for job {job_id}: {exc}")
         try:
             network_destinations.update(summarize_network_trace(fetch_network_trace(repository, job_id, craci_token)))
-        except CraciAPIError:
-            warnings.append(f"CRACI network trace unavailable for job {job_id}")
+        except CraciAPIError as exc:
+            warnings.append(f"CRACI network trace unavailable for job {job_id}: {exc}")
     summary = summarize_sboms(records, _allowlist(Path(__file__).with_name("craci_allowlist.json")), warnings)
     summary["repository"] = repository or None
     summary["commit"] = sha or None
