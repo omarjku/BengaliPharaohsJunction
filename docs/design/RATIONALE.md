@@ -73,6 +73,12 @@ A kebab shop ordering döner meat shouldn't be asked "for how many guests". So t
 - **Asked once, honest about failure.** The first press explains what happens ("Audio is only used to transcribe this request") before the browser asks for the microphone. A blocked or missing microphone says so and points back to typing.
 - **No made-up words in production.** `transcribe()` in `api.ts` calls Room 3's `POST /api/voice/transcribe`. A production build shows the mic only when built with `VITE_VOICE=1`.
 
+## Live progress
+- **One changing line under the box, no spinner soup.** It shows what the agent is actually doing, from the backend's stream: "Reading your request…", "Searching Valio's catalogue…", "Checking Valio stock and prices…", "Asking Gemini to double-check each match…", "Placing the order at Valio's front door…" (a menu adds "Turning the menu into ingredients…"). Each step fades up a few pixels.
+- **Readable, not a blur.** Every step stays at least 400 ms, even when the backend sends them milliseconds apart, and the answer waits until the last step has had its moment (about 1 s extra at most). Screen readers hear the start and the answer, not every step.
+- **Safe when the network isn't.** If the stream can't be opened, the plain request runs instead, because the server started nothing. If it breaks midway, it does not retry, because the agent may already have ordered: "The connection dropped before the answer came back. Check History before asking again."
+- **Voice goes straight into the stream,** so the chef sees progress right after speaking.
+
 ## Known gaps
 - Product names come straight from Valio's catalogue ("Valio Eila® 3 % milk drink 1 l lactose free"). Cleaning them up would need a naming pass in the data.
 - History can't tell "Valio held for your OK" apart from "Valio refused" when the front door's outcome was an ask, because the audit entry doesn't store the order status. The opening screen's waiting count avoids this by checking each order's real status.

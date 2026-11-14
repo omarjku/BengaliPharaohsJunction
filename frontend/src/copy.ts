@@ -398,7 +398,18 @@ export const UI = {
     mute: 'Mute',
     turnOn: 'Turn on',
   },
-  progress: { aria: 'What the agent is doing' },
+  progress: {
+    aria: 'What the agent is doing',
+    dropped: 'The connection dropped before the answer came back. Check History before asking again, in case it was ordered.',
+    phases: {
+      understanding: 'Reading your request…',
+      planning: 'Turning the menu into ingredients…',
+      searching: 'Searching Valio’s catalogue…',
+      stock: 'Checking Valio stock and prices…',
+      judging: 'Asking Gemini to double-check each match…',
+      ordering: 'Placing the order at Valio’s front door…',
+    } as Record<string, string>,
+  },
   urgent: {
     title: 'Need it sooner?',
     note: 'Suggestions only. The agent hasn’t ordered any of these.',

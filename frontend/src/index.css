@@ -323,6 +323,12 @@ main.roomy { padding-block-start: 96px; }
   .mic.on { box-shadow: 0 0 0 calc(4px + var(--level) * 12px) rgba(11, 92, 173, 0.16); transition: none; }
 }
 
+/* Live progress: one line that changes, each step fading up a few pixels. */
+.phase {
+  transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out);
+  @starting-style { opacity: 0; transform: translateY(4px); }
+}
+
 /* --- Messages. */
 .banner { margin-block: 0 var(--s6); }
 .empty { margin-block-start: var(--s6); }

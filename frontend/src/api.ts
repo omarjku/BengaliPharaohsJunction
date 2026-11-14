@@ -75,16 +75,22 @@ async function request(path: string, init?: RequestInit, authRole?: AuthRole): P
   } catch {
     throw new Error("Can't reach the backend. Is it running?")
   }
-  if (!res.ok) {
-    const detail = await errorDetail(res)
-    if (res.status === 401 || res.status === 403) {
-      if (authRole === 'agent') throw new ApiError(res.status, `Enter a valid agent key in Keys. ${detail}`)
-      if (authRole === 'approver') throw new ApiError(res.status, `Approver key needed: enter it in Keys. ${detail}`)
-    }
-    if (res.status === 503) throw new ApiError(503, detail)
-    throw new ApiError(res.status, `Request failed (${res.status}): ${detail}`)
-  }
+  if (!res.ok) throw await failure(res, authRole)
   return res
+}
+
+async function failure(res: Response, authRole?: AuthRole): Promise<ApiError> {
+  const detail = await errorDetail(res)
+  return failureFrom(res.status, detail, authRole)
+}
+
+function failureFrom(status: number, detail: string, authRole?: AuthRole): ApiError {
+  if (status === 401 || status === 403) {
+    if (authRole === 'agent') return new ApiError(status, `Enter a valid agent key in Keys. ${detail}`)
+    if (authRole === 'approver') return new ApiError(status, `Approver key needed: enter it in Keys. ${detail}`)
+  }
+  if (status === 503) return new ApiError(503, detail)
+  return new ApiError(status, `Request failed (${status}): ${detail}`)
 }
 
 // FastAPI errors look like {"detail": "..."} or {"detail": [{"msg": "..."}]}; never show raw bodies.
@@ -124,6 +130,63 @@ export const transcribe = (audio: Blob): Promise<string> =>
 // One box: the backend works out whether it's an order or a menu. requested_date only when the chef overrode it.
 export const askAgent = (input: AskInput) =>
   MOCK ? mock().then((m) => m.ask(input)) : api<AskResponse>('/api/agent/ask', { ...post(input), headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')
+
+// The same request, streamed (POST /api/agent/ask/stream, Server-Sent Events): `phase` {phase, text} as each step
+// starts, then one `result` (the /ask body) or `error` {status, detail}. fetch + a stream reader, since EventSource
+// can't POST. Falls back to plain /ask only when the stream never opened (the server started nothing); a stream that
+// breaks midway is NOT retried, because the agent may already have ordered.
+export type Phase = { phase: string; text: string }
+export const DROPPED = 'The connection dropped before the answer came back. Check History before asking again, in case it was ordered.'
+export async function askAgentStream(input: AskInput, onPhase: (p: Phase) => void): Promise<AskResponse> {
+  if (MOCK) return mock().then((m) => m.askStream(input, onPhase))
+  let res: Response
+  try {
+    res = await fetch(`${BASE}/api/agent/ask/stream`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...keyHeader('X-Agent-Key', getKeys().agentKey) },
+    })
+  } catch {
+    return askAgent(input) // never reached the server
+  }
+  if (res.status === 404 || res.status === 405 || (res.ok && !res.body)) return askAgent(input) // no stream here
+  if (!res.ok) throw await failure(res, 'agent')
+
+  const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader()
+  let buffer = ''
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += value
+      let end: number
+      while ((end = buffer.indexOf('\n\n')) >= 0) {
+        const raw = buffer.slice(0, end)
+        buffer = buffer.slice(end + 2)
+        let event = 'message'
+        const data: string[] = []
+        for (const line of raw.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim()
+          else if (line.startsWith('data:')) data.push(line.slice(5).trimStart())
+        }
+        if (!data.length) continue
+        const body = JSON.parse(data.join('\n'))
+        if (event === 'phase') onPhase(body as Phase)
+        else if (event === 'result') return body as AskResponse
+        else if (event === 'error') {
+          const detail = typeof body.detail === 'string' ? body.detail : (body.detail?.error ?? 'unexpected error')
+          throw failureFrom(Number(body.status) || 500, detail, 'agent')
+        }
+      }
+    }
+  } catch (err) {
+    if (err instanceof ApiError) throw err
+    throw new Error(DROPPED)
+  } finally {
+    reader.cancel().catch(() => {})
+  }
+  throw new Error(DROPPED)
+}
 
 export const runAgent = (input: RunInput) =>
   MOCK

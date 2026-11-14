@@ -535,6 +535,24 @@ export const mockApi = {
     return ['1000 L lactose-free milk for Monday', '20 kg döner kebab meat for the rotisserie, Friday'][voiceTurn++ % 2]
   },
 
+  // The streamed version: the backend's phases, a beat apart, then the same answer as ask().
+  async askStream(input: AskInput, onPhase: (p: { phase: string; text: string }) => void): Promise<AskResponse> {
+    const menu = /\bmenu\b|guests|covers|portions|people/i.test(input.text)
+    const steps = [
+      ['understanding', 'Reading your request…'],
+      ...(menu ? [['planning', 'Turning the menu into ingredients…']] : []),
+      ['searching', 'Searching Valio’s catalogue…'],
+      ['stock', 'Checking Valio stock and prices…'],
+      ['judging', 'Asking Gemini to double-check each match…'],
+      ...(menu ? [] : [['ordering', 'Placing the order at Valio’s front door…']]),
+    ]
+    for (const [phase, text] of steps) {
+      onPhase({ phase, text })
+      await new Promise((r) => setTimeout(r, 450))
+    }
+    return mockApi.ask(input)
+  },
+
   async ask(input: AskInput): Promise<AskResponse> {
     const text = input.text.trim()
     const requested_date = dateFrom(text, input.requested_date)

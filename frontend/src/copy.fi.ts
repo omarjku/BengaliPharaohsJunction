@@ -412,7 +412,18 @@ export const UI = {
     mute: 'Mykistä',
     turnOn: 'Ota käyttöön',
   },
-  progress: { aria: 'Mitä agentti tekee' },
+  progress: {
+    aria: 'Mitä agentti tekee',
+    dropped: 'Yhteys katkesi ennen kuin vastaus tuli. Tarkista historia ennen kuin kysyt uudelleen, siltä varalta että tilaus ehti mennä.',
+    phases: {
+      understanding: 'Luen pyyntöäsi…',
+      planning: 'Muutan menun raaka-aineiksi…',
+      searching: 'Haen Valion valikoimasta…',
+      stock: 'Tarkistan Valion saldot ja hinnat…',
+      judging: 'Pyydän Geminiä tarkistamaan jokaisen osuman…',
+      ordering: 'Teen tilauksen Valion etuovella…',
+    } as Record<string, string>,
+  },
   urgent: {
     title: 'Tarvitsetko aiemmin?',
     note: 'Pelkkiä ehdotuksia. Agentti ei ole tilannut mitään näistä.',

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { askAgent, getHealth, getKeys, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
+import { askAgentStream, DROPPED, getHealth, getKeys, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
 import { errorText, nextMonday } from './format'
 import { groupHistory } from './history'
@@ -10,6 +10,7 @@ import { RunResult } from './RunResult'
 import type { AskResponse, AuditEntry } from './types'
 import { UrgentOptions } from './Urgent'
 import { useReadBack, useVoice, voiceSupported } from './useVoice'
+import { usePhaseLine } from './usePhaseLine'
 import { MicButton, VoiceStatus } from './Voice'
 
 type View = 'order' | 'rules' | 'history'
@@ -82,6 +83,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const [auditKey, setAuditKey] = useState(0)
   const [deciding, setDeciding] = useState(false) // approve/reject in flight
   const [announce, setAnnounce] = useState('')
+  const phaseLine = usePhaseLine(400)
   const refreshAudit = () => setAuditKey((k) => k + 1)
   const offline = useBackendDown()
   const onEntries = useCallback((e: AuditEntry[]) => setEntries(e), [])
@@ -126,7 +128,11 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     setResult(null)
     setEditing(false)
     try {
-      const res = await askAgent({ text: words.trim(), ...(dateSet ? { requested_date: date } : {}) })
+      phaseLine.reset()
+      const res = await askAgentStream({ text: words.trim(), ...(dateSet ? { requested_date: date } : {}) }, (p) =>
+        phaseLine.push(c.UI.progress.phases[p.phase] ?? p.text),
+      )
+      await phaseLine.settle() // let the last step be read before the answer replaces it
       setRunDate(res.requested_date ?? date)
       if (!dateSet && res.requested_date) setDate(res.requested_date) // show the date that was used
       setResult(res)
@@ -135,7 +141,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         setEditing(true) // the answer goes in the box (or the guests field), so keep it open
       }
     } catch (err) {
-      setError(errorText(err))
+      setError(err instanceof Error && err.message === DROPPED ? u.progress.dropped : errorText(err))
       setAnnounce('')
     } finally {
       setRunning(false)
@@ -294,8 +300,11 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
               </form>
 
               {running && (
-                <div className="working" role="status">
-                  <p>{c.RUNNING}</p>
+                <div className="working" aria-label={u.progress.aria}>
+                  {/* Re-keyed per phase, so each step fades in; screen readers get the start and the answer, not every step. */}
+                  <p key={phaseLine.phase ?? 'start'} className="phase" aria-live="off">
+                    {phaseLine.phase ?? u.progress.phases.understanding}
+                  </p>
                   <div className="working-bar" aria-hidden="true" />
                 </div>
               )}
