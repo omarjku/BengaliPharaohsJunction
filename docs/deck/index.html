@@ -214,5 +214,26 @@
   <div class="foot" style="position:static;margin-top:40px"><span>valio-front-door.onrender.com</span><span>10</span></div>
 </section>
 
+<!-- 11 CRACI -->
+<section class="slide">
+  <p class="kicker">CRACI · supply-chain evidence</p>
+  <h2>Every build is evidence.</h2>
+  <div class="flow">
+    <span>CI on CRACI</span><i>→</i><span>live SBOM + network trace</span><i>→</i><span class="door">CRACI found 7 HIGH, fixed · next deploy</span><i>→</i><span>each order signed with its build · next deploy</span>
+  </div>
+  <div class="split" style="grid-template-columns: 1fr 1fr;gap:72px">
+    <div>
+      <span class="tag good">Implemented on origin/main</span>
+      <p class="lead" style="margin-top:24px">The provenance job runs on CRACI. The deployed door is wired to fetch the build’s CycloneDX SBOM, vulnerability counts, and network destinations.</p>
+    </div>
+    <div>
+      <span class="tag warn">Next deploy</span>
+      <p class="lead" style="margin-top:24px">The upgraded dependencies and refreshed signed provenance become visible after the next Render deploy and CRACI refresh.</p>
+    </div>
+  </div>
+  <p class="src">Evidence: <a href="../CRACI.md">docs/CRACI.md</a> · <a href="https://valio-front-door-api.onrender.com/.well-known/front-door-build.json">/.well-known/front-door-build.json</a></p>
+  <div class="foot"><span>CRACI build → evidence → signed front door</span><span>11</span></div>
+</section>
+
 </body>
 </html>
