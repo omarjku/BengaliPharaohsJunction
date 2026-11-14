@@ -744,3 +744,20 @@ def test_same_gemini_reading_is_cached(monkeypatch):
     out = run()
     out["items"].append(2)
     assert run() == {"items": [1]} and len(calls) == 2  # failure not cached; 3rd and 4th served from the cache
+
+
+def test_deliverable_on_the_day_wins_near_ties_only(shop1, monkeypatch):
+    """Black-box E3: a product arriving after the requested day beat a deliverable one of similar confidence."""
+    shop1.quotes["462775"] = quote("462775", avail_date=REQ + timedelta(days=3))  # Arla milk: arrives late
+    gemini(monkeypatch, ITEM, ["462775", "476240"])
+    scores = {"462775": 0.60, "476240": 0.55}
+    real = agent.judge_line
+
+    async def judge(text, p, expl):
+        _, why, weakest = await real(text, p, expl)
+        return scores.get(p["id"], 0.1), why, weakest
+    monkeypatch.setattr(agent, "judge_line", judge)
+    best = [ln for ln in run()["lines"] if ln["chosen"]][0]
+    assert best["product"]["id"] == "476240" and "can't be delivered by" in best["why"]  # in the 0.10 band
+    scores["476240"] = 0.40  # outside the band: confidence still leads, even though it arrives late
+    assert [ln for ln in run(MILK + " again")["lines"] if ln["chosen"]][0]["product"]["id"] == "462775"
