@@ -28,6 +28,7 @@ RAW = {
     "reliability": DATA / "valio_aimo_junction26_delivery_reliability.csv",
 }
 ENDPOINT = {"products": "products", "carbon": "carbon-footprint", "reliability": "delivery-reliability"}
+SLIM_VERSION = 2
 
 # GS1 allergen codes seen in the data; only well-known ones are labelled, others stay as codes.
 ALLERGEN_NAMES = {"AM": "milk", "AE": "egg", "AF": "fish", "AN": "tree nuts", "AP": "peanuts", "AY": "soy",
@@ -49,12 +50,17 @@ def _text(items: list | None, lang: str) -> str | None:
 
 def _slim(p: dict) -> dict:
     s = p.get("synkkaData") or {}
-    allergens = {"contains": [], "may_contain": [], "free_from": []}
+    allergens = {"contains": [], "may_contain": [], "free_from": [], "undeclared": []}
     claims, labels = [], []
     for c in s.get("classifications") or []:
         if c["name"] == "allergen":
             for v in c.get("values", []):
-                key = {"CONTAINS": "contains", "MAY_CONTAIN": "may_contain", "FREE_FROM": "free_from"}.get(v.get("unit"))
+                key = {"CONTAINS": "contains", "MAY_CONTAIN": "may_contain", "UNDECLARED": "undeclared"}.get(v.get("unit"))
+                if key:
+                    allergens[key].append(v["id"])
+        elif c["name"] == "nonAllergen":
+            for v in c.get("values", []):
+                key = "free_from" if v.get("unit") == "FREE_FROM" else None
                 if key:
                     allergens[key].append(v["id"])
         elif c["name"] == "nutritionalClaim":
@@ -81,6 +87,7 @@ def _slim(p: dict) -> dict:
         "claims": claims,
         "labels": labels,
         "allergens": allergens,
+        "deposits": p.get("deposits") or [],
         "substitutes": [x["substituteProduct"] for x in p.get("substitutions") or []],
         "vat": s.get("vatCode"),
     }
@@ -135,7 +142,7 @@ def build_slim() -> None:
                 s["carbon_kg_per_kg"] = carbon.get(s["id"])
                 s["delivery_reliability"] = reliability.get(s["id"])
                 out.append(s)
-    SLIM.write_text(json.dumps(out, ensure_ascii=False))
+    SLIM.write_text(json.dumps({"version": SLIM_VERSION, "products": out}, ensure_ascii=False))
 
 
 def load() -> None:
@@ -147,7 +154,11 @@ def load() -> None:
         try:
             if not SLIM.exists():
                 build_slim()
-            _products = {p["id"]: p for p in json.loads(SLIM.read_text())}
+            slim = json.loads(SLIM.read_text())
+            if not isinstance(slim, dict) or slim.get("version") != SLIM_VERSION:
+                build_slim()
+                slim = json.loads(SLIM.read_text())
+            _products = {p["id"]: p for p in slim["products"]}
             _error = None
             _ready.set()
         except Exception:

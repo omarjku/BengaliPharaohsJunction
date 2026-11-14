@@ -1058,7 +1058,12 @@ def resolve(p: dict, amount: float, unit: str) -> dict:
         dim, base = quantity.MEASURES.get(unit.lower(), (None, 0))
         pdim, pbase = quantity.MEASURES.get(pu, (None, 0))
         if dim and dim == pdim and size > 0:
-            per = Fraction(str(size)) * pbase / base  # one pack in the asked unit
+            sales_size = (p.get("units") or {}).get(p.get("sales_unit"))
+            if sales_size is None or float(sales_size) <= 0:
+                return q | {"needs_confirmation": True, "confidence": "none",
+                            "explanation": f"The product name says {size:g} {pu} per pack, but the size of one "
+                                           f"{p.get('sales_unit') or 'sales unit'} is not recorded; confirm the quantity."}
+            per = Fraction(str(size)) * pbase / base * Fraction(str(sales_size))  # one sales unit in the asked unit
             lot = Fraction(str(p.get("lot_size") or 1))
             step = max(Fraction(lot.numerator), Fraction(1))
             n = math.ceil(Fraction(str(amount)) / per / step) * step
@@ -1150,13 +1155,26 @@ def _offer(line: dict) -> str:
             f"= {gate.eur(line['line_total_cents'])} net")
 
 
-FACTS = ("delivery_reliability", "carbon_kg_per_kg", "origin")
+SUSTAINABILITY_LABELS = {
+    "GOODS_FROM_FINLAND_BLUE_SWAN": "Blue Swan",
+    "MADE_IN_FINLAND_FLAG_WITH_KEY": "Made in Finland",
+    "FINNISH_HEART_SYMBOL": "Finnish Heart",
+    "EU_ORGANIC_FARMING": "EU Organic",
+    "SVANEN": "Svanen",
+    "RAINFOREST_ALLIANCE": "Rainforest Alliance",
+    "EU_ECO_LABEL": "EU Ecolabel",
+    "MARINE_STEWARDSHIP_COUNCIL_LABEL": "MSC",
+    "FAIR_TRADE_MARK": "Fairtrade",
+}
+FACTS = ("delivery_reliability", "carbon_kg_per_kg", "origin", "labels")
 
 
 def _facts_text(f: dict) -> str:
     bits = ([f"on time {f['delivery_reliability']:.0%}"] if f["delivery_reliability"] is not None else []) + (
         [f"{f['carbon_kg_per_kg']:g} kg CO2e/kg"] if f["carbon_kg_per_kg"] is not None else []) + (
-        [f"origin {f['origin'].upper()}"] if f["origin"] else [])
+        [f"origin {f['origin'].upper()}"] if f["origin"] else []) + (
+        [f"labels {', '.join(SUSTAINABILITY_LABELS[label] for label in f.get('labels') or [] if label in SUSTAINABILITY_LABELS)}"]
+        if any(label in SUSTAINABILITY_LABELS for label in f.get("labels") or []) else [])
     return f" Facts: {', '.join(bits)}." if bits else ""
 
 
@@ -1345,7 +1363,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             rs, info = gate.check_line(pid, qty and qty["quantity"], q, requested, m, excluded, now)
             line = {"item": n, "product": p, "quote": q, "quantity": qty, "line_total_cents": info["line_total_cents"],
                     "why": "", "chosen": False, "confidence": None, "confidence_reason": None,
-                    "facts": {k: (p or {}).get(k) for k in FACTS},
+                    "facts": {k: ((p or {}).get(k) or [] if k == "labels" else (p or {}).get(k)) for k in FACTS},
+                    "deposit": gate.DEPOSIT_NOTE if (p or {}).get("deposits") else None,
                     "diet_checks": _dietary_checks(it, p, risk, risk_details, item_diets[id(it)])}
             lines.append(line)
             checked.append((line, rs))
@@ -1353,7 +1372,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             viable = not blocking and qty is not None and qty["quantity"] is not None
             asks = [r for r in rs if r.severity is not INFO]
             line["why"] = " ".join(r.message for r in asks) or (
-                f"Matches '{it['query']}' and is orderable for {requested}." if q else "No quote from Valio.")
+                f"Matches '{it['query']}' and is orderable for {requested}." if q else "No quote from Valio.") + _facts_text(line["facts"])
             total = info["line_total_cents"]
             over = total is not None and (total > m.per_line_cap_cents or any(total > lim for lim in limits)
                                           or (m.weekly_budget_cents and spent + total > m.weekly_budget_cents))
@@ -1860,6 +1879,8 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
                 order = await orders.place(buyer_id, requested, [SimpleNamespace(product_id=ln["product"]["id"],
                                                                                  quantity=ln["quantity"]["quantity"])
                                                                  for ln in orderable], mandate,
+                                      approved_prices={ln["product"]["id"]: gate.eur_to_cents(ln["quote"]["price"])
+                                                       for ln in orderable},
                                       forced_reasons=approval_reasons)
             except HTTPException as e:
                 reasons.append(gate._r(C.ENGINE_ERROR, ASK, f"The front door couldn't take the order: {e.detail}", None,

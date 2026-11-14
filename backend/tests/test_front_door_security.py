@@ -1,7 +1,7 @@
 """Regression tests for the T07 front-door security review, one block per finding. Offline (conftest.py)."""
 import asyncio
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace as L
 
 import httpx
@@ -341,7 +341,7 @@ def test_change_during_approve_is_409_not_a_silent_retry(shop, monkeypatch):
 
 
 def test_gate_refuses_past_dates_whoever_calls_it(shop):
-    from datetime import date as d
     m = Mandate(id="m1", buyer_id="chef", per_line_cap_cents=10**9)
-    res = asyncio.run(gate.check([L(product_id="463335", quantity=1)], d.today() - timedelta(days=1), m, "r", now=NOW))
+    sunday = datetime(2026, 11, 15, 1, tzinfo=timezone.utc)
+    res = asyncio.run(gate.check([L(product_id="463335", quantity=1)], date(2026, 11, 14), m, "r", now=sunday))
     assert res.status == "refused" and "DATE_NOT_HONOURED" in codes(res)

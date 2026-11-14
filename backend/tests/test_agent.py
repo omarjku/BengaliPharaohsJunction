@@ -112,6 +112,25 @@ def test_milk_end_to_end_orders_through_front_door(shop1, monkeypatch):
     assert len(calls) == 1  # one parse; candidates come from the Decisions matcher
 
 
+def test_agent_binds_auto_order_to_the_price_it_showed(shop1, monkeypatch):
+    gemini(monkeypatch, ITEM, ranked=["463335"])
+    original = shop1.get_quotes
+    calls = 0
+
+    async def changed_after_agent_quote(ids, requested_date, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        result = await original(ids, requested_date, *args, **kwargs)
+        if calls == 2:
+            result = [dict(q, price=1.5) for q in result]
+        return result
+
+    monkeypatch.setattr(valio, "get_quotes", changed_after_agent_quote)
+    body = run()
+    assert body["order"]["status"] == "pending_approval"
+    assert "PRICE_CHANGED" in codes(body)
+
+
 def test_over_auto_limit_is_held_by_the_front_door(shop1, monkeypatch):
     gemini(monkeypatch, [dict(ITEM[0], amount=2000)], ranked=["463335"])
     body = run("2000 L lactose-free milk for Monday")
@@ -323,8 +342,16 @@ def test_finnish_preference_breaks_a_near_tie_and_says_so(shop1, monkeypatch):
     body = run()
     alt, eila = body["lines"]
     assert eila["chosen"] and not alt["chosen"] and "Finnish-origin (your preference)" in eila["why"]
-    assert eila["facts"] == {"delivery_reliability": 1.0, "carbon_kg_per_kg": None, "origin": "fi"}
+    assert eila["facts"] == {"delivery_reliability": 1.0, "carbon_kg_per_kg": None, "origin": "fi", "labels": []}
     assert "on time 100%" in eila["why"] and "origin FI" in eila["why"]
+
+
+def test_sustainability_labels_reach_facts_and_line_why(shop1, monkeypatch):
+    shop1.products["463335"]["labels"] = ["GOODS_FROM_FINLAND_BLUE_SWAN", "EU_ORGANIC_FARMING"]
+    gemini(monkeypatch, ITEM, ranked=["463335"])
+    line = run()["lines"][0]
+    assert line["facts"]["labels"] == ["GOODS_FROM_FINLAND_BLUE_SWAN", "EU_ORGANIC_FARMING"]
+    assert "Blue Swan" in line["why"] and "EU Organic" in line["why"]
 
 
 def test_finnish_preference_never_beats_a_clearly_cheaper_product(shop1, monkeypatch):

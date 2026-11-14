@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
+from zoneinfo import ZoneInfo
 
 from trade_contracts import (Alternative, Decision, Mandate, Quote, Reason, ReasonCode as C, RejectedOption, Severity,
                              eur_to_cents)
@@ -22,6 +23,7 @@ from trade_contracts.common import RuleKind, UncertaintyPolicy
 from . import catalogue, valio
 
 RULES_VERSION = "t07-front-door-0.2"
+HELSINKI = ZoneInfo("Europe/Helsinki")
 log = logging.getLogger(__name__)
 ASK, DECLINE, INFO = Severity.ASK_HUMAN, Severity.DECLINE, Severity.INFO
 _RANK = {INFO: 0, ASK: 1, DECLINE: 2}
@@ -73,6 +75,7 @@ NUTRITION_CLAIMS = {"FREE_FROM_FAT", "LOW_FAT", "LOW_LACTOSE", "FREE_FROM_EGGS",
                     "FREE_FROM_SODIUM_SALT", "HIGH_PROTEIN", "HIGH_FIBRE"}
 ORGANIC_LABELS = {"EU_ORGANIC_FARMING", "KRAV_MARK", "SOIL_ASSOCIATION_ORGANIC_SYMBOL"}
 MAX_ORDER_LINES, MAX_LINE_QTY = 50, 100_000  # = the /api/orders route limits (main.py), so a proposal can be re-posted
+DEPOSIT_NOTE = "returnable packaging deposit charged by Valio; not priced by the mock API"
 
 
 @dataclass
@@ -164,7 +167,8 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
     rs: list[Reason] = []
     cat = catalogue.get(pid)
     name = (cat or {}).get("name_en") or (cat or {}).get("name_fi") or pid
-    info = {"product_id": pid, "name": name, "quantity": qty, "unit": None, "unit_price_cents": None, "line_total_cents": None}
+    info = {"product_id": pid, "name": name, "quantity": qty, "unit": None, "unit_price_cents": None,
+            "line_total_cents": None, "deposit": None}
     if pid in m.blocklist:
         rs.append(_r(C.BLOCKLISTED, DECLINE, f"{name} is on your blocklist.", pid, "Pick another product."))
     if cat is None or q is None or "unknown_product" in q["flags"]:
@@ -173,6 +177,8 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
         return rs, info
     info["unit"] = q["sales_unit"] or cat.get("sales_unit")
     unit = info["unit"] or "unit"
+    if cat.get("deposits"):
+        info["deposit"] = DEPOSIT_NOTE
 
     if "undeliverable" in q["flags"]:
         rs.append(_r(C.UNDELIVERABLE, ASK, f"{name} can't be delivered right now (no delivery schedule).", pid,
@@ -250,8 +256,9 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
     contains = al.get("contains") or []
     may_contain = al.get("may_contain") or []
     free_from = al.get("free_from") or []
+    undeclared = al.get("undeclared") or []
     for code in sorted(excluded):
-        word = _name_says(cat, code) if code not in contains + free_from else None
+        word = _name_says(cat, code) if code not in contains else None
         if code in contains:
             rs.append(_r(C.ALLERGEN_CONTAINS, DECLINE, f"{name} contains {catalogue.ALLERGEN_NAMES.get(code, code)}, "
                          "which your mandate excludes.", pid, "Pick an alternative without it.", allergen=code))
@@ -262,6 +269,10 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
         elif code in may_contain:  # (name hits were refused above)
             rs.append(_r(C.ALLERGEN_MAY_CONTAIN, ASK, f"{name} may contain {catalogue.ALLERGEN_NAMES.get(code, code)}.",
                          pid, "Approve if traces are acceptable, or pick an alternative.", allergen=code))
+        elif code in undeclared:
+            rs.append(_unknown(m.uncertainty_policy, C.ALLERGEN_DATA_MISSING, f"{name} has no allergen data for "
+                               f"{catalogue.ALLERGEN_NAMES.get(code, code)}, so your rule can't be verified.", pid,
+                               "Check the label, or pick a product with allergen data.", allergen=code))
         elif code not in free_from and not contains:
             rs.append(_unknown(m.uncertainty_policy, C.ALLERGEN_DATA_MISSING, f"{name} has no allergen data for "
                                f"{catalogue.ALLERGEN_NAMES.get(code, code)}, so your rule can't be verified.", pid,
@@ -341,8 +352,8 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
             rs.append(_r(C.DATA_MISSING, ASK, f"{cat.get('name_en') or c} is not known to be in the same category.", c,
                          "Not offered as a substitute.", category=cat.get("category")))
         al = cat.get("allergens") or {}
-        unknown = [a for a in sorted(excluded) if not (al.get("contains") or al.get("may_contain"))
-                   and a not in (al.get("free_from") or [])]
+        unknown = [a for a in sorted(excluded) if a in (al.get("undeclared") or []) or
+                   (not (al.get("contains") or al.get("may_contain")) and a not in (al.get("free_from") or []))]
         if unknown:  # a substitute must be KNOWN safe, whatever the uncertainty policy says about the order itself
             rs.append(_r(C.ALLERGEN_DATA_MISSING, ASK, f"{cat.get('name_en') or c} has no allergen declaration covering "
                          f"{', '.join(unknown)}.", c, "Not offered as a substitute.", allergens=", ".join(unknown)))
@@ -540,7 +551,8 @@ async def check(lines: list, requested: date, m: Mandate | None, request_id: str
         if not codes:
             order_rs.append(_r(C.MANDATE_INVALID, ASK, f"Can't map the excluded allergen '{v}' to Valio's allergen data.",
                                None, "Restate it as a GS1 allergen code (e.g. AP = peanuts).", rule_value=str(v)))
-    if requested < now.date():  # routes reject this too; the gate must hold whoever calls it
+    local_today = now.astimezone(HELSINKI).date() if now.tzinfo else now.date()
+    if requested < local_today:  # routes reject this too; the gate must hold whoever calls it
         order_rs.append(_r(C.DATE_NOT_HONOURED, ASK, f"The delivery date {requested} is in the past.", None,
                            "Pick a delivery date from today on.", requested_date=requested.isoformat(), not_approvable=True))
     if m.expires_at and m.expires_at <= now:

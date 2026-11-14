@@ -8,7 +8,10 @@ from trade_contracts import Mandate
 from app import catalogue, config, mandates, orders, ratelimit, valio
 
 NOW = datetime.now(timezone.utc)
-REQ = date.today() + timedelta(days=2)
+# Keep the shared delivery fixture on the next Monday so "for Monday" remains the
+# same request when the suite runs on any weekday.
+_today = date.today()
+REQ = _today + timedelta(days=(7 - _today.weekday()) % 7 or 7)
 FUTURE = (NOW + timedelta(days=1)).isoformat()
 PAST = (NOW - timedelta(days=2)).isoformat()
 
