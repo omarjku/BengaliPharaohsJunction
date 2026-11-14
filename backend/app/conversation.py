@@ -21,6 +21,7 @@ from fastapi import HTTPException
 from . import config, quantity
 
 STORE = config.DATA_DIR / "conversations.json"
+_DEFAULT_STORE = STORE
 FOLLOW_UP_TTL_S = 600
 MAX_OPEN = 2000
 _lock = threading.Lock()
@@ -203,7 +204,10 @@ _turns_lock = threading.Lock()
 
 def _history_path(buyer_id: str):
     digest = hashlib.sha256(str(buyer_id).encode("utf-8")).hexdigest()
-    return config.DATA_DIR / "conversations" / f"{digest}.json"
+    # Existing tests (and local callers) isolate the legacy follow-up store by replacing STORE. Keep the v2 history
+    # beside that isolated store while production continues to use DATA_DIR/conversations.
+    root = STORE.parent / "conversations" if STORE != _DEFAULT_STORE else config.DATA_DIR / "conversations"
+    return root / f"{digest}.json"
 
 
 def _read_history(path) -> dict:

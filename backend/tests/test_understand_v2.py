@@ -98,6 +98,21 @@ def test_understand_keeps_only_final_corrected_item(monkeypatch):
     assert result["actions"][0]["interpretation"] == "You corrected 20 -> 25 kg"
 
 
+def test_understand_resolves_final_size_correction(monkeypatch):
+    async def fake(*_args, **_kwargs):
+        return {"actions": [{
+            "intent": "plan_meal",
+            "slots": {"items": [], "dishes": ["pizza"], "guests": 20, "date": None,
+                      "diets": [], "exclusions": [], "language": "en"},
+        }]}
+
+    monkeypatch.setattr(agent, "_gemini", fake)
+    result = run(understand.understand("a large pizza ... oh wait, make that a medium", "chef", [], None, TODAY))
+    action = result["actions"][0]
+    assert action["slots"]["dishes"] == ["medium pizza"]
+    assert action["interpretation"] == "You changed the size to medium."
+
+
 def test_understand_caps_more_than_five_actions_to_first_choices(monkeypatch):
     async def fake(*_args, **_kwargs):
         return {"actions": [_raw_action(slots={"items": [{"name": f"item {n}", "amount": 1, "unit": "kg"}],

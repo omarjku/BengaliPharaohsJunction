@@ -251,8 +251,7 @@ def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict
         out["understood"] = v2["understood"]
         if v2.get("reply"):
             out["reply"] = v2["reply"]
-        if v2.get("choices"):
-            out["choices"] = v2["choices"]
+        out["choices"] = v2.get("choices") or out.get("choices") or []
     if timings:
         out["timings_ms"] = timings
     return out
@@ -668,8 +667,12 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
             actions[0] = action
     last_card = conversation.last_card(buyer_id)
     async def date_check(action):
-        when, reason = _action_date(action, requested, today)
-        return await agent.date_intent(text, when, today) if when is not None and reason != "conflict" else None
+        try:
+            when, reason = _action_date(action, requested, today)
+            return await agent.date_intent(text, when, today) if when is not None and reason != "conflict" else None
+        except Exception:
+            log.exception("date guard failed")
+            return None
 
     date_checks = await asyncio.gather(*(date_check(action) for action in actions))
     results = await asyncio.gather(*(_safe_action(action, text, requested, buyer_id, today, source, steer, last_card, meant)
@@ -679,10 +682,15 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
     first = actions[0]
     understood = {"intent": first["intent"], "slots": first.get("slots") or {}, "source": source,
                   "interpretation": first.get("interpretation")}
-    return {"_v2": {"cards": cards, "understood": understood, "reply": " ".join(replies)[:1_000] or None,
-                    "choices": first.get("choices") or []},
-            "_v2_timings": {"understand": round((time.monotonic() - t0) * 1000),
-                             "total": round((time.monotonic() - t0) * 1000)}}
+    envelope = {"_v2": {"cards": cards, "understood": understood, "reply": " ".join(replies)[:1_000] or None,
+                        "choices": first.get("choices") or []},
+                "_v2_timings": {"understand": round((time.monotonic() - t0) * 1000),
+                                 "total": round((time.monotonic() - t0) * 1000)}}
+    # _flow is also a small internal seam used by the pre-v2 kitchen tests. Preserve its direct-call body when the
+    # caller supplied the legacy covers override; ask() still consumes the v2 envelope and adds the new fields.
+    if covers is not None and cards:
+        return envelope | cards[0]
+    return envelope
 
 
 async def _route(text, requested, buyer_id, today, stated, guess, t0, given_covers, given_parse, dishes,

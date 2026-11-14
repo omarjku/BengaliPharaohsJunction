@@ -264,6 +264,16 @@ def _corrected_size(message: str, slots: dict) -> str | None:
     slots["dishes"] = [replace(x) for x in slots["dishes"]]
     for item in slots["items"]:
         item["name"] = replace(item["name"])
+    if not changed:
+        targets = slots["dishes"] or [item["name"] for item in slots["items"]]
+        if any(re.search(r"\b(?:small|medium|large)\b", target, re.I) for target in targets):
+            return size
+        if targets:
+            if slots["dishes"]:
+                slots["dishes"][0] = f"{size} {slots['dishes'][0]}".strip()
+            else:
+                slots["items"][0]["name"] = f"{size} {slots['items'][0]['name']}".strip()
+            return size
     return size if changed else None
 
 
@@ -305,20 +315,29 @@ def _sanitize_action(raw, message: str, today: date) -> dict | None:
         deduped[re.sub(r"\s+", " ", item["name"].lower()).strip()] = item
     clean["items"] = list(deduped.values())[:_MAX_ITEMS]
     clean["dishes"] = _clean_list(slots.get("dishes"), _MAX_DISHES, _MAX_NAME)
-    guests = _number(slots.get("guests"), integer=True, maximum=2_000_000_000)
+    raw_guests = slots.get("guests")
+    if isinstance(raw_guests, int) and not isinstance(raw_guests, bool) and raw_guests > 0:
+        guests = raw_guests
+    elif isinstance(raw_guests, float) and math.isfinite(raw_guests) and raw_guests.is_integer() and raw_guests > 0:
+        guests = int(raw_guests)
+    else:
+        guests = None
     clean["guests"] = guests if guests is not None else None
     clean["date"] = _iso_date(slots.get("date"), today)
     clean["diets"] = list(dict.fromkeys(t for t in (_diet(x) for x in slots.get("diets") or []) if t))[:_MAX_LIST]
     clean["exclusions"] = _clean_list(slots.get("exclusions"), _MAX_LIST, 80)
     clean["language"] = _language(slots.get("language"), message)
     interpretation = _clean_text(raw.get("interpretation"), 200) or None
+    corrections = []
     corrected = _corrected_amount(message, clean["items"])
     if corrected:
         old, new, unit = corrected
-        interpretation = f"You corrected {old:g} -> {new:g} {unit}"
+        corrections.append(f"You corrected {old:g} -> {new:g} {unit}")
     size = _corrected_size(message, clean)
     if size:
-        interpretation = f"You changed the size to {size}."
+        corrections.append(f"You changed the size to {size}.")
+    if corrections:
+        interpretation = " ".join(corrections)[:200]
 
     intent = raw["intent"]
     if clean["guests"] is not None and clean["guests"] > 2_000:
@@ -373,10 +392,10 @@ def _fallback_action(message: str, today: date, last_card: dict | None) -> dict:
         intent = "change_cart"
     elif _CART_QUESTION.search(message) and last_card and not items:
         intent = "ask_about_cart"
-    elif old_ask._CONTEXT_WEEK.search(message) and old_ask._CONTEXT_PLAN.search(message):
-        intent = "plan_period"
     elif covers is not None or _MENU_WORD.search(message):
         intent = "plan_meal"
+    elif old_ask._is_context_request(message):
+        intent = "plan_period"
     elif re.search(r"\b(asap|urgent|right now|in \d+\s*(?:minutes?|hours?)|heti|kiire)", low, re.I):
         intent = "urgent"
     elif items or re.search(r"\d", message):
