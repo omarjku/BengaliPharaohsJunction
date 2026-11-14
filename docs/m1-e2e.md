@@ -61,9 +61,10 @@ Result: **`ASK_HUMAN`, `order: null`**, audited. The human sees why and is asked
 - **Choosing a line** (`agent.run`): the hard checks are `gate.check_line`, the same checks the door runs. The ranking:
   1. Safe first: no blocking problem (cut-off, out of stock, undeliverable, partial stock, no price, hard DECLINE) and
      a resolved quantity, preferably with no assumption.
-  2. Then within the mandate's limits, then fewer concerns (a reliability ask counts as one).
-  3. Then Finnish origin, only when within 10% of the cheapest viable total.
-  4. Then the cheapest total, then Gemini's rank.
+  2. Then Gemini's confidence: lines below the buyer's confidence threshold go after every confident line.
+  3. Then within the mandate's limits, then fewer concerns (a reliability ask counts as one).
+  4. Then Finnish origin, only when within 10% of the cheapest viable total.
+  5. Then the cheapest total, then Gemini's rank.
 - **Line facts**: every quoted line carries `facts: {delivery_reliability, carbon_kg_per_kg, origin}` from Valio's
   static data. The chosen line's `why` lists them, and names the runner-up when reliability or Finnish origin decided
   the choice.

@@ -325,14 +325,15 @@ def _facts_text(f: dict) -> str:
 
 def _decided_by(scored: list) -> str:
     """One clause when reliability or Finnish origin, not price or Gemini's rank, decided against the runner-up."""
+    # Keys end (..., concerns, not_finnish, total, rank).
     (bk, best, _), rest = scored[0], scored[1:]
     for k, ln, asks in rest:
-        if k[0] or (k[5], k[6]) >= (bk[5], bk[6]):  # blocked, or it loses on price and rank anyway
+        if k[0] or k[-2:] >= bk[-2:]:  # blocked, or it loses on price and rank anyway
             continue
         rel = [r.message for r in asks if r.code in (C.LOW_RELIABILITY, C.DATA_MISSING) and "min_reliability" in r.facts]
-        if k[:3] == bk[:3] and rel:
+        if k[:-4] == bk[:-4] and rel:
             return f" Chosen over {_name(ln['product'])}: {rel[0]}"
-        if k[:4] == bk[:4] and not bk[4] and k[4]:
+        if k[:-3] == bk[:-3] and not bk[-3] and k[-3]:
             return f" Chosen over {_name(ln['product'])} because it is Finnish-origin (your preference), at a similar price."
         return ""
     return ""
@@ -430,12 +431,13 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
                                    "unit the agent can convert (L, dl, cl, ml, kg, g, pcs).", None,
                                    f"Say the amount, e.g. '20 L {it['query']}'."))
             continue
-        # Soft Finnish preference (mandate guidance): after safety, limits and concerns, before price, and only within
-        # 10% of the cheapest viable total ("when the price is similar"). It never blocks or asks.
+        # Soft Finnish preference (mandate guidance): after safety, confidence, limits and concerns, just before price,
+        # and only within 10% of the cheapest viable total ("when the price is similar"). It never blocks or asks.
+        # Keys end (..., concerns, total, rank); indexing from the end keeps this right when others add fields in front.
         fi_pref = any("finnish" in g.text.lower() for g in m.guidance)
-        cheapest = min((k[4] for k, _, _ in scored if not k[0]), default=None)
-        scored = [((*k[:4], not (fi_pref and cheapest is not None and (ln["product"] or {}).get("origin") == "fi"
-                                 and k[4] <= cheapest * 1.1), *k[4:]), ln, a) for k, ln, a in scored]
+        cheapest = min((k[-2] for k, _, _ in scored if not k[0]), default=None)
+        scored = [((*k[:-2], not (fi_pref and cheapest is not None and (ln["product"] or {}).get("origin") == "fi"
+                                  and k[-2] <= cheapest * 1.1), *k[-2:]), ln, a) for k, ln, a in scored]
         scored.sort(key=lambda s: s[0])
         (not_viable, *_), best, best_asks = scored[0]
         if not_viable:  # every candidate is blocked: bring the best one's traps to the human
