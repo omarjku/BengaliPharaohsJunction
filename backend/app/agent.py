@@ -331,7 +331,7 @@ def _decided_by(scored: list) -> str:
         if k[0] or k[-2:] >= bk[-2:]:  # blocked, or it loses on price and rank anyway
             continue
         rel = [r.message for r in asks if r.code in (C.LOW_RELIABILITY, C.DATA_MISSING) and "min_reliability" in r.facts]
-        if k[:-4] == bk[:-4] and rel:
+        if k[:-4] == bk[:-4] and k[-4] > bk[-4] and rel:  # it lost on concerns, and one is reliability
             return f" Chosen over {_name(ln['product'])}: {rel[0]}"
         if k[:-3] == bk[:-3] and not bk[-3] and k[-3]:
             return f" Chosen over {_name(ln['product'])} because it is Finnish-origin (your preference), at a similar price."

@@ -590,17 +590,35 @@
     "/api/agent/run": {
       "post": {
         "summary": "Agent Run",
-        "description": "The buyer's agent end to end. The mandate is loaded server-side for buyer_id (never from the client).\nReturns {request, lines, decision, order, audit_id}: every candidate quoted (chosen or not, with why), a contract\nDecision, the front door's order response when an order was placed (else null), and the audit entry id.",
+        "description": "The buyer's agent end to end. Needs X-Agent-Key: the buyer comes from the key, and the mandate is loaded\nserver-side for that buyer (never from the client).\nReturns {request, lines, decision, order, audit_id}: every candidate quoted (chosen or not, with why), a contract\nDecision, the front door's order response when an order was placed (else null), and the audit entry id.",
         "operationId": "agent_run_api_agent_run_post",
+        "parameters": [
+          {
+            "name": "x-agent-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Agent-Key"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AgentRunRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -608,8 +626,8 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Agent Run Api Agent Run Post"
                 }
               }
@@ -651,9 +669,17 @@
             ]
           },
           "buyer_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_.:-]{1,64}$",
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_.:-]{1,64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Buyer Id",
+            "description": "Optional; the buyer is the X-Agent-Key's and this must match it.",
             "examples": [
               "lapland-kitchen"
             ]
@@ -663,8 +689,7 @@
         "type": "object",
         "required": [
           "text",
-          "requested_date",
-          "buyer_id"
+          "requested_date"
         ],
         "title": "AgentRunRequest"
       },
@@ -680,169 +705,6 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
-      },
-      "HardRule": {
-        "properties": {
-          "kind": {
-            "$ref": "#/components/schemas/RuleKind"
-          },
-          "value": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              }
-            ],
-            "title": "Value",
-            "description": "Allergen/claim name, or a number (cents for *_cents kinds), depending on kind."
-          },
-          "scope": {
-            "$ref": "#/components/schemas/PreferenceScope",
-            "default": "always"
-          },
-          "source_text": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Text",
-            "description": "The buyer's own words."
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "kind",
-          "value"
-        ],
-        "title": "HardRule",
-        "description": "A check that is either met or not. Breaking one is a hard violation\n(except AUTO_APPROVE_LIMIT_CENTS, which only decides who signs off)."
-      },
-      "Mandate": {
-        "properties": {
-          "contract_version": {
-            "type": "string",
-            "const": "0.2",
-            "title": "Contract Version",
-            "default": "0.2"
-          },
-          "id": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Id"
-          },
-          "buyer_id": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Buyer Id"
-          },
-          "hard_rules": {
-            "items": {
-              "$ref": "#/components/schemas/HardRule"
-            },
-            "type": "array",
-            "title": "Hard Rules"
-          },
-          "uncertainty_policy": {
-            "$ref": "#/components/schemas/UncertaintyPolicy",
-            "default": "ask"
-          },
-          "guidance": {
-            "items": {
-              "$ref": "#/components/schemas/Preference"
-            },
-            "type": "array",
-            "title": "Guidance"
-          },
-          "open_questions": {
-            "items": {
-              "$ref": "#/components/schemas/OpenQuestion"
-            },
-            "type": "array",
-            "title": "Open Questions"
-          },
-          "blocklist": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Blocklist",
-            "description": "Product ids that may never be ordered."
-          },
-          "per_line_cap_cents": {
-            "type": "integer",
-            "exclusiveMinimum": 0.0,
-            "title": "Per Line Cap Cents",
-            "description": "Max net cents for one order line (default EUR 300).",
-            "default": 30000
-          },
-          "weekly_budget_cents": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "exclusiveMinimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Weekly Budget Cents",
-            "description": "Optional net-cents budget for a rolling 7 days."
-          },
-          "expires_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expires At",
-            "description": "After this the mandate is expired (decisions ask a human)."
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "id",
-          "buyer_id"
-        ],
-        "title": "Mandate"
-      },
-      "OpenQuestion": {
-        "properties": {
-          "question": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Question"
-          },
-          "why": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Why"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "question"
-        ],
-        "title": "OpenQuestion",
-        "description": "Something the compiler could not resolve; asked, not guessed."
       },
       "OrderLine": {
         "properties": {
@@ -897,49 +759,16 @@
             "maxItems": 50,
             "minItems": 1,
             "title": "Lines"
-          },
-          "mandate": {
-            "$ref": "#/components/schemas/Mandate"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "requested_date",
-          "lines",
-          "mandate"
+          "lines"
         ],
         "title": "OrderRequest",
-        "description": "An order at fixed prices. Price and stock are re-read from Valio here; the client can't set them.\nThe buyer is the one the X-Agent-Key belongs to; buyer_id is optional and must match it if sent."
-      },
-      "Preference": {
-        "properties": {
-          "text": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Text"
-          },
-          "scope": {
-            "$ref": "#/components/schemas/PreferenceScope"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "text",
-          "scope"
-        ],
-        "title": "Preference",
-        "description": "Soft guidance that is not a clean check; shapes ranking, never blocks."
-      },
-      "PreferenceScope": {
-        "type": "string",
-        "enum": [
-          "this_order",
-          "always"
-        ],
-        "title": "PreferenceScope",
-        "description": "How long a preference lasts (D5: don't over-generalise)."
+        "description": "An order at fixed prices. Price and stock are re-read from Valio here; the client can't set them.\nThe buyer is the one the X-Agent-Key belongs to; buyer_id is optional and must match it if sent.\nNo mandate field: the order is judged by the buyer's mandate stored at Valio (sending one is a 422)."
       },
       "QuantityRequest": {
         "properties": {
@@ -1010,28 +839,6 @@
           "requested_date"
         ],
         "title": "QuoteRequest"
-      },
-      "RuleKind": {
-        "type": "string",
-        "enum": [
-          "excluded_allergen",
-          "required_claim",
-          "max_unit_price_cents",
-          "min_delivery_reliability",
-          "auto_approve_limit_cents"
-        ],
-        "title": "RuleKind",
-        "description": "Closed list of checks a hard rule may express. Money values are net cents."
-      },
-      "UncertaintyPolicy": {
-        "type": "string",
-        "enum": [
-          "ask",
-          "decline",
-          "approve"
-        ],
-        "title": "UncertaintyPolicy",
-        "description": "What the agent does when it cannot verify something."
       },
       "ValidationError": {
         "properties": {
