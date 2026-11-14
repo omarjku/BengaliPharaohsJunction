@@ -273,13 +273,15 @@ async def _gate(audit: dict, lines, requested_date, mandate, oid, **kwargs) -> g
 
 def _response(order_id: str | None, status: str, body: dict, audit_id: str) -> dict:
     """Every order response carries a signed statement of what the front door decided and the quote facts it used."""
+    build = signing.signed_build_provenance()
     statement = {"v": 1, "iss": signing.ISSUER, "order_id": order_id, "status": status, "audit_id": audit_id,
                  "total_cents": body["total_cents"], "decision": body["decision"],
                  "mandate_version": body.get("mandate_version"), "signed_off_by": body.get("signed_off_by"),
+                 "build": build,
                  "quotes": body.get("quote_facts", []),
                  "lines": [{k: li.get(k) for k in ("product_id", "quantity", "unit", "unit_price_cents", "line_total_cents")}
                            for li in body.get("lines", [])]}
-    return {"order_id": order_id, "status": status, "audit_id": audit_id, **body,
+    return {"order_id": order_id, "status": status, "audit_id": audit_id, "build": build, **body,
             "signed_statement": statement, "signature": signing.sign(statement)}
 
 

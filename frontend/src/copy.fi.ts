@@ -322,6 +322,7 @@ export const UI = {
     orderedFor: (d: string) => `Tilattu toimitukseen ${d}`,
     frontDoor: (s: string) => `Lähetetty Valion etuovelle: ${DOOR_STATUS[s] ?? s.replace(/_/g, ' ')}.`,
     seeHistory: 'Katso historiasta',
+    signedByBuild: 'Allekirjoittanut build',
     rejected: 'Hylätty. Mitään ei tilattu.',
     of: (amount: string, name: string) => `${amount}: ${name}`,
     products: (v: number) => `${v} tuotetta`,
