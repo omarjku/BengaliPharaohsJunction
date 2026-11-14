@@ -98,7 +98,8 @@ def _response(order_id: str | None, status: str, body: dict, audit_id: str) -> d
 
 def _view(res: gate.GateResult) -> dict:
     return {"total_cents": res.total_cents, "lines": res.lines, "decision": res.decision.model_dump(mode="json"),
-            "rejected_options": [r.model_dump(mode="json") for r in res.rejected_options]}
+            "rejected_options": [r.model_dump(mode="json") for r in res.rejected_options],
+            "substitutes": res.substitutes, "alternative_order": res.alternative_order}
 
 
 def _busy() -> HTTPException:

@@ -49,7 +49,7 @@ def test_terminal_cutoff_passed_and_unknown_qty_is_refused_with_alternatives(sho
     assert set(codes(res)) == {"CUTOFF_PASSED", "QTY_UNKNOWN"}
     assert res.rejected_options[0].product_id == "463038"
     alts = [a.product_id for a in res.decision.alternatives]
-    assert alts[0] == "476240" and "463038" not in alts and all("Instead of 463038" in a.summary for a in res.decision.alternatives)
+    assert alts[0] == "476240" and "463038" not in alts and all("instead of 463038" in a.summary for a in res.decision.alternatives)
     rejected_alts = {ro.product_id for ro in res.rejected_options[1:]}
     assert {"104", "105"} <= rejected_alts  # candidates that failed their own checks are logged, not offered
 
@@ -64,7 +64,7 @@ def test_partial_stock_suggests_the_available_amount(shop):
     res = run([("462775", 100)])
     assert res.status == "refused" and codes(res) == ["STOCK_PARTIAL"]
     r = res.decision.reasons[0]
-    assert r.facts == {"available": 51.0, "requested": 100} and "Reduce to 51" in r.suggested_fix
+    assert r.facts == {"available": 51.0, "requested": 100} and "51 ST of Arla milk 1 l + 49 ST" in r.suggested_fix
 
 
 def test_unknown_product_is_declined(shop):
