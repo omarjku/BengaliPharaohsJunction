@@ -14,7 +14,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (AwareDatetime, BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StringConstraints,
+                      field_validator, model_validator)
 from trade_contracts import Mandate
 
 from . import (agent, ask, auth, catalogue, config, gate, httpsig, kitchen, live, mandates, menu, orders, profile,
@@ -576,6 +577,70 @@ async def post_onboarding(req: OnboardingRequest, who: Approver) -> dict:
 def get_profile(who: Agent) -> dict:
     """The calling buyer's profile, read-only (guidance, never rules): standing dietary needs with the reason, usual
     product ids, the remembered items with why each is used, open questions, recent confirmed orders."""
+    return profile.context(who.buyer_id)
+
+
+class KitchenCoversRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mon: StrictInt | None = Field(default=None, ge=0, le=5000)
+    tue: StrictInt | None = Field(default=None, ge=0, le=5000)
+    wed: StrictInt | None = Field(default=None, ge=0, le=5000)
+    thu: StrictInt | None = Field(default=None, ge=0, le=5000)
+    fri: StrictInt | None = Field(default=None, ge=0, le=5000)
+    sat: StrictInt | None = Field(default=None, ge=0, le=5000)
+    sun: StrictInt | None = Field(default=None, ge=0, le=5000)
+
+
+class StandingOrderLineRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=200)
+    product_id: ProductId | None = None
+    quantity: StrictFloat | StrictInt | None = Field(default=None, gt=0, le=1_000_000, allow_inf_nan=False)
+    unit: str | None = Field(default=None, max_length=20)
+
+
+class StandingOrderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    lines: list[StandingOrderLineRequest] = Field(min_length=1, max_length=50)
+
+
+@app.get("/api/kitchen/history")
+def get_kitchen_history(who: Agent) -> dict:
+    return kitchen.history(who.buyer_id)
+
+
+@app.put("/api/kitchen/history/covers")
+def put_kitchen_covers(req: KitchenCoversRequest, who: Approver) -> dict:
+    covers = {key: getattr(req, key) for key in kitchen.DAY_KEYS if key in req.model_fields_set}
+    if not covers:
+        raise HTTPException(422, detail="Send at least one weekday cover count.")
+    if any(value is None for value in covers.values()):
+        raise HTTPException(422, detail="Cover counts must be integers.")
+    return kitchen.save_covers(who.buyer_id, covers)
+
+
+@app.post("/api/kitchen/history/clear-example")
+def post_clear_kitchen_example(who: Approver) -> dict:
+    return kitchen.clear_example(who.buyer_id)
+
+
+@app.put("/api/profile/standing-orders/{weekday}")
+def put_standing_order(weekday: str, req: StandingOrderRequest, who: Approver) -> dict:
+    try:
+        profile.update_standing_order(who.buyer_id, weekday, [line.model_dump(exclude_none=True) for line in req.lines])
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e)) from None
+    return profile.context(who.buyer_id)
+
+
+@app.delete("/api/profile/standing-orders/{weekday}")
+def delete_standing_order(weekday: str, who: Approver) -> dict:
+    try:
+        profile.delete_standing_order(who.buyer_id, weekday)
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e)) from None
+    except KeyError:
+        raise HTTPException(404, detail="No standing order for that weekday.") from None
     return profile.context(who.buyer_id)
 
 

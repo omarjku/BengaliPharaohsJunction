@@ -116,6 +116,39 @@ def standing_orders(buyer_id: str) -> list[dict]:
     return sorted(out, key=lambda item: WEEKDAYS.index(item["weekday"]))
 
 
+def update_standing_order(buyer_id: str, weekday: str, lines: list[dict]) -> dict:
+    """Replace one chef-edited weekday order in the append-only profile store."""
+    day = _weekday(weekday)
+    if not day:
+        raise ValueError("standing_orders: weekday must be monday … sunday")
+    order = _normalise_standing_orders([{"weekday": day, "lines": lines}])[0]
+    now, s = datetime.now(timezone.utc), store()
+    key = f"standing_order:{day}"
+    for memory in _memories(buyer_id):
+        if memory.key == key:
+            s.revoke(buyer_id, memory.id, now)
+    encoded = [json.dumps(line, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+               for line in order["lines"]]
+    memory = s.add_memory(buyer_id, kind=MemoryKind.PREFERENCE_NOTE, key=key,
+                          text=f"Our usual {day} order: " + ", ".join(line["text"] for line in order["lines"]),
+                          value={"weekday": day, "lines": encoded}, source=MemorySource.CHOSEN_ALTERNATIVE,
+                          now=now, scope=PreferenceScope.ALWAYS)
+    return {"weekday": day, "lines": _decoded_value(memory)["lines"], "source": _source_label(memory.source)}
+
+
+def delete_standing_order(buyer_id: str, weekday: str) -> None:
+    """Revoke one active weekday order; KeyError means it was not saved for this buyer."""
+    day = _weekday(weekday)
+    if not day:
+        raise ValueError("standing_orders: weekday must be monday … sunday")
+    matches = [memory for memory in _memories(buyer_id) if memory.key == f"standing_order:{day}"]
+    if not matches:
+        raise KeyError(day)
+    now = datetime.now(timezone.utc)
+    for memory in matches:
+        store().revoke(buyer_id, memory.id, now)
+
+
 def recent_order_for_weekday(buyer_id: str, weekday: str) -> dict | None:
     """Read the most recent confirmed real order for a weekday, never simulated kitchen history."""
     target = WEEKDAYS.index(weekday) if weekday in WEEKDAYS else None
