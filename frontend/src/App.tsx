@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { ApiError, askAgentStream, DROPPED, getAdminKey, getHealth, getKeys, KEYS_FROM_LINK, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
+import { ApiError, askAgentStream, DROPPED, getAdminKey, getHealth, getKeys, KEYS_FROM_LINK, applyLinkKeys, checkLinkKeys, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
 import { buyerLabel, errorText, nextMonday } from './format'
 import { groupHistory } from './history'
@@ -95,13 +95,29 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const [auditKey, setAuditKey] = useState(0)
   const [deciding, setDeciding] = useState(false) // approve/reject in flight
   const [announce, setAnnounce] = useState('')
-  // Opened from a setup link: say once, quietly, that the keys were saved (api.ts read and removed the link).
-  const [fromLink, setFromLink] = useState(KEYS_FROM_LINK)
+  // Opened from a setup link (api.ts read and removed it): say quietly that the keys were saved, or, when other keys
+  // were already saved here, ask before replacing them.
+  // The notice stays until dismissed, so keys that changed are always noticed.
+  const [fromLink, setFromLink] = useState<typeof KEYS_FROM_LINK | 'invalid'>(KEYS_FROM_LINK)
+  const [linkKitchen, setLinkKitchen] = useState<string | null | undefined>(undefined) // undefined: still checking
   useEffect(() => {
-    if (!fromLink) return
-    const t = setTimeout(() => setFromLink(false), 6000)
-    return () => clearTimeout(t)
-  }, [fromLink])
+    if (KEYS_FROM_LINK !== 'confirm') return
+    let cancelled = false
+    void checkLinkKeys().then(({ valid, kitchen }) => {
+      if (cancelled) return
+      if (valid) return setLinkKitchen(kitchen)
+      applyLinkKeys(false) // a bad key never replaces a working one
+      setFromLink('invalid')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  function answerLink(replace: boolean) {
+    applyLinkKeys(replace)
+    setFromLink(replace ? 'saved' : null)
+    if (replace) keysSaved()
+  }
   const phaseLine = usePhaseLine(400)
   const refreshAudit = () => setAuditKey((k) => k + 1)
   const offline = useBackendDown()
@@ -321,10 +337,40 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
             <strong>{u.mock.title}</strong> {u.mock.body}
           </p>
         )}
-        {fromLink && (
+        {fromLink === 'saved' && (
           <p className="note banner" role="status">
-            {u.keys.fromLink}
+            {u.keys.fromLink}{' '}
+            <button type="button" className="link accent inline" onClick={() => setFromLink(null)}>
+              {u.keys.ok}
+            </button>
           </p>
+        )}
+        {fromLink === 'invalid' && (
+          <div className="problem banner" role="alert">
+            <strong>{u.keys.linkInvalid}</strong>
+            {u.keys.linkKept}{' '}
+            <button type="button" className="link accent inline" onClick={() => setFromLink(null)}>
+              {u.keys.ok}
+            </button>
+          </div>
+        )}
+        {fromLink === 'confirm' && linkKitchen === undefined && (
+          <p className="note banner" role="status">
+            {u.keys.linkChecking}
+          </p>
+        )}
+        {fromLink === 'confirm' && linkKitchen !== undefined && (
+          <div className="banner" role="alertdialog" aria-labelledby="link-keys-q">
+            <p id="link-keys-q">{u.keys.switchQ(linkKitchen ? buyerLabel(linkKitchen) : null)}</p>
+            <div className="actions">
+              <button type="button" className="btn" onClick={() => answerLink(true)}>
+                {u.keys.switchTo}
+              </button>
+              <button type="button" className="btn plain" onClick={() => answerLink(false)}>
+                {u.keys.keepCurrent}
+              </button>
+            </div>
+          </div>
         )}
         {offline && (
           <div className="problem banner" role="status">
