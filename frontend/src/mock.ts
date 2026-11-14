@@ -1,4 +1,16 @@
 import { ApiError } from './api'
+import type {
+  InterviewAnswer,
+  InterviewNextResponse,
+  InterviewPreview,
+  KitchenHistory,
+  KitchenLiveEvent,
+  StandingOrder,
+  StandingOrderLine,
+  StandingOrderUpdate,
+  Weekday,
+} from './kitchenEditApi'
+import type { Saved } from './onboardingApi'
 // Mock backend for VITE_MOCK=1 / ?mock=1 (dev only). Products are real catalogue entries; prices,
 // stock and cut-offs are illustrative. Which fixture you get depends on the request text:
 //   contains "1000" / "1 000" / "1,000"  -> ASK_HUMAN, order pending_approval (the lactose-free milk case)
@@ -7,7 +19,7 @@ import { ApiError } from './api'
 //   contains "error"                     -> a failed request (to see the error state)
 //   anything else                        -> AUTO, order confirmed (small butter order)
 import type {
-  AdminFilter, AdminRow, BuyerProfile, KitchenContext, LiveEvent, LiveSocket, PhotoRead, SecurityEvent, AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
+  AdminFilter, AdminRow, BuyerProfile, KitchenContext, LiveSocket, PhotoRead, SecurityEvent, AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
   AskInput, AskResponse, CompileResult, Mandate, MenuInput, MenuRun, Product, RuleChange, SaveResult, Quote, QuantityResolution, Reason, RunInput, Substitute,
 } from './types'
 
@@ -373,6 +385,32 @@ let mockProfile: BuyerProfile = {
   ],
 }
 
+export async function interviewNext(answers: InterviewAnswer[]): Promise<InterviewNextResponse> {
+  await wait()
+  const answered = new Set(answers.map((answer) => answer.topic))
+  const next = INTERVIEW_QUESTIONS.find((question) => !answered.has(question.topic))
+  return next ? { done: false, topic: next.topic, question: next.question } : { done: true, preview: structuredClone(MOCK_INTERVIEW_PREVIEW) }
+}
+
+export async function confirmInterview(answers: Record<string, unknown>): Promise<Saved> {
+  await wait()
+  const business = typeof answers.business_type === 'string' ? answers.business_type : null
+  const dietary = Array.isArray(answers.dietary) ? answers.dietary.filter((value): value is string => typeof value === 'string') : []
+  const nextMemories = [...mockProfile.memories]
+  if (business) {
+    nextMemories.unshift({
+      id: 'memory-interview-business', kind: 'business_type', key: 'business_type', text: business, scope: 'always',
+      source: 'onboarding', created_at: new Date().toISOString(), used_because: null, product_id: null,
+    })
+  }
+  mockProfile = {
+    ...mockProfile,
+    dietary: dietary.length ? dietary.map((tag) => ({ tag, label: tag.replace(/_/g, '-'), because: 'You told me in the kitchen interview.' })) : mockProfile.dietary,
+    memories: nextMemories,
+  }
+  return { stored: true, saved: Object.keys(answers), hints: [], onboarding: { onboarded: true, questions: [] } }
+}
+
 const MOCK_KITCHEN_CONTEXT: KitchenContext = {
   buyer_id: 'lapland-kitchen',
   period: { from: '2026-09-20', to: '2026-11-13' },
@@ -400,6 +438,68 @@ const MOCK_KITCHEN_CONTEXT: KitchenContext = {
   sources: ['demo seed (simulated door counter and POS export)', 'front door orders'],
   simulated: true,
 }
+
+const MOCK_KITCHEN_HISTORY: KitchenHistory = {
+  basis: 'example',
+  covers_by_weekday: { mon: 46, tue: 52, wed: 49, thu: 61, fri: 78, sat: 85, sun: null },
+  covers_source: { mon: 'example', tue: 'example', wed: 'example', thu: 'example', fri: 'example', sat: 'example', sun: 'example' },
+  standing_orders: [
+    {
+      weekday: 'fri',
+      lines: [
+        { text: '12 L lactose-free milk', quantity: 12, unit: 'L' },
+        { text: '20 packs unsalted butter', quantity: 20, unit: 'ST' },
+      ],
+      source: 'example',
+    },
+  ],
+  usual_products: [
+    { product_id: '463335', name: 'Valio Eila milk drink 1 l lactose free', source: 'example' },
+    { product_id: '464411', name: 'Valio butter 500 g unsalted', source: 'example' },
+  ],
+  labels: { example: 'Example history (simulated)' },
+}
+
+const mockKitchenHistory = structuredClone(MOCK_KITCHEN_HISTORY)
+
+function historyBasis(history: KitchenHistory): KitchenHistory['basis'] {
+  const hasExample = Object.values(history.covers_source).some((source) => source === 'example') ||
+    history.standing_orders.some((order) => order.source === 'example') ||
+    history.usual_products.some((product) => product.source === 'example')
+  const hasOwn = Object.values(history.covers_source).some((source) => source === 'own') ||
+    history.standing_orders.some((order) => order.source === 'own') ||
+    history.usual_products.some((product) => product.source === 'own')
+  return hasExample && hasOwn ? 'mixed' : hasExample ? 'example' : 'own'
+}
+
+function mockStandingOrders(): StandingOrder[] {
+  return mockKitchenHistory.standing_orders.map((order) => structuredClone(order))
+}
+
+const MOCK_INTERVIEW_PREVIEW: InterviewPreview = {
+  stored: false,
+  proposed: [
+    { id: 'business_type', question: 'What kind of business do you run?', value: '60-seat bistro' },
+    { id: 'delivery_days', question: 'Which weekdays can you receive deliveries?', value: ['monday', 'friday'] },
+    { id: 'standing_orders', question: 'What do you order regularly, and on which days?', value: [{ weekday: 'fri', lines: [{ text: '12 L lactose-free milk', quantity: 12, unit: 'L' }] }] },
+    { id: 'dietary', question: 'Which diets does your whole kitchen always follow?', value: ['gluten_free'] },
+    { id: 'usual_products', question: 'Which products or brands do you reach for often?', value: ['Valio Eila milk drink', 'Valio butter'] },
+    { id: 'budget', question: 'What order total are you comfortable with on your own?', value: 1500 },
+  ],
+  unclear: [],
+  hints: [],
+}
+
+const EDIT_DAYS: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+const INTERVIEW_QUESTIONS: { topic: InterviewAnswer['topic']; question: string }[] = [
+  { topic: 'kitchen', question: 'What kind of kitchen is this, and how many seats or typical guests do you serve?' },
+  { topic: 'delivery_days', question: 'Which weekdays can you receive deliveries?' },
+  { topic: 'standing_orders', question: 'What do you order regularly, and on which days?' },
+  { topic: 'dietary_allergens', question: 'Which diets or allergens must your kitchen always avoid?' },
+  { topic: 'usual_products', question: 'Which products or brands do you reach for often?' },
+  { topic: 'budget', question: 'What order total are you comfortable with on your own?' },
+  { topic: 'anything_else', question: 'Is there anything else I should remember about your kitchen?' },
+]
 
 // Menu → cart (POST /api/agent/menu): two dishes for 80 covers. Amounts per cover are the agent's estimates.
 const menuLine = (
@@ -590,6 +690,49 @@ export const mockApi = {
   async kitchenContext(): Promise<KitchenContext> {
     await wait()
     return structuredClone(MOCK_KITCHEN_CONTEXT)
+  },
+
+  async kitchenHistory(): Promise<KitchenHistory> {
+    await wait()
+    return structuredClone(mockKitchenHistory)
+  },
+
+  async saveKitchenCovers(covers: Record<Weekday, number>): Promise<void> {
+    await wait()
+    for (const day of EDIT_DAYS) {
+      if (typeof covers[day] !== 'number' || !Number.isInteger(covers[day]) || covers[day] < 0) continue
+      mockKitchenHistory.covers_by_weekday[day] = covers[day]
+      mockKitchenHistory.covers_source[day] = 'own'
+    }
+    mockKitchenHistory.basis = historyBasis(mockKitchenHistory)
+  },
+
+  async clearExampleHistory(): Promise<void> {
+    await wait()
+    for (const day of EDIT_DAYS) {
+      if (mockKitchenHistory.covers_source[day] === 'example') {
+        mockKitchenHistory.covers_by_weekday[day] = null
+        mockKitchenHistory.covers_source[day] = 'own'
+      }
+    }
+    mockKitchenHistory.standing_orders = mockKitchenHistory.standing_orders.filter((order) => order.source !== 'example')
+    mockKitchenHistory.usual_products = mockKitchenHistory.usual_products.filter((product) => product.source !== 'example')
+    mockKitchenHistory.basis = 'own'
+  },
+
+  async saveStandingOrder(weekday: Weekday, lines: StandingOrderLine[]): Promise<StandingOrderUpdate> {
+    await wait()
+    mockKitchenHistory.standing_orders = mockKitchenHistory.standing_orders.filter((order) => order.weekday !== weekday)
+    if (lines.length) mockKitchenHistory.standing_orders.push({ weekday, lines: structuredClone(lines), source: 'own' })
+    mockKitchenHistory.basis = historyBasis(mockKitchenHistory)
+    return { standing_orders: mockStandingOrders() }
+  },
+
+  async deleteStandingOrder(weekday: Weekday): Promise<StandingOrderUpdate> {
+    await wait()
+    mockKitchenHistory.standing_orders = mockKitchenHistory.standing_orders.filter((order) => order.weekday !== weekday)
+    mockKitchenHistory.basis = historyBasis(mockKitchenHistory)
+    return { standing_orders: mockStandingOrders() }
   },
 
   // Pretend speech-to-text: the demo's example sentences, in turn.
@@ -793,26 +936,41 @@ export const mockApi = {
   },
 
   // Talk: a scripted conversation, timed like the real one (the agent's audio is left out: captions only).
-  async live(h: Pick<LiveSocket, 'onEvent' | 'onClose'>): Promise<Pick<LiveSocket, 'send' | 'close'>> {
+  async live(
+    h: Pick<LiveSocket, 'onEvent' | 'onClose'> | { onEvent: (event: KitchenLiveEvent) => void; onClose: () => void },
+    mode: 'order' | 'interview' = 'order',
+  ): Promise<Pick<LiveSocket, 'send' | 'close'>> {
     let closed = false
     const timers: number[] = []
-    const at = (ms: number, e: LiveEvent) => timers.push(window.setTimeout(() => !closed && h.onEvent(e), ms))
-    const run = await mockApi.ask({ text: '1000 L lactose-free milk for Monday' })
-    at(300, { type: 'ready' })
-    at(1500, { type: 'transcript', role: 'user', text: 'I need lactose-free milk for Monday', final: false })
-    at(2300, { type: 'transcript', role: 'user', text: 'I need lactose-free milk for Monday, a thousand litres.', final: true })
-    at(2700, { type: 'transcript', role: 'agent', text: 'Give me a second to check Valio.', final: true })
-    at(3000, { type: 'tool', name: 'ask', status: 'running', label: 'Checking Valio prices…' })
-    at(5200, { type: 'tool', name: 'ask', status: 'done', label: 'Checked Valio prices' })
-    at(5300, { type: 'result', payload: run })
-    at(5600, { type: 'transcript', role: 'agent', text: 'That’s 1,560 euros, 60 over your limit, so it needs your OK. Approve it on screen.', final: true })
-    at(6200, { type: 'turn_complete' })
+    const handler = h as { onEvent: (event: KitchenLiveEvent) => void; onClose: () => void }
+    const at = (ms: number, e: KitchenLiveEvent) => timers.push(window.setTimeout(() => !closed && handler.onEvent(e), ms))
+    if (mode === 'interview') {
+      at(300, { type: 'ready' })
+      at(1000, { type: 'transcript', role: 'agent', text: 'What kind of kitchen is this, and how many guests do you serve?', final: true })
+      at(1900, { type: 'transcript', role: 'user', text: 'A 60-seat bistro in Lapland.', final: true })
+      at(2700, { type: 'transcript', role: 'agent', text: 'Which weekdays can you receive deliveries?', final: true })
+      at(3600, { type: 'transcript', role: 'user', text: 'Monday and Friday.', final: true })
+      at(4400, { type: 'interview_preview', preview: structuredClone(MOCK_INTERVIEW_PREVIEW) })
+      at(5000, { type: 'transcript', role: 'agent', text: "Here's what I'll remember. Check it on screen and confirm.", final: true })
+      at(5600, { type: 'turn_complete' })
+    } else {
+      const run = await mockApi.ask({ text: '1000 L lactose-free milk for Monday' })
+      at(300, { type: 'ready' })
+      at(1500, { type: 'transcript', role: 'user', text: 'I need lactose-free milk for Monday', final: false })
+      at(2300, { type: 'transcript', role: 'user', text: 'I need lactose-free milk for Monday, a thousand litres.', final: true })
+      at(2700, { type: 'transcript', role: 'agent', text: 'Give me a second to check Valio.', final: true })
+      at(3000, { type: 'tool', name: 'ask', status: 'running', label: 'Checking Valio prices…' })
+      at(5200, { type: 'tool', name: 'ask', status: 'done', label: 'Checked Valio prices' })
+      at(5300, { type: 'result', payload: run })
+      at(5600, { type: 'transcript', role: 'agent', text: 'That’s 1,560 euros, 60 over your limit, so it needs your OK. Approve it on screen.', final: true })
+      at(6200, { type: 'turn_complete' })
+    }
     return {
       send: () => {},
       close: () => {
         closed = true
         timers.forEach(clearTimeout)
-        h.onClose()
+        handler.onClose()
       },
     }
   },

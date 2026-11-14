@@ -1,0 +1,24 @@
+.interview-card { gap: var(--s4); }
+.interview-card .actions { margin-block-start: var(--s1); }
+.interview-live, .interview-text-mode, .interview-preview { display: grid; gap: var(--s4); }
+.interview-orb-row { display: flex; align-items: center; gap: var(--s3); }
+.interview-orb-row .orb { flex: none; }
+.interview-captions { display: grid; gap: var(--s2); border-block-start: 1px solid var(--line); padding-block-start: var(--s3); }
+.interview-caption { display: grid; grid-template-columns: 4rem minmax(0, 1fr); gap: var(--s3); overflow-wrap: anywhere; }
+.interview-caption span { color: var(--ink-2); font: var(--t-small); font-weight: 600; }
+.interview-caption-user { color: var(--bubble-mine); }
+.interview-caption-partial { color: var(--ink-2); }
+.interview-form, .interview-proposed { display: grid; gap: var(--s4); }
+.interview-form .field, .interview-proposed .field { min-width: 0; }
+.interview-form .field > span, .interview-proposed .field > span { font: var(--t-small); color: var(--ink-2); }
+.interview-form .field > strong, .interview-proposed .field > strong { font-weight: 600; }
+.interview-form input, .interview-proposed textarea {
+  width: 100%; min-height: var(--tap); padding: var(--s3) var(--s4); border: 1px solid var(--field-line);
+  border-radius: var(--radius); background: var(--surface); resize: vertical;
+}
+.interview-proposed textarea { min-height: 72px; }
+.interview-form input:focus, .interview-proposed textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+.interview-value { white-space: pre-wrap; overflow-wrap: anywhere; }
+.interview-note { padding: var(--s3) var(--s4); border-radius: var(--radius); background: var(--warn-wash); color: var(--warn); font: var(--t-small); }
+.interview-success { color: var(--good); font: var(--t-small); font-weight: 600; }
+.interview-error { color: var(--bad); font: var(--t-small); }

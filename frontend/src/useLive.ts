@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { errorText } from './format'
+import { openInterviewLive, type InterviewPreview, type KitchenLiveEvent } from './kitchenEditApi'
 import { takeLive } from './liveWarm'
 import type { AskResponse, LiveEvent, LiveSocket } from './types'
 
@@ -12,6 +13,7 @@ export type LiveState = 'connecting' | 'listening' | 'thinking' | 'speaking' | '
 export type LiveHandlers = {
   onTranscript: (role: 'user' | 'agent', text: string, final: boolean) => void
   onResult: (r: AskResponse) => void
+  onInterviewPreview?: (preview: InterviewPreview) => void
   onError: (message: string) => void
 }
 
@@ -51,6 +53,7 @@ export function useLive(
   handlers: LiveHandlers,
   levelEl: RefObject<HTMLElement | null>, // the orb: --level follows the voice (the chef's, or the agent's while speaking)
   messages: { denied: string; closed: string },
+  mode: 'order' | 'interview' = 'order',
 ) {
   const [state, setState] = useState<LiveState>('connecting')
   const [tool, setTool] = useState<string | null>(null) // e.g. "Checking Valio prices and stock…"
@@ -115,9 +118,11 @@ export function useLive(
       levelEl.current?.style.setProperty('--level', Math.min(1, Math.sqrt(sum / pcm.length) * 4).toFixed(2))
       setState('speaking')
     }
-    const onEvent = (e: LiveEvent) => {
+    const onEvent = (e: KitchenLiveEvent) => {
       if (ended) return
-      if (e.type === 'ready') {
+      if (e.type === 'interview_preview') {
+        h.current.onInterviewPreview?.(e.preview)
+      } else if (e.type === 'ready') {
         ready = true
         settle()
       } else if (e.type === 'audio') play(e.data)
@@ -144,7 +149,9 @@ export function useLive(
     ;(async () => {
       try {
         if (ctx.state === 'suspended') await ctx.resume()
-        const socket = await takeLive({ onEvent, onClose: () => !ended && (h.current.onError(m.current.closed), setState('error')) })
+        const socket = mode === 'interview'
+          ? await openInterviewLive({ onEvent, onClose: () => !ended && (h.current.onError(m.current.closed), setState('error')) })
+          : await takeLive({ onEvent: onEvent as (event: LiveEvent) => void, onClose: () => !ended && (h.current.onError(m.current.closed), setState('error')) })
         if (ended) return socket.close() // stopped while connecting
         socketRef.current = socket
         const stream = await mic
@@ -180,7 +187,7 @@ export function useLive(
       flush()
       node?.disconnect()
     }
-  }, [session, levelEl])
+  }, [session, levelEl, mode])
 
   // Typing while voice is on: the words go over the same socket.
   const sendText = (text: string) => socketRef.current?.send({ type: 'text', text })
