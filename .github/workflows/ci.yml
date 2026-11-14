@@ -55,7 +55,7 @@ jobs:
         if: matrix.package != 'contracts'
         run: pip install -e contracts
       - name: Install package dependencies
-        run: pip install -e ${{ matrix.package }} pytest
+        run: pip install -e "${{ matrix.package }}[dev]" pytest
       - name: Run package tests
         run: python -m pytest -q ${{ matrix.package }}/tests
 
