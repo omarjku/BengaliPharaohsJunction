@@ -12,8 +12,11 @@ Data facts this relies on (checked against the full catalogue, Sat 14 Nov):
 - Base unit KG means 1 base unit = 1 kg; for those, net_weight is the approximate piece weight, not 1 kg,
   and a case of them (KI = n KG) is only approximately n kg.
 - allowedLotSize: the order quantity (in sales units) must be a multiple of it. 0.01 = no real constraint.
+- Names like "Happy Chef 40x180g" with a measure of 180 g mean the measure is ONE inner item; if the units
+  table doesn't say a KI is 40 base units, the base unit may be the whole case, so those are flagged.
 """
 import math
+import re
 from fractions import Fraction
 
 # requested unit → (dimension, size in L / kg / base units)
@@ -26,6 +29,7 @@ MEASURES = {
 DATA_UNITS = {"LTR": ("volume", Fraction(1)), "CLT": ("volume", Fraction(1, 100)), "MLT": ("volume", Fraction(1, 1000)),
               "KGM": ("weight", Fraction(1)), "GRM": ("weight", Fraction(1, 1000))}
 FIELD = {"volume": "volume", "weight": "net_weight"}
+PACK = re.compile(r"(\d+)\s*[x×]\s*(\d+(?:[.,]\d+)?)\s*(kg|g|l|dl|cl|ml)\b", re.I)  # "40x180g", "5 x 2,5 kg"
 
 
 def _q(x) -> Fraction:
@@ -33,11 +37,24 @@ def _q(x) -> Fraction:
 
 
 def _num(x: Fraction) -> int | float:
-    return int(x) if x.denominator == 1 else round(float(x), 3)
+    return int(x) if x.denominator == 1 else float(f"{float(x):.12g}")  # significant figures: 1/2280 stays > 0
 
 
 def _fmt(x: Fraction) -> str:
-    return f"{float(x):,.3f}".rstrip("0").rstrip(".")
+    return f"{float(x):,.3f}".rstrip("0").rstrip(".") if abs(x) >= 1 or x == 0 else f"{float(x):.3g}"
+
+
+def _pack_note(product: dict, dim: str, per_base: Fraction) -> str | None:
+    """Flag "N x size" names whose size is the recorded per-base measure while nothing says a KI is N base units."""
+    m = PACK.search(product.get("name_en") or "")
+    if not m or int(m[1]) < 2 or _q(product["units"].get("KI") or 0) == int(m[1]):
+        return None
+    name_dim, size = MEASURES[m[3].lower()]
+    if name_dim != dim or abs(_q(m[2].replace(",", ".")) * size / per_base - 1) > Fraction(1, 20):
+        return None
+    base = product["base_unit"]
+    return (f"assumes one {base} holds {_fmt(per_base)} {'L' if dim == 'volume' else 'kg'} as recorded, but the name says "
+            f"{m[0]}, so one {base} may be the whole case of {m[1]}")
 
 
 def _per_sales_unit(product: dict, unit: str) -> tuple[Fraction | None, str | None, str]:
@@ -66,9 +83,11 @@ def _per_sales_unit(product: dict, unit: str) -> tuple[Fraction | None, str | No
             if per_base <= 0:
                 return None, None, f"its recorded {dim} is zero"
             how = f"{_fmt(m['value'])} {m['unit']} per {base}"
+            notes = [_pack_note(product, dim, per_base)]
             if sales != base:
-                assumption = (f"assumes the recorded {dim} is per {base}, not per whole {sales} "
-                              "(Valio's data sometimes gives the whole case)")
+                notes.append(f"assumes the recorded {dim} is per {base}, not per whole {sales} "
+                             "(Valio's data sometimes gives the whole case)")
+            assumption = "; ".join(n for n in notes if n) or None
         return per_base * base_per_sales / size, assumption, how + case
 
     if dim == "count":
@@ -80,7 +99,9 @@ def _per_sales_unit(product: dict, unit: str) -> tuple[Fraction | None, str | No
     code = unit.upper()
     if code in units and _q(units[code]) > 0:
         how = "ordered directly" if code == sales else f"1 {code} = {_fmt(_q(units[code]))} {base}{case}"
-        return base_per_sales / _q(units[code]), None, how
+        assumption = (f"assumes one {code} weighs {_fmt(_q(units[code]))} kg as listed (piece weights are approximate)"
+                      if base == "KG" and code != sales else None)
+        return base_per_sales / _q(units[code]), assumption, how
     return None, None, f"'{unit}' is not a unit of this product (it has: {', '.join(units)})"
 
 
@@ -96,7 +117,13 @@ def resolve(product: dict, amount: float, unit: str) -> dict:
         return out | {"confidence": "none", "needs_confirmation": True,
                       "explanation": f"Can't convert {_fmt(want)} {unit} into {sales}: {how}. Please confirm the quantity in {sales}."}
 
-    lot = _q(product.get("lot_size") or "0.01")
+    lot = _q(product.get("lot_size") or 0)
+    if lot <= 0:
+        return out | {"confidence": "none", "needs_confirmation": True,
+                      "explanation": f"Can't round {_fmt(want)} {unit} to an orderable amount: the lot size is missing. Please confirm the quantity in {sales}."}
+    if lot != Fraction(1, 100) and sales != product["base_unit"]:  # e.g. 464997: lot 2 with KI = 6 KG; 2 KI or 2 KG?
+        note = f"assumes the lot size {_fmt(lot)} is in {sales}, not {product['base_unit']}"
+        assumption = f"{assumption}; {note}" if assumption else note
     step = lot if sales == "KG" else Fraction(lot.numerator)  # smallest whole number of sales units that is a lot multiple
     need = want / per_sales
     qty = math.ceil(need / step) * step

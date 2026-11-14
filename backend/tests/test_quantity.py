@@ -92,3 +92,38 @@ def test_route(monkeypatch):
         assert c.post("/api/quantity/resolve", json=bad).status_code == 422, bad
     monkeypatch.setattr(catalogue, "_ready", type("E", (), {"is_set": lambda self: False})())
     assert c.post("/api/quantity/resolve", json={"product_id": "463335", "amount": 1, "unit": "L"}).status_code == 503
+
+
+HAPPY_CHEF = product(sales_unit="KI", base_unit="KI", units={"PAL": 54.0, "KI": 1.0}, name_en="Happy Chef 40x180g Pork Loin",
+                     volume={"unit": "H87", "value": 180.0}, net_weight={"unit": "GRM", "value": 180.0})  # like 463456
+
+
+def test_inner_item_measure_on_case_is_flagged():
+    r = resolve(HAPPY_CHEF, 7.2, "kg")                 # 180 g may be one schnitzel, not the case of 40
+    assert r["quantity"] == 40 and r["needs_confirmation"] and r["confidence"] == "medium" and "40x180g" in r["explanation"]
+    corn = product(units={"ST": 1.0, "KI": 12.0}, name_en="Corn Flakes 12x375g", net_weight={"unit": "GRM", "value": 375.0})
+    r = resolve(corn, 3, "kg")                         # KI = 12 ST confirms ST is the inner pack: no question
+    assert (r["quantity"], r["confidence"], r["needs_confirmation"]) == (8, "high", False)
+
+
+def test_unit_code_on_per_kg_product_is_flagged():
+    onion = product(sales_unit="KG", base_unit="KG", units={"KG": 1.0, "ST": 5.0}, volume=None, net_weight=None)
+    r = resolve(onion, 10, "ST")                       # 10 pieces ≈ 50 kg, but piece weights are approximate
+    assert r["quantity"] == 50 and r["needs_confirmation"] and "piece weights are approximate" in r["explanation"]
+
+
+def test_tiny_per_sales_unit_is_not_rounded_to_zero():
+    r = resolve(product(units={"ST": 1.0, "PAL": 2280.0}), 1, "PAL")   # like 460220: 1 ST = 1/2280 PAL
+    assert r["quantity"] == 2280 and r["per_sales_unit"] > 0 and r["over_delivery"] == 0
+    assert "0.000439 PAL per ST" in r["explanation"]
+
+
+@pytest.mark.parametrize("lot", [None, 0, -1.0])
+def test_missing_lot_size_refuses(lot):
+    r = resolve(product(lot_size=lot), 10, "L")
+    assert r["quantity"] is None and r["needs_confirmation"] and "lot size is missing" in r["explanation"]
+
+
+def test_lot_size_on_case_of_kg_is_flagged():
+    r = resolve(product(sales_unit="KI", base_unit="KG", lot_size=2.0, units={"KG": 1.0, "KI": 6.0}), 12, "kg")  # 464997
+    assert r["quantity"] == 2 and r["needs_confirmation"] and "lot size 2 is in KI, not KG" in r["explanation"]
