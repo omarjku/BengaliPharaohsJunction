@@ -17,3 +17,9 @@
 .mt-ing-name { font: var(--t-small); }
 .mt-ing-total { font: var(--t-small); font-weight: 600; text-align: end; }
 .mt-ing-per, .mt-ing-why { grid-column: 1 / -1; }
+
+/* Editable portions: a small number field per ingredient, then "Update the cart". */
+.mt-portion { width: 5.5rem; min-height: 44px; padding: 0 var(--s2); border: 1px solid var(--field-line); border-radius: 8px; background: var(--surface); font: var(--t-small); }
+.mt-portion:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+.mt-yours { color: var(--accent); }
+.mt-replan { margin-block-start: var(--s3); }

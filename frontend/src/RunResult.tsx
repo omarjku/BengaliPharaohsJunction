@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react'
-import { decideOrder, getKeys, getOrder, MOCK, placeOrder } from './api'
+import { decideOrder, getKeys, getOrder, MOCK, placeOrder, rememberChoice } from './api'
 import { CONFIDENT_AT, tidyName } from './copy'
 import { errorText, type Tone } from './format'
 import { useCopy, type Copy } from './i18n'
@@ -61,6 +61,11 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   const [changing, setChanging] = useState(false) // "Change quantity" open
   const [amount, setAmount] = useState('')
   const [comparing, setComparing] = useState(false) // the compare view is open
+  // "Remember this choice?": offered after the chef ordered an option other than the agent's pick.
+  const picked = useRef<string | null>(null)
+  const [rememberId, setRememberId] = useState<string | null>(null)
+  const [remembered, setRemembered] = useState<string | null>(null) // the scope, once saved
+  const [rememberError, setRememberError] = useState<string | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const [reasonsRef, reasonsSeen] = useSeen<HTMLParagraphElement>()
   const c = useCopy()
@@ -140,6 +145,8 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
     try {
       const res = await go()
       setResult(res)
+      if (kind === 'place' && picked.current && picked.current !== 'main' && picked.current !== chosen[0]?.product.id && res.status !== 'refused')
+        setRememberId(picked.current)
       if (kind === 'approve' || kind === 'reject') {
         const who = await getOrder(res.order_id ?? order!.order_id!).then((o) => o.signed_off_by, () => null) // a nicety
         setSignOff(t.signOff(who, kind === 'approve', clock.format(new Date())))
@@ -161,6 +168,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   const decide = (action: 'approve' | 'reject') => run_(action, () => decideOrder(order!.order_id!, action))
   const place = (lines: OrderInput['lines'], which = 'main') => {
     setPlacing(which)
+    picked.current = which
     return run_('place', () => placeOrder({ requested_date: requestedDate, lines }))
   }
   // Another option can be chosen until something is ordered or waiting for the chef's OK.
@@ -217,12 +225,24 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
     if (awaitingApproval) {
       // another option instead of the held order: the held one is rejected, the chosen one goes to the front door
       setPlacing(sel.product.id)
+      picked.current = sel.product.id
       return run_('place', async () => {
         await decideOrder(order!.order_id!, 'reject')
         return placeOrder({ requested_date: requestedDate, lines: [lineOrder(sel)] })
       })
     }
     return place([lineOrder(sel)], sel.product.id)
+  }
+  // POST /api/profile/memories (approver key): a near-tie breaker only, never past the checks or the limits.
+  async function remember(scope: 'this_order' | 'always') {
+    if (!rememberId) return
+    setRememberError(null)
+    try {
+      await rememberChoice(rememberId, scope)
+      setRemembered(scope)
+    } catch (err) {
+      setRememberError(errorText(err))
+    }
   }
   // Change quantity: the same request with the new amount, asked again (same delivery day).
   const asked = held?.quantity?.requested ?? null
@@ -483,6 +503,29 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
               <strong>{c.UI.failed}</strong>
               {error}
             </div>
+          )}
+
+          {rememberId && !remembered && (MOCK || !!getKeys().approverKey) && (
+            <div className="dc-remember">
+              <p>{t.rememberQ(productName(run.lines.find((l) => l.product.id === rememberId) ?? chosen[0]))}</p>
+              <div className="actions">
+                <button type="button" className="btn plain accent-text" onClick={() => void remember('this_order')}>
+                  {t.rememberOrder}
+                </button>
+                <button type="button" className="btn plain accent-text" onClick={() => void remember('always')}>
+                  {t.rememberAlways}
+                </button>
+                <button type="button" className="btn plain" onClick={() => setRememberId(null)}>
+                  {t.rememberNo}
+                </button>
+              </div>
+              {rememberError && <p className="photo-error small">{rememberError}</p>}
+            </div>
+          )}
+          {remembered && (
+            <p className="quiet small" role="status">
+              {t.remembered(remembered)}
+            </p>
           )}
         </div>
       </section>

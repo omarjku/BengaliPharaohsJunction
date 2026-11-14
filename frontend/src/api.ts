@@ -1,5 +1,5 @@
 import type {
-  AdminFilter, AdminRow, AgentRun, BuyerProfile, LiveEvent, LiveSocket, PhotoRead, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
+  AdminFilter, AdminRow, AgentRun, BuyerProfile, Memory, LiveEvent, LiveSocket, PhotoRead, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
 } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
@@ -274,7 +274,12 @@ export const runAgent = (input: RunInput) =>
 export const planMenu = (input: MenuInput) =>
   MOCK
     ? mock().then((m) => m.menu(input))
-    : api<MenuRun>('/api/agent/menu', { ...post(input), headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')
+    : api<MenuRun>(
+        '/api/agent/menu',
+        // with portions changed, the approver key goes too: they count as the chef's own (not doubted)
+        { ...post(input), headers: { ...keyHeader('X-Agent-Key', getKeys().agentKey), ...(input.overrides?.length ? keyHeader('X-Approver-Key', getKeys().approverKey) : {}) } },
+        'agent',
+      )
 
 // Rules: approver key only (the agent key gets 401). Compile never saves; PUT saves after the chef confirms.
 const approver = () => ({ 'X-Approver-Key': getKeys().approverKey })
@@ -388,3 +393,21 @@ export async function readPhoto(image: File): Promise<PhotoRead> {
   if (!res.ok) throw await failure(res, 'agent')
   return json<PhotoRead>(res)
 }
+
+// The memory panel: forget one remembered preference, or remember a product the chef chose (approver key: a kitchen
+// preference is the human's call, never the agent's).
+export const forgetMemory = (id: string) =>
+  MOCK
+    ? Promise.resolve<BuyerProfile>({ buyer_id: 'lapland-kitchen', dietary: [], usual_product_ids: [], memories: [] })
+    : api<BuyerProfile>(`/api/profile/memories/${encodeURIComponent(id)}`, { method: 'DELETE', headers: keyHeader('X-Approver-Key', getKeys().approverKey) }, 'approver')
+export const rememberChoice = (product_id: string, scope: 'this_order' | 'always', text?: string) =>
+  MOCK
+    ? Promise.resolve<{ memory: Memory; profile: BuyerProfile }>({
+        memory: { id: 'mock', kind: 'usual_product', key: product_id, text: text ?? product_id, scope, used_because: null },
+        profile: { buyer_id: 'lapland-kitchen', dietary: [], usual_product_ids: [product_id], memories: [] },
+      })
+    : api<{ memory: Memory; profile: BuyerProfile }>(
+        '/api/profile/memories',
+        { ...post({ kind: 'usual_product', product_id, scope, ...(text ? { text } : {}) }), headers: keyHeader('X-Approver-Key', getKeys().approverKey) },
+        'approver',
+      )
