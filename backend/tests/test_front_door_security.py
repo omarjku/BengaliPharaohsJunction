@@ -37,7 +37,7 @@ def codes(res):
 
 # 1. CRITICAL: REQUIRED_CLAIM and MAX_UNIT_PRICE_CENTS are enforced, alternatives included.
 def test_required_claim_refuses_a_product_without_it_and_alternatives_must_have_it(shop):
-    shop.products["107"] = product("107", "Oat drink 1 l", claims=("VEGAN",), contains=())
+    shop.products["107"] = product("107", "Oat drink 1 l", claims=("VEGAN", "FREE_FROM_LACTOSE"), contains=())
     shop.quotes["107"] = quote("107", price=1.9)
     shop.products["463335"]["substitutes"] = ["476240", "107"]  # 476240 is milk: not vegan
     res = run([("463335", 10)], [("required_claim", "VEGAN")])
