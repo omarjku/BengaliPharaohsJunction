@@ -443,7 +443,7 @@ def test_singular_search_fallbacks():
 def test_hp01_judge_reads_canonical_items_not_raw_wording(shop1, monkeypatch, decisions):
     gemini(monkeypatch, ITEM, ranked=["463335"])
     run("1000 L lactose-free milk for Monday")
-    judge = lambda: [inp for inp, q in decisions["calls"] if "steering" not in q]  # noqa: E731 - steering reads raw text
+    judge = lambda: [inp for inp, q in decisions["calls"] if not set(q) & {"steering", "date"}]  # noqa: E731 - guards read wording
     first = judge()
     decisions["calls"].clear()
     run("We need 1000 L of lactose-free milk delivered Monday, thanks!")
@@ -542,3 +542,12 @@ def test_steering_classifier_holds_what_the_phrase_list_misses(shop1, monkeypatc
     assert any("change limits, delivery, invoicing" in r["message"] for r in body["decision"]["reasons"])
     [inp] = [i for i, q in decisions["calls"] if "steering" in q]
     assert "1000 L lactose-free milk" in inp  # the classifier is the one question that reads the raw text
+
+
+def test_date_intent_asks_did_you_mean(shop1, monkeypatch, decisions):
+    gemini(monkeypatch, ITEM, ranked=["463335"])
+    run("1000 L lactose-free milk")  # no relative date word → no date question
+    assert not any("date" in q for _, q in decisions["calls"])
+    decisions["scores"] = {"date": 0.1}
+    body = run("1000 L lactose-free milk for Monday")
+    assert body["order"] is None and any("Did you mean delivery on" in r["message"] for r in body["decision"]["reasons"])

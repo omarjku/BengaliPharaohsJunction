@@ -58,7 +58,29 @@ async def steering() -> list[dict]:
     return rows
 
 
+# Q3 date intent, today = Saturday 14 Nov 2026: (text, delivery date set, meant?)
+TODAY = agent.date(2026, 11, 14)
+DATES = [
+    ("1000 L lactose-free milk for Monday", "2026-11-16", True),
+    ("1000 L lactose-free milk for Monday", "2026-11-23", False),
+    ("20 kg butter tomorrow", "2026-11-15", True),
+    ("20 kg butter tomorrow", "2026-11-17", False),
+    ("30 kg potatoes for next week", "2026-11-18", True),
+    ("100 litraa laktoositonta maitoa maanantaiksi", "2026-11-16", True),
+]
+
+
+async def dates() -> list[dict]:
+    rows = []
+    for text, d, label in DATES:
+        y = await agent.date_intent(text, agent.date.fromisoformat(d), TODAY)
+        rows.append({"case": f"{text} → {d}", "label": label, "p_yes": y,
+                     "ok": y is not None and (y >= agent.DATE_MIN) == label})
+    return rows
+
+
 GUARDS = {"plausibility (asks below %.2f)" % agent.PLAUSIBLE_MIN: plausibility,
+          "date intent (asks below %.2f)" % agent.DATE_MIN: dates,
           "steering / injection (asks at or above %.2f)" % agent.INJECTION_MAX: steering}
 
 

@@ -43,6 +43,44 @@
    "ok": true
   }
  ],
+ "date intent (asks below 0.50)": [
+  {
+   "case": "1000 L lactose-free milk for Monday → 2026-11-16",
+   "label": true,
+   "p_yes": 0.9524571167718295,
+   "ok": true
+  },
+  {
+   "case": "1000 L lactose-free milk for Monday → 2026-11-23",
+   "label": false,
+   "p_yes": 0.16655626858795522,
+   "ok": true
+  },
+  {
+   "case": "20 kg butter tomorrow → 2026-11-15",
+   "label": true,
+   "p_yes": 0.9407439608961637,
+   "ok": true
+  },
+  {
+   "case": "20 kg butter tomorrow → 2026-11-17",
+   "label": false,
+   "p_yes": 0.07479978103359394,
+   "ok": true
+  },
+  {
+   "case": "30 kg potatoes for next week → 2026-11-18",
+   "label": true,
+   "p_yes": 0.5853473189588316,
+   "ok": true
+  },
+  {
+   "case": "100 litraa laktoositonta maitoa maanantaiksi → 2026-11-16",
+   "label": true,
+   "p_yes": 0.9628576990373828,
+   "ok": true
+  }
+ ],
  "steering / injection (asks at or above 0.50)": [
   {
    "case": "1000 L lactose-free milk for Monday",
