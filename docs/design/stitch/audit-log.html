@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+
+<html lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="web_standard" name="shell-type"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config = { darkMode: "class", theme: { extend: { "colors": { "secondary-container": "#dae3ef", "surface-container": "#eceef3", "good-bg": "#E8F5EC", "surface-container-low": "#f2f3f9", "secondary-fixed-dim": "#bec7d3", "on-secondary": "#ffffff", "primary-container": "#0b5cad", "on-error": "#ffffff", "surface-container-high": "#e6e8ed", "primary": "#004485", "bad-bg": "#FDECEA", "on-secondary-fixed-variant": "#3f4851", "warn": "#8A5A00", "surface-dim": "#d8dadf", "surface-container-lowest": "#ffffff", "primary-fixed": "#d5e3ff", "tertiary": "#3d464d", "bad": "#B3261E", "tertiary-fixed-dim": "#bec7d1", "on-primary-container": "#c0d6ff", "on-primary": "#ffffff", "on-surface": "#191c20", "error-container": "#ffdad6", "primary-fixed-dim": "#a8c8ff", "good": "#1E7A3C", "on-tertiary-fixed-variant": "#3f4850", "tertiary-fixed": "#dae3ed", "on-primary-fixed-variant": "#004689", "inverse-surface": "#2e3135", "border": "#D9DDE2", "tertiary-container": "#545d65", "on-tertiary-fixed": "#141d24", "inverse-on-surface": "#eff0f6", "on-tertiary-container": "#cdd6e0", "on-background": "#191c20", "error": "#ba1a1a", "surface": "#FFFFFF", "secondary": "#565f69", "background": "#F4F5F7", "surface-tint": "#115eaf", "on-error-container": "#93000a", "outline-variant": "#c2c6d3", "on-primary-fixed": "#001b3c", "on-tertiary": "#ffffff", "on-secondary-container": "#5c656f", "surface-bright": "#f8f9ff", "surface-container-highest": "#e1e2e8", "warn-bg": "#FFF4DC", "on-surface-variant": "#424751", "surface-variant": "#e1e2e8", "outline": "#727783", "inverse-primary": "#a8c8ff", "on-secondary-fixed": "#141c25", "secondary-fixed": "#dae3ef" }, "borderRadius": { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" }, "spacing": { "space-sm": "0.5rem", "space-lg": "1.5rem", "margin-desktop": "2rem", "margin": "1rem", "space-xl": "2rem", "gutter": "1rem", "gutter-desktop": "1.5rem", "space-md": "1rem", "space-xs": "0.25rem" }, "fontFamily": { "label-md": ["Inter"], "headline-md": ["Inter"], "headline-lg": ["Inter"], "label-sm": ["Inter"], "body-lg": ["Inter"], "headline-lg-mobile": ["Inter"], "numeric-table": ["Inter"], "body-md": ["Inter"] }, "fontSize": { "label-md": ["14px", { "lineHeight": "20px", "fontWeight": "500" }], "headline-md": ["20px", { "lineHeight": "28px", "letterSpacing": "-0.005em", "fontWeight": "600" }], "headline-lg": ["28px", { "lineHeight": "34px", "letterSpacing": "-0.01em", "fontWeight": "600" }], "label-sm": ["12px", { "lineHeight": "16px", "letterSpacing": "0.04em", "fontWeight": "500" }], "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }], "headline-lg-mobile": ["24px", { "lineHeight": "30px", "letterSpacing": "-0.01em", "fontWeight": "600" }], "numeric-table": ["14px", { "lineHeight": "20px", "fontWeight": "600" }], "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }] } } } }</script></head><body class="bg-background font-body-md text-body-md text-on-surface antialiased"><header class="fixed top-0 left-0 right-0 z-50 bg-surface border-b border-border"><div class="h-16 max-w-[1120px] mx-auto px-margin md:px-margin-desktop flex items-center justify-between"><div class="flex items-center gap-space-lg"><div class="flex items-center gap-space-sm"><img alt="Front Door Logo" class="h-8 w-auto object-contain" src="https://lh3.googleusercontent.com/aida/ALJJyrAfqoxVoi5xruTrbVM0f27JAE660K3fTXosc7si4jaFoJLyKmhVDf34pmhB6kjoUszzArYAmxnxj-Z0ivxeS2AwCMxjyun1_bLtSXBxoWKDPNDii1NsNVFF5HGM-FH01kZ-SnXGaPZ5VLoq_Ws3DF0UFL4_uJjn7znhEublRr0OdQ4YBOb5-og_wPpoa8X-dObdsoUtOmETNC_I2BghF3doBIiSXWvYvorUS1UZaFI-xA"/><span class="font-headline-md text-headline-md text-on-surface tracking-tight">Front Door</span></div><div class="h-4 w-[1px] bg-border hidden sm:block"></div><nav class="flex items-center gap-space-lg h-16" data-active-classes="text-primary font-label-md text-label-md border-b-2 border-primary"><a class="text-on-surface-variant font-label-md text-label-md hover:text-on-surface flex items-center h-full px-space-xs transition-colors" data-path="agent-console" href="#">Agent Console</a><a aria-current="page" class="flex items-center h-full px-space-xs transition-colors text-primary font-label-md text-label-md border-b-2 border-primary" data-path="audit-log" href="#">Audit Log</a><a class="text-on-surface-variant font-label-md text-label-md hover:text-on-surface flex items-center h-full px-space-xs transition-colors" data-path="keys-panel" href="#">Keys</a></nav></div><div class="flex items-center gap-space-md"><div class="text-right hidden sm:block"><span class="block font-label-md text-label-md text-on-surface leading-tight">Chef Aino</span><span class="block font-label-sm text-label-sm text-on-surface-variant">Lapland Kitchen</span></div><img alt="Profile" class="w-8 h-8 rounded-full object-cover border border-border" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDmM3CfdLQJUqf2SbVZ_J8d8cvbsseLZ6uaOObX6m69UeilxswMJU2HvkjiM44AX7lYaDpUqvzHXhIuz2Zxo1vEqTvbN2nrbIv8CKSo9JXYDPI7E_xvxpaWCEpVN6uC2jUhMGZsoO834zeyANOjGYQ-Q-_tHhDN1TIiuMmdRSEKtYpIWS-WFLtbN28yEQd5X6SOJrCq2G8NiTxl8fFDbULiFS2rE5hrp-SQTkp2TDHq"/></div></div></header><main class="w-full pt-16 min-h-screen bg-background"><div class="flex flex-col w-full">
+<div class="max-w-[1120px] w-full mx-auto px-margin md:px-margin-desktop py-space-lg space-y-space-lg">
+<!-- Page Header & Filter Controls -->
+<div class="flex flex-col gap-space-md">
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-space-md pb-space-sm border-b border-border">
+<div>
+<div class="flex items-center gap-space-xs text-on-surface-variant font-label-sm text-label-sm uppercase tracking-wider mb-1">
+<span>Rovaniemi Hub</span>
+<span>/</span>
+<span>Ledger</span>
+</div>
+<h1 class="font-headline-lg text-headline-lg text-on-surface tracking-tight">Audit Log</h1>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1 max-w-2xl">
+            Verifiable record of autonomous purchasing operations, approvals, and wholesaler API events.
+          </p>
+</div>
+<div class="flex items-center gap-space-sm self-start md:self-auto">
+<!-- Live Status Indicator -->
+<div class="flex items-center gap-2 px-3 py-1.5 bg-surface rounded border border-border font-label-sm text-label-sm text-on-surface">
+<span class="w-2 h-2 rounded-full bg-good animate-pulse"></span>
+<span>Cryptographic Log Synchronized</span>
+</div>
+</div>
+</div>
+<!-- Filter Controls Bar -->
+<div class="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-space-md pt-space-xs">
+<!-- Outcome Filter Pills -->
+<div class="flex flex-wrap items-center gap-space-xs" id="outcome-filters">
+<button class="outcome-pill active-pill px-3 py-1.5 rounded-full font-label-md text-label-md bg-on-surface text-surface transition-colors" data-filter="all" type="button">
+            All events <span class="font-numeric-table text-numeric-table opacity-80 ml-1">142</span>
+</button>
+<button class="outcome-pill px-3 py-1.5 rounded-full font-label-md text-label-md bg-surface text-on-surface-variant border border-border hover:text-on-surface transition-colors" data-filter="ordered" type="button">
+            Ordered <span class="font-numeric-table text-numeric-table text-good ml-1">98</span>
+</button>
+<button class="outcome-pill px-3 py-1.5 rounded-full font-label-md text-label-md bg-surface text-on-surface-variant border border-border hover:text-on-surface transition-colors" data-filter="needs-ok" type="button">
+            Needs your OK <span class="font-numeric-table text-numeric-table text-warn ml-1">28</span>
+</button>
+<button class="outcome-pill px-3 py-1.5 rounded-full font-label-md text-label-md bg-surface text-on-surface-variant border border-border hover:text-on-surface transition-colors" data-filter="refused" type="button">
+            Refused <span class="font-numeric-table text-numeric-table text-bad ml-1">16</span>
+</button>
+</div>
+<!-- Meta Selectors (Date & Actor) -->
+<div class="flex flex-wrap items-center gap-space-sm">
+<!-- Date Range Selector -->
+<div class="relative inline-block text-left">
+<label class="sr-only" for="date-range-select">Date range</label>
+<div class="flex items-center gap-1.5 px-3 h-10 bg-surface rounded border border-border text-on-surface font-label-md text-label-md focus-within:ring-2 focus-within:ring-primary">
+<span class="material-symbols-outlined text-outline text-[18px]">calendar_today</span>
+<select class="bg-transparent border-none text-on-surface font-label-md text-label-md focus:outline-none cursor-pointer pr-1" id="date-range-select">
+<option value="7d">Last 7 days</option>
+<option value="24h">Last 24 hours</option>
+<option value="30d">Last 30 days</option>
+<option value="oct">October 2024</option>
+</select>
+</div>
+</div>
+<!-- Actor Selector -->
+<div class="relative inline-block text-left">
+<label class="sr-only" for="actor-filter-select">Filter by actor</label>
+<div class="flex items-center gap-1.5 px-3 h-10 bg-surface rounded border border-border text-on-surface font-label-md text-label-md focus-within:ring-2 focus-within:ring-primary">
+<span class="material-symbols-outlined text-outline text-[18px]">group</span>
+<select class="bg-transparent border-none text-on-surface font-label-md text-label-md focus:outline-none cursor-pointer pr-1" id="actor-filter-select">
+<option value="all">All actors</option>
+<option value="buyer">Buyer agent</option>
+<option value="valio">Valio front door</option>
+<option value="chef">Chef Aino</option>
+</select>
+</div>
+</div>
+<!-- Export Log Button -->
+<button class="h-10 px-3 bg-surface hover:bg-surface-container border border-border rounded flex items-center gap-1 text-on-surface font-label-md text-label-md transition-colors" title="Export Ledger as CSV" type="button">
+<span class="material-symbols-outlined text-[18px]">download</span>
+<span class="hidden sm:inline">Export</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Timeline Overview Strip / Ledger Metrics -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-space-sm bg-surface p-space-md rounded border border-border">
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase">Automated Throughput</span>
+<span class="font-headline-md text-headline-md text-on-surface font-numeric-table mt-1">€18,420.50</span>
+<span class="font-label-sm text-label-sm text-good mt-0.5 flex items-center gap-0.5">
+<span class="material-symbols-outlined text-[14px]">trending_up</span> 92% automated approval
+        </span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase">Pending Manual OK</span>
+<span class="font-headline-md text-headline-md text-warn font-numeric-table mt-1">1 Action</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant mt-0.5">Threshold check (€1,500)</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase">Avg Inference Confidence</span>
+<span class="font-headline-md text-headline-md text-on-surface font-numeric-table mt-1">0.962</span>
+<span class="font-label-sm text-label-sm text-good mt-0.5">Gemini 1.5 Pro pipeline</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase">Verification Status</span>
+<div class="flex items-center gap-1.5 mt-2">
+<span class="material-symbols-outlined text-good text-[18px]">verified</span>
+<span class="font-label-md text-label-md text-on-surface">Signed HMAC-SHA256</span>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant mt-0.5">Chain block #892-F</span>
+</div>
+</div>
+<!-- Main Vertical Timeline -->
+<div class="relative pt-space-xs pb-space-lg">
+<!-- Spine Line -->
+<div class="absolute top-6 bottom-6 left-[19px] md:left-[171px] w-[1px] bg-border z-0"></div>
+<div class="space-y-space-md relative z-10" id="timeline-container">
+<!-- ENTRY 1: Pending Decision (Needs your OK) -->
+<article class="timeline-item flex flex-col md:flex-row gap-space-sm md:gap-space-lg items-start" data-actor="buyer" data-category="needs-ok">
+<!-- Time Column (Desktop) -->
+<div class="hidden md:flex flex-col items-end w-36 pt-1 text-right flex-shrink-0">
+<span class="font-label-md text-label-md text-on-surface font-numeric-table">Today, 14:32</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">42 mins ago</span>
+</div>
+<!-- Node Marker -->
+<div class="flex items-center gap-2 md:gap-0">
+<div class="w-10 h-10 rounded-full bg-warn-bg border border-warn text-warn flex items-center justify-center flex-shrink-0 shadow-sm">
+<span class="material-symbols-outlined text-[20px]">pending_actions</span>
+</div>
+<!-- Mobile Timestamp -->
+<span class="md:hidden font-label-md text-label-md text-on-surface font-numeric-table">Today, 14:32</span>
+</div>
+<!-- Card Content -->
+<div class="w-full bg-surface rounded border border-border border-l-4 border-l-warn p-space-md md:p-space-lg shadow-sm">
+<!-- Header Row -->
+<div class="flex flex-wrap items-center justify-between gap-space-sm pb-space-xs border-b border-border">
+<div class="flex flex-wrap items-center gap-space-xs">
+<!-- Actor Badge -->
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface-container text-tertiary font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[14px]">smart_toy</span> Buyer agent
+                </span>
+<span class="text-outline text-xs">/</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Procurement Pipeline #REQ-9014</span>
+</div>
+<!-- Outcome Chip -->
+<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-warn-bg text-warn font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[14px]">error</span> Needs your OK
+              </span>
+</div>
+<!-- Summary Headline -->
+<div class="mt-space-sm">
+<h2 class="font-headline-md text-headline-md text-on-surface">
+                Generated order proposal for 1,000 L lactose-free milk (€1,560.00)
+              </h2>
+</div>
+<!-- Drawer Container: Open by default as high priority pending -->
+<div class="mt-space-md pt-space-md border-t border-border space-y-space-md bg-surface-container-low p-space-md rounded">
+<div class="grid grid-cols-1 md:grid-cols-2 gap-space-md">
+<!-- Trigger Details -->
+<div class="space-y-1">
+<span class="font-label-sm text-label-sm text-on-surface-variant block uppercase tracking-wider">Trigger Source</span>
+<div class="flex items-start gap-2">
+<span class="material-symbols-outlined text-outline text-[18px] mt-0.5">touch_app</span>
+<div>
+<p class="font-label-md text-label-md text-on-surface">Chef Aino direct kitchen request</p>
+<p class="font-body-md text-body-md text-on-surface-variant">Batch trigger: Weekend Lapland banquet prep inventory reserve.</p>
+</div>
+</div>
+</div>
+<!-- Auto-Approve Check Analysis -->
+<div class="space-y-1">
+<span class="font-label-sm text-label-sm text-on-surface-variant block uppercase tracking-wider">Threshold Audit</span>
+<div class="flex items-start gap-2">
+<span class="material-symbols-outlined text-warn text-[18px] mt-0.5">rule</span>
+<div>
+<p class="font-label-md text-label-md text-on-surface">Auto-approve budget limit: €1,500.00</p>
+<p class="font-body-md text-body-md text-warn font-label-md">Exceeded limit by €60.00. Automatic dispatch locked.</p>
+</div>
+</div>
+</div>
+</div>
+<!-- Agent Reasoning Trace -->
+<div class="p-space-sm bg-surface rounded border border-border">
+<div class="flex items-center justify-between gap-space-sm mb-1.5">
+<div class="flex items-center gap-1.5">
+<span class="material-symbols-outlined text-primary text-[18px]">psychology</span>
+<span class="font-label-md text-label-md text-on-surface">Gemini Reasoning Trace</span>
+</div>
+<!-- Confidence Pill -->
+<div class="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-good-bg text-good font-label-sm text-label-sm">
+<span>Gemini 1.5 Pro</span>
+<span class="font-numeric-table font-semibold">0.96</span>
+</div>
+</div>
+<p class="font-body-md text-body-md text-on-surface">
+                  "Selected Valio Eila 1L based on 98.4% on-time delivery metric and strict culinary whole-milk protein balance (3.2g/100ml). Confidence 0.96. Secondary domestic option (Maitomaa) lacks required shelf-life window for upcoming Monday cycle."
+                </p>
+</div>
+<!-- Pending Action Bar -->
+<div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-space-sm pt-space-xs">
+<div class="flex items-center gap-2 text-on-surface-variant font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-warn text-[18px]">lock_clock</span>
+<span>Awaiting Chef Aino digital signature approval</span>
+</div>
+<div class="flex items-center gap-space-sm">
+<button class="h-10 px-4 rounded border border-bad text-bad hover:bg-bad-bg font-label-md text-label-md transition-colors" type="button">
+                    Reject
+                  </button>
+<button class="h-10 px-4 rounded bg-primary-container hover:bg-primary text-on-primary font-label-md text-label-md transition-colors flex items-center justify-center gap-2" type="button">
+<span class="material-symbols-outlined text-[18px]">check</span>
+<span>Sign &amp; Dispatch PO (€1,560.00)</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</article>
+<!-- ENTRY 2: Ordered by Chef Aino -->
+<article class="timeline-item flex flex-col md:flex-row gap-space-sm md:gap-space-lg items-start" data-actor="chef" data-category="ordered">
+<!-- Time Column -->
+<div class="hidden md:flex flex-col items-end w-36 pt-1 text-right flex-shrink-0">
+<span class="font-label-md text-label-md text-on-surface font-numeric-table">Today, 11:15</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">3h 59m ago</span>
+</div>
+<!-- Node Marker -->
+<div class="flex items-center gap-2 md:gap-0">
+<div class="w-10 h-10 rounded-full bg-good-bg border border-good text-good flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-[20px]">check_circle</span>
+</div>
+<span class="md:hidden font-label-md text-label-md text-on-surface font-numeric-table">Today, 11:15</span>
+</div>
+<!-- Card Content -->
+<div class="w-full bg-surface rounded border border-border border-l-4 border-l-good p-space-md md:p-space-lg">
+<div class="flex flex-wrap items-center justify-between gap-space-sm pb-space-xs border-b border-border">
+<div class="flex flex-wrap items-center gap-space-xs">
+<!-- Human Approver Badge -->
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-primary-fixed text-on-primary-fixed-variant font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[14px]">person</span> Chef Aino
+                </span>
+<span class="text-outline text-xs">/</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Order #PO-88412</span>
+</div>
+<!-- Outcome Chip -->
+<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-good-bg text-good font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[14px]">check</span> Ordered
+              </span>
+</div>
+<div class="mt-space-sm">
+<h2 class="font-headline-md text-headline-md text-on-surface">
+                Approved purchase order #PO-88412 · 40 kg Finnish Butter &amp; Cream
+              </h2>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1.5">
+                Approved with approver cryptographic key. Dispatched to Valio Aimo API. Tracking: <code class="font-numeric-table bg-surface-container px-1 py-0.5 rounded text-on-surface">VAL-99201</code>.
+              </p>
+</div>
+<!-- Metadata footer -->
+<div class="mt-space-md pt-space-sm flex flex-wrap items-center justify-between gap-space-sm text-on-surface-variant font-label-sm text-label-sm">
+<div class="flex items-center gap-space-md">
+<span class="flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">local_shipping</span> Delivery: Fri 07:00</span>
+<span class="flex items-center gap-1 font-numeric-table"><span class="material-symbols-outlined text-[16px]">payments</span> Total: €384.20</span>
+</div>
+<button class="text-primary hover:underline flex items-center gap-0.5 font-label-md text-label-md" type="button">
+<span>View signed payload</span>
+<span class="material-symbols-outlined text-[16px]">chevron_right</span>
+</button>
+</div>
+</div>
+</article>
+<!-- ENTRY 3: Automated Replenishment (Valio front door) -->
+<article class="timeline-item flex flex-col md:flex-row gap-space-sm md:gap-space-lg items-start" data-actor="valio" data-category="ordered">
+<!-- Time Column -->
+<div class="hidden md:flex flex-col items-end w-36 pt-1 text-right flex-shrink-0">
+<span class="font-label-md text-label-md text-on-surface font-numeric-table">Yesterday, 16:45</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">19 Oct</span>
+</div>
+<!-- Node Marker -->
+<div class="flex items-center gap-2 md:gap-0">
+<div class="w-10 h-10 rounded-full bg-good-bg border border-good text-good flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-[20px]">bolt</span>
+</div>
+<span class="md:hidden font-label-md text-label-md text-on-surface font-numeric-table">Yesterday, 16:45</span>
+</div>
+<!-- Card Content -->
+<div class="w-full bg-surface rounded border border-border border-l-4 border-l-good p-space-md md:p-space-lg">
+<div class="flex flex-wrap items-center justify-between gap-space-sm pb-space-xs border-b border-border">
+<div class="flex flex-wrap items-center gap-space-xs">
+<!-- Supplier API Node Badge -->
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-secondary-fixed text-on-secondary-fixed-variant font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[14px]">hub</span> Valio front door
+                </span>
+<span class="text-outline text-xs">/</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Auto-reorder cycle #AUTO-4401</span>
+</div>
+<!-- Outcome Chip -->
+<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-good-bg text-good font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[14px]">check</span> Ordered
+              </span>
+</div>
+<div class="mt-space-sm">
+<h2 class="font-headline-md text-headline-md text-on-surface">
+                Automated replenishment · 120 kg Root vegetables &amp; Organic eggs (€482.00)
+              </h2>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1.5">
+                Within €1,500.00 auto-approve limit. Confidence 0.98. Delivery confirmed for Tue 06:00.
+              </p>
+</div>
+<!-- Tags Strip -->
+<div class="mt-space-md flex flex-wrap items-center gap-space-xs">
+<span class="px-2.5 py-1 rounded-full bg-background text-secondary font-label-sm text-label-sm">origin FI</span>
+<span class="px-2.5 py-1 rounded-full bg-background text-secondary font-label-sm text-label-sm">on time 98.7%</span>
+<span class="px-2.5 py-1 rounded-full bg-background text-secondary font-label-sm text-label-sm">0.7 kg CO₂/kg</span>
+<span class="ml-auto font-label-sm text-label-sm text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-good text-[16px]">verified_user</span> Direct EDI Dispatch
+              </span>
+</div>
+</div>
+</article>
+<!-- ENTRY 4: Rejected Candidate (Buyer Agent Policy) -->
+<article class="timeline-item flex flex-col md:flex-row gap-space-sm md:gap-space-lg items-start" data-actor="buyer" data-category="refused">
+<!-- Time Column -->
+<div class="hidden md:flex flex-col items-end w-36 pt-1 text-right flex-shrink-0">
+<span class="font-label-md text-label-md text-on-surface font-numeric-table">Yesterday, 09:12</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">19 Oct</span>
+</div>
+<!-- Node Marker -->
+<div class="flex items-center gap-2 md:gap-0">
+<div class="w-10 h-10 rounded-full bg-bad-bg border border-bad text-bad flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-[20px]">block</span>
+</div>
+<span class="md:hidden font-label-md text-label-md text-on-surface font-numeric-table">Yesterday, 09:12</span>
+</div>
+<!-- Card Content -->
+<div class="w-full bg-surface rounded border border-border border-l-4 border-l-bad p-space-md md:p-space-lg">
+<div class="flex flex-wrap items-center justify-between gap-space-sm pb-space-xs border-b border-border">
+<div class="flex flex-wrap items-center gap-space-xs">
+<!-- Agent Badge -->
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface-container text-tertiary font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[14px]">smart_toy</span> Buyer agent
+                </span>
+<span class="text-outline text-xs">/</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Catalog Scan #CAT-773</span>
+</div>
+<!-- Outcome Chip -->
+<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-bad-bg text-bad font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[14px]">close</span> Refused
+              </span>
+</div>
+<div class="mt-space-sm">
+<h2 class="font-headline-md text-headline-md text-on-surface">
+                Rejected candidate line: Import Gouda Cheese 5 kg
+              </h2>
+<p class="font-body-md text-body-md text-bad mt-1.5 font-label-md">
+                Refused by agent policy: Allergen conflict / Non-domestic dairy constraint active for Chef Aino kitchen.
+              </p>
+</div>
+<!-- Violation Detail Box -->
+<div class="mt-space-md p-space-sm bg-surface-container-low rounded border border-border text-on-surface-variant font-body-md text-body-md">
+<div class="flex items-start gap-2">
+<span class="material-symbols-outlined text-bad text-[18px] mt-0.5">policy</span>
+<div>
+<p class="text-on-surface font-label-md text-label-md">Policy Rule #POL-ARCTIC-04 Applied</p>
+<p class="text-on-surface-variant mt-0.5">"All dairy ingredients must certify Finnish domestic origin (Hyvää Suomesta) to maintain menu heritage compliance. Non-domestic Gouda catalog items are auto-refused without forwarding to chef."</p>
+</div>
+</div>
+</div>
+</div>
+</article>
+<!-- ENTRY 5: Chef Declined Proposal -->
+<article class="timeline-item flex flex-col md:flex-row gap-space-sm md:gap-space-lg items-start" data-actor="chef" data-category="refused">
+<!-- Time Column -->
+<div class="hidden md:flex flex-col items-end w-36 pt-1 text-right flex-shrink-0">
+<span class="font-label-md text-label-md text-on-surface font-numeric-table">18 Oct, 18:02</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">2 days ago</span>
+</div>
+<!-- Node Marker -->
+<div class="flex items-center gap-2 md:gap-0">
+<div class="w-10 h-10 rounded-full bg-bad-bg border border-bad text-bad flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-[20px]">do_not_disturb_on</span>
+</div>
+<span class="md:hidden font-label-md text-label-md text-on-surface font-numeric-table">18 Oct, 18:02</span>
+</div>
+<!-- Card Content -->
+<div class="w-full bg-surface rounded border border-border border-l-4 border-l-bad p-space-md md:p-space-lg">
+<div class="flex flex-wrap items-center justify-between gap-space-sm pb-space-xs border-b border-border">
+<div class="flex flex-wrap items-center gap-space-xs">
+<!-- Human Approver Badge -->
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-primary-fixed text-on-primary-fixed-variant font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[14px]">person</span> Chef Aino
+                </span>
+<span class="text-outline text-xs">/</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Substitute Proposal #SUB-108</span>
+</div>
+<!-- Dual Status Indicator -->
+<div class="flex items-center gap-1.5">
+<span class="inline-flex items-center px-2 py-0.5 rounded bg-warn-bg text-warn font-label-sm text-label-sm line-through opacity-70">
+                  Needs your OK
+                </span>
+<span class="material-symbols-outlined text-outline text-[14px]">arrow_forward</span>
+<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-bad-bg text-bad font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[14px]">close</span> Refused
+                </span>
+</div>
+</div>
+<div class="mt-space-sm">
+<h2 class="font-headline-md text-headline-md text-on-surface">
+                Chef declined substitute proposal for Fresh Dill (Supplier stock depleted)
+              </h2>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1.5">
+                Alternative greenhouse supplier price exceeded benchmark by 45%.
+              </p>
+</div>
+<!-- Quote/Annotation Box -->
+<div class="mt-space-md p-space-sm bg-surface-container-low rounded border border-border flex items-start gap-2">
+<span class="material-symbols-outlined text-outline text-[18px] mt-0.5">comment</span>
+<div>
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase">Chef's Manual Override Reason</span>
+<p class="font-body-md text-body-md text-on-surface mt-0.5">
+                  "Price surcharge €18.90/kg unacceptable for garnish stock. Menu switched to wild chervil from freezer reserves."
+                </p>
+</div>
+</div>
+</div>
+</article>
+</div>
+</div>
+<!-- Bottom Pagination / Load Older Activity -->
+<div class="flex flex-col sm:flex-row items-center justify-between gap-space-md pt-space-sm border-t border-border pb-space-xl">
+<span class="font-label-sm text-label-sm text-on-surface-variant">
+        Showing 5 of 142 logged events · Verified against local SHA-256 state tree
+      </span>
+<button class="h-10 px-6 rounded bg-surface hover:bg-surface-container border border-border text-on-surface font-label-md text-label-md transition-colors flex items-center gap-2" id="load-more-btn" type="button">
+<span class="material-symbols-outlined text-[18px]">history</span>
+<span>Load older activity</span>
+</button>
+</div>
+</div>
+</div>
+<script>
+  (function() {
+    // Interactive Filtering for Audit Log
+    const outcomeButtons = document.querySelectorAll('.outcome-pill');
+    const actorSelect = document.getElementById('actor-filter-select');
+    const timelineItems = document.querySelectorAll('.timeline-item');
+
+    function applyFilters() {
+      const activeBtn = document.querySelector('.outcome-pill.active-pill');
+      const activeOutcome = activeBtn ? activeBtn.getAttribute('data-filter') : 'all';
+      const activeActor = actorSelect ? actorSelect.value : 'all';
+
+      timelineItems.forEach(item => {
+        const itemCategory = item.getAttribute('data-category');
+        const itemActor = item.getAttribute('data-actor');
+
+        const matchesOutcome = (activeOutcome === 'all') || (itemCategory === activeOutcome);
+        const matchesActor = (activeActor === 'all') || (itemActor === activeActor);
+
+        if (matchesOutcome && matchesActor) {
+          item.classList.remove('hidden');
+        } else {
+          item.classList.add('hidden');
+        }
+      });
+    }
+
+    outcomeButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        outcomeButtons.forEach(b => {
+          b.classList.remove('active-pill', 'bg-on-surface', 'text-surface');
+          b.classList.add('bg-surface', 'text-on-surface-variant', 'border', 'border-border');
+        });
+        btn.classList.add('active-pill', 'bg-on-surface', 'text-surface');
+        btn.classList.remove('bg-surface', 'text-on-surface-variant', 'border', 'border-border');
+        applyFilters();
+      });
+    });
+
+    if (actorSelect) {
+      actorSelect.addEventListener('change', applyFilters);
+    }
+
+    // Mock Load More Activity
+    const loadMoreBtn = document.getElementById('load-more-btn');
+    if (loadMoreBtn) {
+      loadMoreBtn.addEventListener('click', () => {
+        loadMoreBtn.innerHTML = '<span class="material-symbols-outlined text-[18px] animate-spin">refresh</span><span>Synchronizing Ledger...</span>';
+        setTimeout(() => {
+          loadMoreBtn.innerHTML = '<span class="material-symbols-outlined text-[18px]">done_all</span><span>All events loaded (142/142)</span>';
+          loadMoreBtn.disabled = true;
+          loadMoreBtn.classList.add('opacity-60', 'cursor-not-allowed');
+        }, 600);
+      });
+    }
+  })();
+</script></main><footer class="w-full border-t border-border bg-surface py-space-md"><div class="max-w-[1120px] mx-auto px-margin md:px-margin-desktop flex flex-col sm:flex-row items-center justify-between gap-space-xs"><span class="font-label-sm text-label-sm text-on-surface-variant">Front Door Autonomous Purchasing · Nordic Operations Console</span><span class="font-label-sm text-label-sm text-on-surface-variant">Operational Node: Rovaniemi Core</span></div></footer></body></html>

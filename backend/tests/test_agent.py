@@ -380,7 +380,11 @@ def test_postfix_dietary_word_is_kept(shop1, monkeypatch):
 def test_duplicate_items_ask_instead_of_doubling(shop1, monkeypatch):
     gemini(monkeypatch, [dict(ITEM[0], amount=1)] * 3, ranked=["463335"])
     body = run("1 L lactose-free milk")
-    assert body["order"] is None and "more than once" in " ".join(r["message"] for r in body["decision"]["reasons"])
+    assert body["order"] is None and "same product" in " ".join(r["message"] for r in body["decision"]["reasons"])
+    # spelling variants and different words for one product: still never summed
+    gemini(monkeypatch, [dict(ITEM[0], amount=1), dict(ITEM[0], query="Eila milk", amount=1)], ranked=["463335"])
+    body = run("1 L lactose-free milk and 1 L lactose-free Eila milk")
+    assert body["order"] is None and "same product" in " ".join(r["message"] for r in body["decision"]["reasons"])
 
 
 def test_absurd_or_malformed_amounts_are_a_question_not_a_500(shop1, monkeypatch):
@@ -394,3 +398,13 @@ def test_lone_surrogate_is_422(shop1):
     r = c.post("/api/agent/run", content='{"text": "\\ud800", "requested_date": "%s"}' % REQ.isoformat(),
                headers={"X-Agent-Key": "agent-lk", "Content-Type": "application/json"})
     assert r.status_code == 422  # #10
+
+
+def test_dietary_word_on_the_wrong_item_is_not_counted(shop1, monkeypatch):
+    """Security review: 'lactose-free' in its own clause, hung by the parse on the butter, must not pass."""
+    gemini(monkeypatch, [{"query": "milk", "amount": 20, "unit": "L", "dietary": []},
+                         {"query": "butter", "amount": 2, "unit": "kg", "dietary": ["lactose_free"]}],
+           ranked=["463335"])
+    body = run("20 L milk, lactose-free, and 2 kg butter")
+    assert body["order"] is None
+    assert any("isn't clear which product" in r["message"] for r in body["decision"]["reasons"])
