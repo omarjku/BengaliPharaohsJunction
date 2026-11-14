@@ -98,7 +98,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
 
   const needsSetup = !MOCK && (!savedKeys.agentKey || !savedKeys.approverKey)
   const groups = useMemo(() => (entries ? groupHistory(entries, c) : []), [entries, c])
-  const buyer = entries?.[0]?.input.request.buyer_id ?? null
+  const buyer = entries?.find((e) => e.input)?.input.request.buyer_id ?? null // security events have no request
   const approver = useMemo(() => {
     for (const e of [...(entries ?? [])].reverse()) {
       const m = /^human:(.+?):(approve|reject|mandate)$/.exec(e.actor)

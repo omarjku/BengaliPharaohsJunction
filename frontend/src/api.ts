@@ -137,9 +137,9 @@ const keyHeader = (name: string, value: string): HeadersInit => (value ? { [name
 
 export const getHealth = () => (MOCK ? mock().then((m) => m.health()) : api<Health>('/api/health'))
 
-// Voice: audio in, the chef's words out. The real endpoint comes from Room 3 (Gemini Live through our backend);
-// until it's switched on with VITE_VOICE=1 the mic only appears in mock mode, so no made-up words reach a real order.
-export const VOICE_READY = MOCK || import.meta.env.VITE_VOICE === '1'
+// Voice: audio in, the chef's words out (POST /api/voice/transcribe). On by default now that the backend has it;
+// a build with VITE_VOICE=0 hides the mic. (It used to need VITE_VOICE=1, which the live build never had: no mic.)
+export const VOICE_READY = MOCK || import.meta.env.VITE_VOICE !== '0'
 export const transcribe = (audio: Blob): Promise<string> =>
   MOCK
     ? mock().then((m) => m.transcribe(audio))

@@ -98,16 +98,10 @@ Signatures (optional agent signing), Model Context Protocol (official Python SDK
 - Orders are records at our door. The Valio mock has no order endpoint, so nothing real is bought.
 
 **Steps:**
-1. **Seed the buyer** (a code change in `backend/app/mandates.py`, which belongs to Room 3 / Omar). Next to the
-   `smoke-kitchen` copy, add a judge kitchen with the same rules but smaller limits:
-
-   ```python
-   _MANDATES["judge-kitchen"] = _MANDATES["lapland-kitchen"].model_copy(update={
-       "id": "judge-kitchen-2026-11", "buyer_id": "judge-kitchen", "weekly_budget_cents": 300000})
-   ```
-
-   With EUR 3,000 a week, a judge sees "1000 L milk → ordered" once or twice, then the budget hold. That shows a
-   rule working, not a broken demo.
+1. **Seed the buyer: done.** `backend/app/mandates.py` seeds `judge-kitchen`: the demo kitchen's rules (peanut-free,
+   EUR 1,500 auto-approve, 90 % reliability floor, Finnish preference), its kitchen facts and location, and a
+   **EUR 3,000** weekly budget. A judge sees "milk → ordered" once or twice, then the budget hold, which shows a rule
+   working rather than a broken demo. It stays inert: without keys, nobody can act as it.
 2. **Make two keys** on Omar's laptop: `openssl rand -hex 24`, twice. Never put them in the repo, the board, a
    commit, a URL or a screenshot.
 3. **Env changes on Render** (backend service → Environment). Append, comma-separated, to the existing values:
@@ -120,10 +114,12 @@ Signatures (optional agent signing), Model Context Protocol (official Python SDK
    Judges paste them into the site's **Keys** tab. The UI keeps them in that browser only.
 5. **After judging:** remove both entries from `AGENT_KEYS` and `APPROVER_KEYS` and save. The keys stop working
    after the redeploy.
-6. **Clean-up:** `POST /api/admin/demo/reset` (admin key, `DEMO_RESET_ENABLED=1`) archives orders, the audit trail
-   and idempotency keys to `DATA_DIR/archive/<timestamp>/` and starts empty. Note that it resets **all** buyers at
-   once, `lapland-kitchen` too, so run it after peer review, not between demos. Pass `restore_mandate: true` if a
-   judge changed the judge kitchen's rules.
+6. **Reset the sandbox, any time:** `python3 scripts/demo_prep.py https://valio-front-door-api.onrender.com
+   --env .env --buyer judge-kitchen --restore-mandate`. It archives **only** `judge-kitchen`'s orders, audit lines,
+   idempotency keys and edited rules to `DATA_DIR/archive/<timestamp>-judge-kitchen/` (nothing is deleted). Then it
+   warms the backend and prints the judge kitchen's budget. `lapland-kitchen` and the other buyers are untouched,
+   so this is safe between demos. It needs the admin key and `DEMO_RESET_ENABLED=1`, both already set on Render.
+   (`--all` still resets every buyer at once.)
 
 **What judges can and can't do with these keys:**
 - They can order, approve, edit `judge-kitchen`'s rules (`PUT /api/mandate`), and read its audit.
@@ -139,7 +135,7 @@ keys to share, but judges can't try it themselves.
 - [ ] Deck PDF uploaded (`docs/deck/FrontDoor-pitch.pdf`; re-export with `docs/deck/export.mjs` after the new screenshots land)
 - [x] Repository public, MIT licence in `LICENSE`
 - [ ] Render warmed up (`/api/health`), and the demo agent and approver keys work on the live site
-- [ ] If judges get access: `judge-kitchen` seeded, its keys added on Render, shared only privately, and the removal planned for after judging
+- [ ] If judges get access: `judge-kitchen` is seeded (done); add its two keys on Render, share them only privately, and plan their removal after judging
 - [ ] Links above checked in a private window
 - [ ] Challenges ticked (CRACI only if CI really runs there)
 - [ ] Draft switched to **FINAL** before **Sun 10:00**

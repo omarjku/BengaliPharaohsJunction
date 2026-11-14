@@ -87,3 +87,46 @@ def test_smoke_buyer_has_the_demo_rules_but_its_own_budget():
     assert mandates.confidence_threshold("smoke-kitchen") == mandates.confidence_threshold("lapland-kitchen")
     assert mandates.kitchen("smoke-kitchen") == mandates.kitchen("lapland-kitchen")  # the size guard judges it the same
     assert "bistro" in mandates.kitchen("helsinki-bistro") and mandates.kitchen("unknown") == mandates.DEFAULT_KITCHEN
+
+
+# --- per-buyer reset (the judge sandbox) and the seeded judge kitchen
+def test_reset_of_one_buyer_leaves_the_others_alone(shop, monkeypatch, tmp_path):
+    setup_store(monkeypatch, tmp_path)
+    monkeypatch.setattr(config, "DEMO_RESET_ENABLED", True)
+    store_mandate(MANDATE)
+    store_mandate(dict(MANDATE, buyer_id="other"))
+    mine = place(10, key="k-chef").json()
+    theirs = c.post("/api/orders", headers={"X-Agent-Key": "agent-other", "Idempotency-Key": "k-other"},
+                    json={"requested_date": REQ.isoformat(), "lines": [{"product_id": "463335", "quantity": 1000}]}).json()
+    seeded = mandates.get("lapland-kitchen")
+    mandates.put(seeded.model_copy(update={"id": "lk-edited"}))
+    mandates.put(mandates.get("chef").model_copy(update={"id": "chef-edited"}))
+    out = c.post("/api/admin/demo/reset", headers=ADM, json={"buyer_id": "chef", "restore_mandate": True}).json()
+    assert out["buyer_id"] == "chef" and out["archived_to"].endswith("-chef")
+    assert set(orders._store()) == {theirs["order_id"]}  # only chef's order archived
+    archive = tmp_path / out["archived_to"]
+    assert mine["order_id"] in json.loads((archive / "orders.json").read_text())
+    archived_audit = [json.loads(x) for x in (archive / "audit.jsonl").read_text().splitlines()]
+    assert archived_audit and all(r["input"]["request"]["buyer_id"] == "chef" for r in archived_audit)
+    live = c.get("/api/admin/audit", headers=ADM).json()
+    assert [r.get("kind") for r in live if r.get("buyer_id") == "chef" or r.get("kind")] == ["admin_event"]
+    assert any(r.get("input", {}).get("request", {}).get("buyer_id") == "other" for r in live)  # other's trail kept
+    [ev] = [r for r in live if r.get("kind") == "admin_event"]
+    assert ev["message"] == "demo reset of chef by Valio ops"
+    assert [e["message"] for e in c.get("/api/audit", headers=AP).json()] == ["demo reset of chef by Valio ops"]
+    assert "agent:chef" not in json.dumps(orders._idem_store()) and "agent:other" in json.dumps(orders._idem_store())
+    assert mandates.get("chef").id == "m1"  # chef back on its seeded mandate
+    assert mandates.get("lapland-kitchen").id == "lk-edited"  # another buyer's saved rules untouched
+    again = place(10, key="k-chef").json()
+    assert again["order_id"] != mine["order_id"]  # chef's old idempotency key is archived too
+
+
+def test_judge_kitchen_is_seeded_like_the_demo_kitchen_with_a_small_budget():
+    judge, demo = mandates.get("judge-kitchen"), mandates.get("lapland-kitchen")
+    assert judge.buyer_id == "judge-kitchen" and judge.hard_rules == demo.hard_rules
+    assert judge.weekly_budget_cents == 300000 and demo.weekly_budget_cents > judge.weekly_budget_cents
+    assert mandates.kitchen("judge-kitchen") == mandates.kitchen("lapland-kitchen")
+    assert mandates.location("judge-kitchen") == "lapland"
+    assert mandates.confidence_threshold("judge-kitchen") == mandates.confidence_threshold("lapland-kitchen")
+    from app import config as cfg
+    assert "judge-kitchen" not in cfg.AGENT_KEYS and "judge-kitchen" not in cfg.APPROVER_KEYS  # no keys in code

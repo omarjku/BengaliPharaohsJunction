@@ -1,0 +1,8 @@
+# Scratch from reviews; the drafts and the cut clips stay (all under ~20 MB).
+out/stills*/
+out/sheet*.png
+# Anything big (a master render, raw takes) stays local.
+*.mov
+out/*-master.mp4
+out/front-door-draft-v*.mp4
+!out/*-share.mp4
