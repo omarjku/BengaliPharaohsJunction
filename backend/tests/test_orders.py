@@ -42,6 +42,39 @@ def test_auto_order_is_confirmed_stored_and_audited(shop):
     assert entry["input"]["mandate"]["id"] == "m1" and entry["decision"]["outcome"] == "AUTO"
 
 
+@pytest.mark.parametrize("evidence, expected_status", [
+    ({"status": "ok", "blocking_vulnerability_count": 2}, "pending_approval"),
+    ({"status": "ok", "blocking_vulnerability_count": 0}, "confirmed"),
+    ({"status": "unavailable", "blocking_vulnerability_count": 2}, "confirmed"),
+])
+def test_cached_craci_build_trust_gate_only_holds_blocking_builds(shop, monkeypatch, evidence, expected_status):
+    monkeypatch.setattr(orders.craci_evidence, "cached_live_evidence", lambda *_: evidence)
+    monkeypatch.setattr(orders.signing, "signed_build_provenance", lambda: evidence)
+
+    body = order([("463335", 10)]).json()
+
+    assert body["status"] == expected_status
+    if expected_status == "pending_approval":
+        reason = body["decision"]["primary_reason"]
+        assert reason["code"] == "BUILD_NOT_TRUSTED"
+        assert "2 known high-risk vulnerabilities" in reason["message"]
+    else:
+        assert body["decision"]["outcome"] == "AUTO"
+
+
+def test_human_can_approve_a_build_trust_hold(shop, monkeypatch):
+    monkeypatch.setattr(orders.craci_evidence, "cached_live_evidence",
+                        lambda *_: {"status": "ok", "blocking_vulnerability_count": 1})
+    monkeypatch.setattr(orders.signing, "signed_build_provenance",
+                        lambda: {"status": "ok", "blocking_vulnerability_count": 1})
+
+    held = order([("463335", 10)]).json()
+    approved = c.post(f"/api/orders/{held['order_id']}/approve").json()
+
+    assert held["status"] == "pending_approval"
+    assert approved["status"] == "confirmed"
+
+
 def test_refused_order_is_audited_but_not_stored(shop):
     body = order([("463038", 1)]).json()
     assert body["status"] == "refused" and body["order_id"] is None

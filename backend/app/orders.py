@@ -17,9 +17,9 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from fastapi import HTTPException
-from trade_contracts import AuditEntry, AuditInput, Decision, Mandate, PurchaseRequest, RequestItem
+from trade_contracts import AuditEntry, AuditInput, Decision, Mandate, Outcome, PurchaseRequest, RequestItem
 
-from . import auth, catalogue, config, gate, mandates, signing
+from . import auth, catalogue, config, craci_evidence, gate, mandates, signing
 from .auth import Principal
 
 # ponytail: JSON files on local disk (D8). Render's disk is ephemeral, so orders + audit vanish on redeploy and
@@ -256,11 +256,28 @@ def _spent_7d(buyer_id: str, now: datetime, skip: str | None = None) -> int:
                and o["status"] == "confirmed" and o["updated_at"] >= since)
 
 
-async def _gate(audit: dict, lines, requested_date, mandate, oid, **kwargs) -> gate.GateResult:
+async def _gate(audit: dict, lines, requested_date, mandate, oid, *, trust_gate: bool = True, **kwargs) -> gate.GateResult:
     """gate.check; if Valio can't be asked, the failure is audited (ENGINE_ERROR, `audit` = actor / buyer_id /
     action / status for the line) and the caller gets a clean 503. Raw errors stay in the server log."""
     try:
-        return await gate.check(lines, requested_date, mandate, oid, **kwargs)
+        result = await gate.check(lines, requested_date, mandate, oid, **kwargs)
+        if trust_gate and config.BUILD_TRUST_GATE and result.status == "confirmed":
+            evidence = craci_evidence.cached_live_evidence(os.getenv("RENDER_GIT_COMMIT") or None)
+            count = evidence.get("blocking_vulnerability_count", 0)
+            if evidence.get("status") == "ok" and isinstance(count, int) and count > 0:
+                reason = gate._r(
+                    gate.C.BUILD_NOT_TRUSTED,
+                    gate.ASK,
+                    f"This build has {count} known high-risk vulnerabilities (CRACI); a human approves orders until it is fixed.",
+                    None,
+                    "Have a human approve this order and fix the blocking vulnerabilities.",
+                    blocking_vulnerability_count=count,
+                )
+                reasons = gate._sorted([reason, *result.decision.reasons])
+                result.decision = result.decision.model_copy(update={"outcome": Outcome.ASK_HUMAN, "reasons": reasons,
+                                                                       "primary_reason": reasons[0]})
+                result.status = "pending_approval"
+        return result
     except Exception:
         log.exception("front-door gate failed")
         now = kwargs.get("now") or datetime.now(timezone.utc)
@@ -402,7 +419,8 @@ async def approve(order_id: str, who: Principal, seen_decided_at: datetime | Non
     res = await _gate({"actor": f"human:{who.name}:approve", "buyer_id": o["buyer_id"], "action": "approval_failed",
                        "status": "pending_approval"},
                       lines, date.fromisoformat(o["requested_date"]), mandate, order_id, spent_7d_cents=spent,
-                      approved_prices={li["product_id"]: li["unit_price_cents"] for li in o["lines"]}, now=now)
+                      approved_prices={li["product_id"]: li["unit_price_cents"] for li in o["lines"]}, now=now,
+                      trust_gate=False)
     async with _order_lock:
         o = _pending(order_id, who.buyer_id)  # 409 if someone else approved / rejected it meanwhile
         if mandates.version(mandates.get(o["buyer_id"])) != mandates.version(mandate):  # Codex audit #7

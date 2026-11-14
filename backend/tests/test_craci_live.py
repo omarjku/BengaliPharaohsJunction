@@ -1,5 +1,6 @@
 import hashlib
 import json
+import time
 
 import pytest
 
@@ -24,6 +25,32 @@ def _sbom(raw_marker: str) -> bytes:
             "dependsOn": [f"pkg:pypi/requests@{raw_marker}"],
         }],
     }, separators=(",", ":")).encode()
+
+
+def _realistic_cyclonedx_17() -> dict:
+    pip = [
+        {"bom-ref": f"pkg:pypi/pip-direct-{i:03d}@1.0.{i}", "name": f"pip-direct-{i:03d}",
+         "version": f"1.0.{i}", "purl": f"pkg:pypi/pip-direct-{i:03d}@1.0.{i}"}
+        for i in range(160)
+    ]
+    npm = [
+        {"bom-ref": f"pkg:npm/npm-direct-{i:03d}@2.0.{i}", "name": f"npm-direct-{i:03d}",
+         "version": f"2.0.{i}", "purl": f"pkg:npm/npm-direct-{i:03d}@2.0.{i}"}
+        for i in range(180)
+    ]
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.7",
+        "metadata": {"component": {"type": "application", "name": "trade-door", "bom-ref": "urn:uuid:trade-door",
+                                     "purl": "pkg:generic/trade-door@1.0.0"}},
+        "components": pip + npm,
+        "dependencies": [
+            {"ref": "pkg:generic/trade-door@1.0.0",
+             "dependsOn": [pip[0]["bom-ref"], npm[0]["bom-ref"]]},
+            {"ref": "pkg:generic/frontend@1.0.0",
+             "dependsOn": [pip[1]["bom-ref"], npm[1]["bom-ref"]]},
+        ],
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -84,6 +111,27 @@ def test_live_fetch_summarizes_github_jobs_and_craci_evidence(monkeypatch):
         b"20\0" + raw_sboms["20"] + b"10\0" + raw_sboms["10"]
     ).hexdigest()
     assert "reason" not in result
+
+
+def test_cyclonedx_17_summary_finds_direct_dependencies_for_root_components():
+    sbom = _realistic_cyclonedx_17()
+
+    summary = craci_evidence.summarize_sboms([("job-1", sbom, b"recorded")], allowlist=set())
+
+    assert summary["component_counts"] == {"pip": 160, "npm": 180}
+    assert len(summary["direct_dependencies"]) == 4
+    assert {item["name"] for item in summary["direct_dependencies"]} == {
+        "pip-direct-000", "pip-direct-001", "npm-direct-000", "npm-direct-001",
+    }
+
+
+def test_cached_live_evidence_never_refreshes_or_waits(monkeypatch):
+    evidence = {"status": "ok", "blocking_vulnerability_count": 1}
+    craci_evidence._CACHE[(REPOSITORY, "commit-1")] = (time.monotonic() + 60, evidence)
+    monkeypatch.setattr(craci_evidence, "_fetch_uncached", lambda *_: pytest.fail("network refresh started"))
+
+    assert craci_evidence.cached_live_evidence("commit-1", REPOSITORY) == evidence
+    assert craci_evidence.cached_live_evidence("other", REPOSITORY)["status"] == "unavailable"
 
 
 def test_craci_403_is_unavailable_without_token_leak(monkeypatch, caplog):
