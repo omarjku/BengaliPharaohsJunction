@@ -7,13 +7,17 @@
   --ink-2: #5d6670; /* secondary text */
   --ink-3: #676f78; /* tertiary: times, supporting numbers (4.9:1 on paper, 4.5:1 on wash) */
   --paper: #fbfaf7; /* warm paper: the page */
+  --bubble-mine: #00607a; /* your message: Valio teal, white text (7:1) */
+  --lime: #c5e11d; /* the one primary action */
+  --lime-ink: #0b2f3a;
+  --paper-clear: rgb(251 250 247 / 0); /* paper at 0%: fades to nothing without a grey fringe */
   --surface: #ffffff; /* fields sit on it as white */
   --wash: #f2f0eb; /* pressed states */
   --disabled: #e3e1dc;
   --line: #e7e9ec; /* hairlines, used sparingly */
   --field-line: #8d949c; /* input outlines: 3:1 on white, as form boundaries need */
-  --accent: #0b5cad;
-  --accent-press: #094c8f;
+  --accent: #00607a;
+  --accent-press: #004b61;
   --good: #1e7a3c;
   --warn: #8a5a00;
   --warn-wash: #fff6e3;
@@ -322,8 +326,8 @@ main.roomy { padding-block-start: 96px; }
   border-color: var(--accent);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.7),
-    0 0 0 3px rgba(11, 92, 173, 0.16),
-    0 10px 28px rgba(11, 92, 173, 0.14);
+    0 0 0 3px rgba(0, 96, 122, 0.16),
+    0 10px 28px rgba(0, 96, 122, 0.14);
 }
 /* The shell shows focus, so the field inside drops its own border and ring (the ring is still clearly there). */
 .ask-box > .ask-field { border: 0; border-radius: calc(var(--radius) - 1px); background: transparent; outline: none; }
@@ -341,7 +345,7 @@ main.roomy { padding-block-start: 96px; }
 /* Listening: solid accent, and a soft ring that grows with the voice level. Nothing else moves. */
 .mic.on {
   background: var(--accent); border-color: var(--accent); color: #fff;
-  box-shadow: 0 0 0 calc(4px + var(--level) * 12px) rgba(11, 92, 173, 0.16);
+  box-shadow: 0 0 0 calc(4px + var(--level) * 12px) rgba(0, 96, 122, 0.16);
 }
 .mic.busy { color: var(--accent); }
 .voice-status { min-height: 1.45em; font: var(--t-small); color: var(--ink-2); }
@@ -353,7 +357,7 @@ main.roomy { padding-block-start: 96px; }
   .ask-field.with-mic { padding-inline-end: 72px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .mic.on { box-shadow: 0 0 0 calc(4px + var(--level) * 12px) rgba(11, 92, 173, 0.16); transition: none; }
+  .mic.on { box-shadow: 0 0 0 calc(4px + var(--level) * 12px) rgba(0, 96, 122, 0.16); transition: none; }
 }
 
 /* Live progress: one line that changes, each step fading up a few pixels. */
@@ -464,7 +468,7 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
 }
 .field-row input:focus, .secret input:focus, .covers input:focus, .guests-input:focus, .rules-field:focus {
   outline: none; border-color: var(--accent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 0 0 3px rgba(11, 92, 173, 0.16), 0 10px 28px rgba(11, 92, 173, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 0 0 3px rgba(0, 96, 122, 0.16), 0 10px 28px rgba(0, 96, 122, 0.14);
 }
 /* Buttons: hover darkens, it never fades. Only on devices that really hover. */
 @media (hover: hover) {
@@ -483,7 +487,6 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
 .chip:disabled { opacity: 0.5; cursor: default; }
 
 /* Landing: dark, dithered swirl, pixel app name */
-@import url('https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@500&display=swap');
 .landing { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 26rem) minmax(0, 1fr); align-items: center; gap: var(--s6); padding: var(--s7) clamp(1rem, 8vw, 8rem); background: #0a0a0a; color: #f2f2f2; }
 .landing-name { margin: 0 0 var(--s5); font: 500 clamp(3.5rem, 9vw, 6.5rem)/0.95 'Pixelify Sans', ui-monospace, monospace; letter-spacing: 0; }
 .landing-text { margin: 0 0 var(--s6); font-size: 1.125rem; line-height: 1.6; color: #c9ccd1; max-width: 26rem; }
@@ -496,48 +499,43 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
   .landing-art { order: -1; max-width: 18rem; }
 }
 
-/* --- Talk: one circle that listens, thinks and speaks; captions under it; End at the thumb. */
-.talk-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); margin-block-start: var(--s2); }
-.talk-btn, .photo-btn { display: inline-flex; align-items: center; gap: var(--s2); }
-.talk-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); }
-.talk {
-  position: fixed; inset: 0; z-index: 50; background: var(--paper); color: var(--ink);
-  display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
-  padding-block-start: env(safe-area-inset-top);
-}
-.talk-stage { display: grid; justify-items: center; gap: var(--s4); padding: var(--s8) var(--s5) var(--s5); }
-.talk-circle {
-  --level: 0;
-  width: 152px; height: 152px; border-radius: 50%; background: var(--accent);
-  transform: scale(calc(0.9 + var(--level) * 0.22));
-  transition: transform 120ms var(--ease-out), opacity 200ms ease, background-color 200ms ease;
-}
-.talk-circle.connecting { opacity: 0.25; }
-.talk-circle.listening { opacity: 0.9; }
-.talk-circle.thinking { opacity: 0.6; animation: talk-think 1.4s ease-in-out infinite alternate; }
-.talk-circle.speaking { opacity: 1; animation: talk-speak 0.8s ease-in-out infinite alternate; }
-.talk-circle.error { background: var(--bad); opacity: 0.35; }
-@keyframes talk-think { from { transform: scale(0.88); } to { transform: scale(0.96); } }
-@keyframes talk-speak { from { transform: scale(0.97); } to { transform: scale(1.05); } }
-.talk-line { font: var(--t-body); color: var(--ink-2); text-align: center; min-height: 1.55em; }
-.talk-line.bad { color: var(--bad); }
-.talk-log {
-  overflow-y: auto; width: 100%; max-width: calc(var(--column) + 2 * var(--s5)); margin-inline: auto;
-  padding: 0 var(--s5) var(--s5); display: grid; align-content: start; gap: var(--s3);
-}
-.talk-caption { max-width: 85%; }
-.talk-caption.user { justify-self: end; text-align: end; color: var(--ink-2); }
-.talk-caption.agent { justify-self: start; font-weight: 500; }
-.talk-caption.partial { opacity: 0.6; }
-.talk-result .answer { margin-block-start: var(--s4); }
-.talk-end { display: flex; justify-content: center; padding: var(--s4) var(--s5) max(var(--s5), env(safe-area-inset-bottom)); }
-.talk-end .btn { min-width: 10rem; }
-@media (prefers-reduced-motion: reduce) {
-  .talk-circle.thinking, .talk-circle.speaking { animation: none; }
-}
+/* Valio Aimo palette: deep teal, lime for the one primary action */
+.btn:not(.plain) { background: var(--lime); color: var(--lime-ink); }
+.btn:not(.plain):active, .btn:not(.plain):hover:not(:disabled) { background: #b3cf14; }
+.btn:disabled { background: var(--disabled); color: var(--ink-3); }
 
-/* --- Photo: what was read, next to a small thumbnail. (Talk + photo use only talk-* / photo-* classes.) */
+/* Chat bubbles for the conversation screen: .thread holds them; .bubble.mine = you (right), .bubble.agent = the agent (left) */
+.thread { display: flex; flex-direction: column; gap: var(--s4); }
+.bubble { margin: 0; padding: var(--s3) var(--s4); max-width: min(34rem, 85%); border-radius: 18px; line-height: 1.5; overflow-wrap: anywhere; }
+.bubble.mine { align-self: flex-end; background: var(--bubble-mine); color: #fff; border-bottom-right-radius: 4px; }
+.bubble.agent { align-self: flex-start; max-width: min(40rem, 100%); background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(28,31,35,0.05); }
+
+/* Landing to app: the landing lifts away, the app settles in */
+.landing { transition: opacity 360ms var(--ease-out), transform 360ms var(--ease-out); }
+.landing.leaving { opacity: 0; transform: scale(1.02); }
+.app-in { animation: app-in 420ms var(--ease-out) both; }
+@keyframes app-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .landing, .app-in { transition: none; animation: none; } }
+
+.photo-btn { display: inline-flex; align-items: center; gap: var(--s2); }
+
+/* --- Photo: what was read, next to a small thumbnail. */
 .photo-read { flex-basis: 100%; display: flex; align-items: flex-start; gap: var(--s3); }
 .photo-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
 .photo-error { color: var(--bad); }
 .photo-unreadable { color: var(--warn); }
+
+/* Dark mode: follows the phone or computer setting. Same tokens, darker values. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --ink: #ecedef; --ink-2: #b4bac2; --ink-3: #9aa1aa;
+    --paper: #121416; --paper-clear: rgb(18 20 22 / 0); --surface: #1b1e22; --wash: #24282d; --disabled: #2c3036;
+    --line: #2d3237; --field-line: #6b727b;
+    --accent: #4cc3e3; --accent-press: #8fd9ee;
+    --good: #5fcf80; --warn: #f0b44c; --warn-wash: #2e2410; --bad: #ff8a80;
+  }
+  /* Filled controls keep white text, so they use the deep teal, not the light text teal. */
+  .composer .composer-voice, .mic.on { background: var(--bubble-mine); border-color: var(--bubble-mine); }
+  .btn.done { color: var(--lime-ink); }
+}
