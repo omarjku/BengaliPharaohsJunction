@@ -801,9 +801,8 @@ function GuestsQuestion({ question, onAnswer, busy }: { question: string; onAnsw
 // A door, drawn in two strokes: the product's name, not decoration.
 function DoorGlyph() {
   return (
-    <svg className="door" viewBox="0 0 16 20" width="14" height="18" aria-hidden="true">
-      <path d="M2 19V2.5A1.5 1.5 0 0 1 3.5 1h9A1.5 1.5 0 0 1 14 2.5V19M1 19h14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      <circle cx="11" cy="10.5" r="1" fill="currentColor" />
+    <svg className="brand-door" viewBox="0 0 60 100" width="22" height="36" shapeRendering="crispEdges" aria-hidden="true" focusable="false">
+      <path fill="currentColor" fillRule="evenodd" d="M0 100V30h2V22h2V16h2V12h4V8h4V6h4V4h4V2h4V0h8v2h4v2h4v2h4v2h4v4h4v4h2v6h2v8h2v70zM8 40h18v22H8zM34 40h18v22H34zM8 68h18v22H8zM34 68h18v22H34z" />
     </svg>
   )
 }

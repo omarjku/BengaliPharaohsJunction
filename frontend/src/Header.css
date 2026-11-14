@@ -37,4 +37,4 @@
 .hmenu-seg button:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
 @media (max-width: 600px) { .top-bar-in { padding-inline: var(--s4); } .top .brand-for { display: none; } }
 @media (prefers-reduced-motion: reduce) { .hmenu-panel, .hmenu-bars, .hmenu-bars::before, .hmenu-bars::after { transition: none; } }
-.top .brand .door { color: #fff; }
+.top .brand .brand-door { color: #fff; flex: none; display: block; }
