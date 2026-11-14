@@ -8,9 +8,11 @@ Behaviour verified against the live API (docs/valio-api-notes.md):
 - `closingTime` can already be in the past while the line still says "available" (e.g. Terminal for Monday).
 """
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
+from trade_contracts import CutOff, QuantityInfo, Quote
+from trade_contracts.common import Availability, QuoteSource
 
 from . import config
 
@@ -114,6 +116,33 @@ async def get_quotes(product_ids: list[str], requested_date: str, customer: str 
                     found[item["productId"]] = quote
 
     return [found[i] for i in ids if i in found]
+
+
+def to_contract_quote(q: dict) -> "Quote | None":
+    """T03 quote dict → T02 contract `Quote` (contracts/). Trap flags stay on the dict; the contract
+    carries them as availability / quantity.known / cut_off.passed. Unknown products have no price → None."""
+    if "unknown_product" in q["flags"] or q["price"] is None:
+        return None
+    if {"undeliverable", "out_of_stock", "sales_block", "cutoff_passed"} & set(q["flags"]):
+        availability = Availability.UNAVAILABLE
+    elif not q["quantity_known"]:
+        availability = Availability.UNKNOWN
+    else:
+        availability = Availability.AVAILABLE  # PARTIAL needs the requested qty: decided in T06, not here
+    fetched = datetime.fromisoformat(q["fetched_at"])
+    cut = datetime.fromisoformat(q["order_cutoff"]) if q["order_cutoff"] else None
+    return Quote(
+        product_id=q["product_id"],
+        unit_price_eur=q["price"],
+        unit=q["sales_unit"] or "unit",
+        availability=availability,
+        quantity=QuantityInfo(known=q["quantity_known"], value=int(q["available_amount"]) if q["quantity_known"] else None),
+        available_date=q["available_date"][:10] if q["available_date"] else None,
+        source=QuoteSource.VALIO_API,
+        fetched_at=fetched,
+        valid_until=None if "cutoff_passed" in q["flags"] else fetched + timedelta(seconds=CACHE_TTL_S),
+        cut_off=CutOff(closing_time=cut, passed="cutoff_passed" in q["flags"]) if cut else None,
+    )
 
 
 async def ping() -> bool:

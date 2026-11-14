@@ -62,3 +62,14 @@ def test_quotes_route_rejects_bad_input_before_calling_valio():
     assert c.post("/api/quotes", json={"product_ids": ["DROP TABLE"], "requested_date": "2026-11-16"}).status_code == 422
     assert c.post("/api/quotes", json={"product_ids": ["463335"], "requested_date": "2030-01-01"}).status_code == 422
     assert c.post("/api/quotes", json={"product_ids": ["463335"], "requested_date": "monday"}).status_code == 422
+
+
+def test_contract_quote_matches_t02_shapes_for_each_trap():
+    from app.valio import to_contract_quote
+    ok = to_contract_quote(_merge(avail(), PRICE, NOW))
+    assert ok.availability == "available" and ok.quantity.known and ok.quantity.value == 500 and not ok.cut_off.passed
+    terminal = to_contract_quote(_merge(avail("Terminal", 999999.0, "2026-11-12T15:00:00+02:00"), PRICE, NOW))
+    assert terminal.availability == "unavailable" and not terminal.quantity.known and terminal.quantity.value is None
+    assert terminal.cut_off.passed and terminal.valid_until is None
+    assert to_contract_quote(_merge(avail(model=None, lines=False), {"productId": "x", "error": True}, NOW)) is None
+    assert to_contract_quote(_merge(avail(model=None, lines=False), PRICE, NOW)).availability == "unavailable"
