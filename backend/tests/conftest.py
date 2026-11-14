@@ -5,7 +5,7 @@ import pytest
 
 from trade_contracts import Mandate
 
-from app import catalogue, config, mandates, orders, valio
+from app import catalogue, mandates, config, mandates, orders, valio
 
 NOW = datetime.now(timezone.utc)
 REQ = date.today() + timedelta(days=2)
@@ -79,6 +79,7 @@ def shop(monkeypatch, tmp_path):
     monkeypatch.setattr(orders, "AUDIT_FILE", tmp_path / "audit.jsonl")
     monkeypatch.setattr(orders, "ORDERS_FILE", tmp_path / "orders.json")
     monkeypatch.setattr(orders, "_orders", None)
+    monkeypatch.setattr(mandates, "STORE", tmp_path / "mandates.json")  # never the real saved rules
     monkeypatch.setattr(mandates, "_MANDATES", dict(mandates._MANDATES))  # tests store their own; demo buyer kept
     monkeypatch.setattr(config, "AGENT_KEYS", "agent-chef=chef,agent-other=other")
     monkeypatch.setattr(config, "APPROVER_KEYS", "appr-chef=chef:Chef Aino,appr-other=other:Olli")
