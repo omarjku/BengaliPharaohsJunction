@@ -18,7 +18,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstrai
 from trade_contracts import Mandate
 
 from . import (agent, ask, auth, catalogue, config, gate, httpsig, mandates, menu, orders, profile, progress,
-               quantity, ratelimit, rules, signing, valio, voice)
+               quantity, ratelimit, rules, signing, valio, vision, voice)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -152,7 +152,8 @@ async def limit_body(request: Request, call_next):
         size = request.headers.get("content-length")
         if size is None and request.headers.get("transfer-encoding"):
             return JSONResponse({"detail": "Content-Length required"}, status_code=411)
-        cap = voice.MAX_BYTES if request.url.path == "/api/voice/transcribe" else MAX_BODY_BYTES  # audio clips
+        cap = {"/api/voice/transcribe": voice.MAX_BYTES,  # audio clips; photos (+ multipart overhead)
+               "/api/vision/read": vision.MAX_BYTES + 64 * 1024}.get(request.url.path, MAX_BODY_BYTES)
         if size is not None and (not size.isdigit() or len(size) > 12 or int(size) > cap):  # no 5,000-digit int()
             return JSONResponse({"detail": f"Request body over {cap} bytes"}, status_code=413)
     return await call_next(request)
@@ -541,6 +542,21 @@ async def voice_transcribe(request: Request, who: Agent) -> dict:
         if len(body) > voice.MAX_BYTES:
             raise HTTPException(413, detail=f"Recordings may be at most {voice.MAX_BYTES // 1000} KB.")
     return await voice.transcribe(bytes(body), request.headers.get("content-type", ""))
+
+
+@app.post("/api/vision/read")
+async def vision_read(request: Request, who: Agent) -> dict:
+    """A photo of a handwritten shopping list, a menu board or a whiteboard of menu ideas (multipart field `image`,
+    or the raw image as the body; JPEG / PNG / WEBP / HEIC, at most 8 MB) → {kind: order_list|menu|other, text,
+    items, covers, unreadable, language, suspicious, message, model}. Gemini reads the image as untrusted DATA:
+    instruction-like text in it is only text. This route places NOTHING and stores no image: the UI sends `text` on
+    through POST /api/agent/ask, where every rule and the front door apply. Needs X-Agent-Key; rate-limited."""
+    body = bytearray()
+    async for chunk in request.stream():  # bounded read, as for voice
+        body += chunk
+        if len(body) > vision.MAX_BYTES + 64 * 1024:
+            raise HTTPException(413, detail=f"Photos may be at most {vision.MAX_BYTES // 1_000_000} MB.")
+    return await vision.read(bytes(body), request.headers.get("content-type", ""))
 
 
 _STREAM_TASKS: set = set()
