@@ -36,12 +36,13 @@ import { Orb } from './Orb'
 import { useLive } from './useLive'
 import { useLiveWarm } from './liveWarm'
 import { useTalk, useTalkPhotoAvailable } from './useTalk'
+import { mergeTranscript } from './transcript'
 
 type View = 'order' | 'kitchen' | 'rules' | 'history' | 'valio'
 // The conversation thread: the chef's messages, the agent's lines (partial while voice is still forming them), the
 // responses (decision cards and questions) and errors (with "Ask again" when a question expired).
 type Item =
-  | { id: number; kind: 'user' | 'agent'; text: string; partial?: boolean }
+  | { id: number; kind: 'user' | 'agent'; text: string; partial?: boolean; raw?: string } // raw: uncleaned live text (transcript.ts)
   | { id: number; kind: 'res'; res: AskResponse; date: string; asked?: string; have?: string[] } // asked: the request it answers
   | { id: number; kind: 'error'; text: string; reask: string | null }
 type NewItem = Item extends infer I ? (I extends Item ? Omit<I, 'id'> : never) : never
@@ -175,14 +176,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const live = useLive(
     talk.session,
     {
-      // Live words: a partial line is replaced until it's final (a dot marks the reply being formed).
-      onTranscript: (role, said, final) =>
-        setThread((t) => {
-          const last = t[t.length - 1]
-          const kind = role === 'user' ? 'user' : 'agent'
-          if (last && last.kind === kind && last.partial) return [...t.slice(0, -1), { ...last, text: said, partial: !final }]
-          return [...t, { id: ++nextId.current, kind, text: said, partial: !final }]
-        }),
+      // Live words: transcript.ts cleans the tags and keeps one line per speaker (a dot marks a line still forming).
+      onTranscript: (role, said, final) => setThread((t) => mergeTranscript(t, { role, text: said, final }, () => ++nextId.current)),
       onResult: (r) => {
         setResult(r)
         push({ kind: 'res', res: r, date: r.requested_date ?? date })
