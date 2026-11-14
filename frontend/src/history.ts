@@ -44,6 +44,7 @@ const NEAR_MS = 5 * 60_000 // the front door answers the agent within seconds; 5
 export function groupHistory(entries: AuditEntry[], c: Copy): Group[] {
   const groups: (Omit<Group, 'outcome' | 'outcomeKey' | 'tone' | 'title'> & { title: string | null })[] = []
   for (const e of entries) {
+    if (!e.decision) continue // a security event (refused key etc.) for this buyer: no request to show; the Valio view lists them
     const s = step(e, c)
     const human = HUMAN.exec(e.actor)?.[2]
     const t = new Date(e.timestamp).getTime()
