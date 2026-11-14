@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 from trade_contracts import ReasonCode as C
 
-from . import agent, gate, menu, urgent, progress
+from . import agent, conversation, gate, menu, progress, urgent
 
 TZ = ZoneInfo("Europe/Helsinki")
 log = logging.getLogger(__name__)
@@ -32,6 +32,8 @@ _INTENT_SCHEMA = {"type": "object", "required": ["intent", "covers"], "propertie
     "intent": {"type": "string", "enum": ["order", "menu", "unclear"]},
     "covers": {"type": "integer", "nullable": True}}}
 
+_MENU_WORD = re.compile(r"\b(menu|ruokalista|lounaslista)\b", re.I)
+_COMPOUND_DATE = re.compile(r"\b(after next|week after|following|viikon päästä|ensi viikon jälkeen)\b", re.I)
 _WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6,
              "maanantai": 0, "tiistai": 1, "keskiviikko": 2, "torstai": 3, "perjantai": 4, "lauantai": 5,
              "sunnuntai": 6}
@@ -43,6 +45,8 @@ def date_from_text(text: str, today: date) -> date | None:
     """The delivery date the text states, deterministically: ISO, d.m.(yyyy), today/tomorrow (Finnish too), a
     weekday (the next one; the same weekday as today means next week). None if no date is stated."""
     low = text.lower()
+    if _COMPOUND_DATE.search(low):  # "the Monday after next": never guess which Monday (Codex #4)
+        return None
     if m := re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", low):
         try:
             return date(int(m[1]), int(m[2]), int(m[3]))
@@ -71,9 +75,13 @@ async def classify(text: str) -> tuple[str, int | None, bool]:
     out = await agent._gemini(INTENT_PROMPT, agent._wrap(text), _INTENT_SCHEMA)
     if out and out.get("intent") in ("order", "menu", "unclear"):
         covers = out.get("covers")
+        # covers only when the text writes that number AS a guest count ("80 kg flour" is not 80 guests; Codex #6)
         ok = isinstance(covers, int) and not isinstance(covers, bool) and 1 <= covers <= 2000 \
-            and float(covers) in agent._numbers(text)
-        return out["intent"], covers if ok else None, True
+            and any(int(m[1]) == covers for m in _COVERS.finditer(text))
+        intent = out["intent"]
+        if intent == "order" and (_COVERS.search(text) or _MENU_WORD.search(text)):
+            intent = "menu"  # menu markers route to the proposal-only path whatever the model said (Codex #5)
+        return intent, covers if ok else None, True
     # fallback without Gemini: a guest count or the word menu → menu; an amount → order
     m = _COVERS.search(text)
     covers = int(m[1]) if m and 1 <= int(m[1]) <= 2000 else None
@@ -82,14 +90,98 @@ async def classify(text: str) -> tuple[str, int | None, bool]:
     return ("order" if re.search(r"\d", text) else "unclear"), None, False
 
 
-def _ask(intent: str, covers, when, source, question: str, code: C, fix: str) -> dict:
+def _ask(intent: str, covers, when, source, question: str, code: C, fix: str, kind: str | None = None) -> dict:
+    """A question back to the chef. `kind` (date | guests) marks one an answer can continue from."""
     now = datetime.now(timezone.utc)
     decision = agent._decision(str(uuid4()), [gate._r(code, gate.ASK, question, None, fix)], [], now)
     return {"intent": intent, "covers": covers, "requested_date": when and when.isoformat(), "date_source": source,
-            "question": question, "decision": decision.model_dump(mode="json")}
+            "question": question, "decision": decision.model_dump(mode="json"), "_kind": kind}
 
 
-async def ask(text: str, requested: date | None, buyer_id: str) -> dict:
+async def ask(text: str, requested: date | None, buyer_id: str, follow_up: dict | None = None) -> dict:
+    """One input box, plus conversational follow-ups: with `follow_up` {to, answer} the chef's answer continues the
+    request that asked (conversation.py). Every response gets `speak` and, when it asks something an answer can
+    continue, `conversation_id`."""
+    agent.start_budget(agent.DECISIONS_PER_MENU)  # before the preflight calls (Codex #17); run/menu reuse it
+    if follow_up:
+        entry = conversation.take(follow_up["to"], buyer_id)
+        out, text, requested = await _answer(entry, follow_up["answer"], buyer_id)
+    else:
+        out = await _flow(text, requested, buyer_id)
+    return _finish(out, text, requested, buyer_id)
+
+
+def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict:
+    kind, state = out.pop("_kind", None), out.pop("_state", {})
+    reasons = (out.get("decision") or {}).get("reasons", [])
+    if kind is None and out.get("request"):  # questions raised inside the order pipeline
+        items = out["request"]["items"]
+        how = next((r for r in reasons if r["code"] == "QTY_AMBIGUOUS" and r["message"].startswith("How much ")), None)
+        again = next((r for r in reasons if r["code"] == "QTY_AMBIGUOUS" and "Order again?" in r["message"]), None)
+        missing = [n for n, it in enumerate(items) if it["amount"] is None]
+        if how and missing:
+            kind, state = "amount", {"request": out["request"], "item": missing[0]}
+            out["question"] = how["message"].split("?")[0] + "?"
+        elif again:
+            kind = "confirm"
+            out["question"] = again["message"].split(". Nothing")[0]
+    out["conversation_id"] = None
+    if kind and out.get("question"):
+        out["conversation_id"] = conversation.save(buyer_id, kind, {
+            "text": text, "requested": out.get("requested_date") or (requested and requested.isoformat()), **state})
+    out["speak"] = conversation.speak(out, conversation.language(text))
+    return out
+
+
+async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, date | None]:
+    """Fill only the asked field from the answer, then re-run every check. → (response, original text, date)."""
+    text, kind = entry["text"], entry["kind"]
+    requested = date.fromisoformat(entry["requested"]) if entry.get("requested") else None
+    steer = await agent.steering(answer)  # the answer is untrusted text too
+    if agent._INSTRUCTION.search(answer) or agent._BILLING.search(answer) or (steer or 0) >= agent.INJECTION_MAX:
+        return _ask("order", None, requested, None, "That answer seems to try to steer the agent. Nothing was "
+                    "ordered.", C.LOW_CONFIDENCE, "Answer just the question."), text, requested
+
+    def again(question: str, fix: str) -> dict:  # couldn't read the answer: ask the same thing again
+        out = _ask("order", entry.get("covers"), requested, None, question, C.QTY_AMBIGUOUS, fix, kind)
+        out["_state"] = {k: entry[k] for k in ("request", "item") if k in entry}
+        return out
+
+    today = datetime.now(TZ).date()
+    if kind == "date":
+        d = conversation.date_answer(answer, today, date_from_text)
+        if d is None:
+            return again("For which delivery day?", "Say a day, e.g. 'Monday' or 'tomorrow'."), text, requested
+        return await _flow(text, d, buyer_id), text, d
+    if kind == "guests":
+        n = conversation.number_in(answer)
+        if n is None or n != int(n) or not 1 <= n <= 2000:
+            return again("For how many guests?", "Say a number, e.g. '80'."), text, requested
+        return await _flow(text, requested, buyer_id, covers=int(n)), text, requested
+    if kind == "confirm":
+        if conversation.NO.search(answer):
+            now = datetime.now(timezone.utc)
+            decision = agent._decision(str(uuid4()), [gate._r(C.QTY_AMBIGUOUS, gate.INFO, "Not ordered again, as you "
+                                                              "said.", None, None)], [], now)
+            return {"intent": "order", "question": None, "requested_date": entry.get("requested"), "order": None,
+                    "decision": decision.model_dump(mode="json")}, text, requested
+        if not conversation.YES.search(answer):
+            return again("Order it again?", "Say yes or no."), text, requested
+        return await _flow(text + " (again)", requested, buyer_id), text, requested
+    # amount: only the asked item's amount and unit change; the stored parse, buyer and mandate stay
+    request, n_item = entry["request"], entry["item"]
+    item = request["items"][n_item]
+    got = conversation.amount_in(answer)
+    if got is None:
+        return again(f"How much {item['query']}? Say the amount with a unit, e.g. '5 litres'.", "Say the amount with "
+                     "a unit."), text, requested
+    item["amount"], item["unit"] = got
+    merged = f"{text}. {got[0]:g} {got[1]} {item['query']}"  # grounding finds amount + unit + product in one clause
+    return await _flow(merged, requested, buyer_id, parsed=(request, True)), merged, requested
+
+
+async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | None = None,
+                parsed: tuple[dict, bool] | None = None) -> dict:
     today = datetime.now(TZ).date()
     stated = date_from_text(text, today)  # deterministic, so the date guard can start with everything else
     guess = requested or stated or (today if urgent.URGENT.search(text) else None)
@@ -97,10 +189,23 @@ async def ask(text: str, requested: date | None, buyer_id: str) -> dict:
     # when it turns out to be a menu, the guards only when the request stops at a question).
     t0 = time.monotonic()
     progress.phase("understanding")
+    given_covers, given_parse = covers, parsed
     (intent, covers, _), parsed, steer, meant = await asyncio.gather(
-        classify(text), agent.parse(text), agent.steering(text),
+        classify(text), agent._given(given_parse, lambda: agent.parse(text)), agent.steering(text),
         agent.date_intent(text, guess, today) if guess else agent.none())
+    if given_covers is not None:  # a follow-up answered "for how many guests?"
+        intent, covers = "menu", given_covers
+    if given_parse is not None:  # a follow-up filled one amount: it stays an order
+        intent = "order"
     t1 = time.monotonic()
+    # An attack must never look like a normal clarification: instruction-like, authority or billing text is
+    # answered with the injection reason before any date / guests / intent question (QA round 2).
+    if (agent._INSTRUCTION.search(text) or agent._BILLING.search(text)
+            or (steer is not None and steer >= agent.INJECTION_MAX)):
+        return _ask(intent, covers, requested or stated, "request" if requested else "text" if stated else None,
+                    "This request seems to try to steer the agent (instructions, approvals, billing or authority "
+                    "claims). Nothing was ordered.", C.LOW_CONFIDENCE,
+                    "Send just the products, amounts and date; rules change only through the Rules screen.")
     if intent == "unclear":  # off-topic first: "what's the weather like?" isn't a date question (QA round 2)
         return _ask(intent, covers, requested or stated, "request" if requested else "text" if stated else None,
                     "I can only help with ordering from Valio. What do you need?", C.QTY_AMBIGUOUS,
@@ -114,7 +219,7 @@ async def ask(text: str, requested: date | None, buyer_id: str) -> dict:
         when, source = today, "text"
     if when is None:
         return _ask(intent, covers, None, None, "For which delivery day?", C.DATA_MISSING,
-                    "Say the day, e.g. 'for Monday' or 'tomorrow'.")
+                    "Say the day, e.g. 'for Monday' or 'tomorrow'.", kind="date")
     if when < today:
         return _ask(intent, covers, when, source, f"{when:%A %d %B %Y} is in the past. Which delivery day?",
                     C.DATA_MISSING, "Pick a date from today on.")
@@ -126,7 +231,7 @@ async def ask(text: str, requested: date | None, buyer_id: str) -> dict:
     if intent == "menu":
         if covers is None:  # never guessed: portions decide every quantity in the cart
             return _ask(intent, None, when, source, "For how many guests?", C.QTY_AMBIGUOUS,
-                        "Add the number of guests, e.g. 'for 80 guests'.")
+                        "Add the number of guests, e.g. 'for 80 guests'.", kind="guests")
         body = await menu.propose(text, covers, when, buyer_id)
     else:
         body = await agent.run(text, when, buyer_id, pre={"parsed": parsed, "steer": steer,

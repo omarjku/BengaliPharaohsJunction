@@ -99,8 +99,8 @@ async def verify(request: Request, buyer_id: str, now: float | None = None) -> N
     values = {"@method": request.method.upper(), "@path": raw_path or "/", "content-digest": digest}
     try:
         signature = base64.b64decode(sm.group(1), validate=True)
-    except (binascii.Error, ValueError):  # Codex audit: "sig1=:A:" was a 500
-        raise _fail(request, buyer_id, "Signature is not valid base64") from None
+    except (binascii.Error, ValueError):  # malformed base64 is a 401, not a 500 (Codex: Room 3 #15, Room 2 run 7)
+        raise _fail(request, buyer_id, "signature is not valid base64") from None
     try:
         keys[kid].verify(signature, signature_base(components, values, params))
     except InvalidSignature:

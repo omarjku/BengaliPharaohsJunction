@@ -89,7 +89,7 @@ async def live_transcribe(pcm: bytes) -> str:
                        "inputAudioTranscription": {},
                        "realtimeInputConfig": {"automaticActivityDetection": {"disabled": True}},
                        "systemInstruction": {"parts": [{"text": "Only listen. Reply with the single word OK."}]}}}
-    async with connect(LIVE_URL, additional_headers={"x-goog-api-key": config.GEMINI_API_KEY}, max_size=None) as ws:
+    async with connect(LIVE_URL, additional_headers={"x-goog-api-key": config.GEMINI_API_KEY}, max_size=2**20) as ws:  # bounded frames
         await ws.send(json.dumps(setup))
         if "setupComplete" not in json.loads(await asyncio.wait_for(ws.recv(), TIMEOUT_S)):
             raise RuntimeError("Live setup failed")
@@ -103,6 +103,8 @@ async def live_transcribe(pcm: bytes) -> str:
             msg = json.loads(await asyncio.wait_for(ws.recv(), TIMEOUT_S))
             content = msg.get("serverContent", {})
             text += content.get("inputTranscription", {}).get("text", "")  # final text (interim* ones are ignored)
+            if len(text) > 4000:  # a 30 s clip is a few hundred characters (Codex #12)
+                raise RuntimeError("transcript too long")
             # The transcribe model ends with generationComplete / ACTIVITY_END and never sends turnComplete
             # (measured); gemini-3.8-live ends its reply with turnComplete.
             ended = msg.get("voiceActivity", {}).get("type") == "ACTIVITY_END"
