@@ -320,6 +320,13 @@ def front_door_keys() -> dict:
     return signing.jwks()
 
 
+@app.get("/.well-known/front-door-build.json")
+def front_door_build(response: Response) -> dict:
+    """Read-only build evidence for the signed front door; missing or invalid evidence has a safe fallback."""
+    response.headers["Cache-Control"] = "public, max-age=60"
+    return signing.build_provenance()
+
+
 @app.post("/api/verify")
 def verify_statement(req: VerifyRequest) -> dict:
     """Checks an order response's `signed_statement` + `signature`. valid=true proves this front door issued

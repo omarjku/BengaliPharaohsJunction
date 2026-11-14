@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -79,3 +80,60 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+  provenance:
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'pull_request'
+    runs-on: craci
+    needs:
+      - backend-tests
+      - packages-tests
+      - frontend
+    steps:
+      # The default proxy answers 403 "Access denied" for api.craci.com (even to a fake token). No presets + default
+      # allow gives this job direct end-to-end connections (docs: setup-action-network, "Use standard CI networking").
+      - uses: cracicorp/setup@v1
+        with:
+          network: |
+            default: allow
+            presets: []
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Collect CRACI SBOM and network evidence
+        env:
+          CRACI_API_TOKEN: ${{ secrets.CRACI_API_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/craci_sbom.py
+      - name: Write build provenance
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          summary = json.loads(Path("craci-sbom-summary.json").read_text(encoding="utf-8"))
+          provenance = {
+              "commit": os.environ["GITHUB_SHA"],
+              "ci_run": os.environ["GITHUB_RUN_ID"],
+              "craci_build_id": summary.get("craci_build_id") or f"github:{os.environ['GITHUB_REPOSITORY']}:{os.environ['GITHUB_RUN_ID']}",
+              "sbom_sha256": summary.get("sbom_sha256"),
+              "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+          }
+          Path("build-provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+      - name: Show CRACI evidence in the log
+        run: |
+          echo '--- build-provenance.json'; cat build-provenance.json
+          echo '--- craci-sbom-summary.json (first 4000 chars)'; head -c 4000 craci-sbom-summary.json; echo
+      - name: Upload CRACI provenance
+        continue-on-error: true  # GitHub artifact storage quota is full on this account; the log above has the evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: craci-provenance
+          path: |
+            build-provenance.json
+            craci-sbom-summary.json

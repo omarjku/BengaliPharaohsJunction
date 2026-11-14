@@ -14,12 +14,14 @@ import binascii
 import hashlib
 import json
 import logging
+import os
+from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from . import config
+from . import config, craci_evidence
 
 ALG = "Ed25519"
 ISSUER = "valio-front-door"
@@ -74,5 +76,26 @@ def verify(statement: dict, signature: dict) -> bool:
     return True
 
 
+def _read_build_provenance() -> dict | None:
+    path = os.getenv("BUILD_PROVENANCE_PATH")
+    if not path:
+        return None
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def build_provenance() -> dict:
+    live = craci_evidence.fetch_live_evidence(
+        os.getenv("RENDER_GIT_COMMIT") or None,
+        os.getenv("CRACI_API_TOKEN", ""),
+    )
+    return live if live.get("status") == "ok" else (_read_build_provenance() or live)
+
+
 def jwks() -> dict:
-    return {"keys": [{"kty": "OKP", "crv": "Ed25519", "x": b64url(_PUB_RAW), "kid": KID, "alg": "EdDSA", "use": "sig"}]}
+    jwk = {"kty": "OKP", "crv": "Ed25519", "x": b64url(_PUB_RAW), "kid": KID, "alg": "EdDSA", "use": "sig"}
+    jwk["build"] = build_provenance()
+    return {"keys": [jwk]}
