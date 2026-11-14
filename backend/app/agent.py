@@ -242,6 +242,31 @@ def _offer(line: dict) -> str:
             f"= {gate.eur(line['line_total_cents'])} net")
 
 
+FACTS = ("delivery_reliability", "carbon_kg_per_kg", "origin")
+
+
+def _facts_text(f: dict) -> str:
+    bits = ([f"on time {f['delivery_reliability']:.0%}"] if f["delivery_reliability"] is not None else []) + (
+        [f"{f['carbon_kg_per_kg']:g} kg CO2e/kg"] if f["carbon_kg_per_kg"] is not None else []) + (
+        [f"origin {f['origin'].upper()}"] if f["origin"] else [])
+    return f" Facts: {', '.join(bits)}." if bits else ""
+
+
+def _decided_by(scored: list) -> str:
+    """One clause when reliability or Finnish origin, not price or Gemini's rank, decided against the runner-up."""
+    (bk, best, _), rest = scored[0], scored[1:]
+    for k, ln, asks in rest:
+        if k[0] or (k[5], k[6]) >= (bk[5], bk[6]):  # blocked, or it loses on price and rank anyway
+            continue
+        rel = [r.message for r in asks if r.code in (C.LOW_RELIABILITY, C.DATA_MISSING) and "min_reliability" in r.facts]
+        if k[:3] == bk[:3] and rel:
+            return f" Chosen over {_name(ln['product'])}: {rel[0]}"
+        if k[:4] == bk[:4] and not bk[4] and k[4]:
+            return f" Chosen over {_name(ln['product'])} because it is Finnish-origin (your preference), at a similar price."
+        return ""
+    return ""
+
+
 async def run(text: str, requested: date, buyer_id: str) -> dict:
     run_id, now = str(uuid4()), datetime.now(timezone.utc)
     mandate = mandates.get(buyer_id)
@@ -294,7 +319,7 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
             qty = quantity.resolve(p, it["amount"], it["unit"]) if amount_ok else None
             rs, info = gate.check_line(pid, qty and qty["quantity"], q, requested, m, excluded, now)
             line = {"item": n, "product": p, "quote": q, "quantity": qty, "line_total_cents": info["line_total_cents"],
-                    "why": "", "chosen": False}
+                    "why": "", "chosen": False, "facts": {k: (p or {}).get(k) for k in FACTS}}
             lines.append(line)
             checked.append((line, rs))
             blocking = [r for r in rs if gate._blocking(r)]
@@ -320,6 +345,12 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
                                    "unit the agent can convert (L, dl, cl, ml, kg, g, pcs).", None,
                                    f"Say the amount, e.g. '20 L {it['query']}'."))
             continue
+        # Soft Finnish preference (mandate guidance): after safety, limits and concerns, before price, and only within
+        # 10% of the cheapest viable total ("when the price is similar"). It never blocks or asks.
+        fi_pref = any("finnish" in g.text.lower() for g in m.guidance)
+        cheapest = min((k[4] for k, _, _ in scored if not k[0]), default=None)
+        scored = [((*k[:4], not (fi_pref and cheapest is not None and (ln["product"] or {}).get("origin") == "fi"
+                                 and k[4] <= cheapest * 1.1), *k[4:]), ln, a) for k, ln, a in scored]
         scored.sort(key=lambda s: s[0])
         (not_viable, *_), best, best_asks = scored[0]
         if not_viable:  # every candidate is blocked: bring the best one's traps to the human
@@ -335,7 +366,8 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
         best["chosen"] = True
         chosen.append(best)
         best["why"] = (f"Best match for {label}: {_name(best['product'])}, {_offer(best)}, orderable for {requested}. "
-                       + best["quantity"]["explanation"] + (" " + best["why"] if best_asks else ""))
+                       + best["quantity"]["explanation"] + (" " + best["why"] if best_asks else "")
+                       + _decided_by(scored) + _facts_text(best["facts"]))
         if best["quantity"]["needs_confirmation"]:
             reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, best["quantity"]["explanation"], best["product"]["id"],
                                    "Confirm the quantity in sales units."))
