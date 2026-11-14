@@ -664,6 +664,7 @@
       "enum": [
         "QTY_INVALID",
         "QTY_AMBIGUOUS",
+        "ASSUMPTION_CONFIRM",
         "QTY_SUSPICIOUS",
         "QTY_UNKNOWN",
         "STOCK_PARTIAL",

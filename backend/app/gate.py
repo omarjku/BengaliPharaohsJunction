@@ -492,7 +492,8 @@ def _unanswered(lines: list, request_id: str, now: datetime, r: Reason) -> GateR
 
 
 async def check(lines: list, requested: date, m: Mandate | None, request_id: str, spent_7d_cents: int = 0,
-                approved_prices: dict[str, int] | None = None, now: datetime | None = None) -> GateResult:
+                approved_prices: dict[str, int] | None = None, now: datetime | None = None,
+                forced_reasons: list[Reason] | None = None) -> GateResult:
     """Run every hard check on an order. `lines` items have .product_id and .quantity (sales units).
     `m` is the buyer's STORED mandate (mandates.py), never one from the client; None → refused, MANDATE_MISSING.
     Quotes are fetched here, server-side; nothing the client says about price or stock is trusted."""
@@ -542,6 +543,7 @@ async def check(lines: list, requested: date, m: Mandate | None, request_id: str
                            f"{eur(spent_7d_cents + total)}, above your {eur(m.weekly_budget_cents)} weekly budget.", None,
                            "Approve, or wait / reduce the order.", spent_7d_cents=spent_7d_cents, total_cents=total,
                            budget_cents=m.weekly_budget_cents))
+    order_rs.extend(forced_reasons or [])
 
     alts, bad_alts, subs, sub_quotes = await _alternatives([ro.product_id for ro in rejected], set(ids), requested, m,
                                                            excluded, now) if rejected else ([], [], [], {})

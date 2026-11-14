@@ -1,5 +1,7 @@
 """Room 3 kitchen-assistant assumptions: unit-aware proposals, profiles, speed seams, and off-topic replies."""
 import asyncio
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from conftest import REQ, product, quote
@@ -116,8 +118,67 @@ def test_amountless_product_becomes_held_proposal(shop1, monkeypatch):  # noqa: 
                      json={"follow_up": {"to": body["conversation_id"], "answer": "12 pcs"}})
     assert changed.status_code == 200, changed.text
     out = changed.json()
-    assert out["order"] and out["order"]["status"] == "confirmed"
+    assert out["order"] and out["order"]["status"] == "pending_approval"
+    assert any(r["code"] == "ASSUMPTION_CONFIRM" for r in _reasons(out))
     assert out["request"]["items"][0]["amount"] == 12.0 and "assumptions" not in out
+
+
+def test_assumed_amount_answer_replaces_the_product_and_never_keeps_cow_milk(shop1, monkeypatch):  # noqa: F811
+    """The amount answer may also name a replacement product; the original catalogue choice must not survive."""
+    item = {"query": "milk", "amount": None, "unit": None, "dietary": [], "source": "milk"}
+    _fake_order_gemini(monkeypatch, item,
+                       {"amount": 12, "unit": "pcs", "assumption": "Assumed 12 pcs for standard kitchen use."})
+    text = "I want to do our usual Friday order. But I also want to add milk."
+    profile.save_onboarding("lapland-kitchen", {"business_type": "Lapland restaurant", "delivery_days": ["friday"],
+                                                "staples": ["milk", "butter", "cream"]})
+    friday = ask.date_from_text("Friday", datetime.now(ZoneInfo("Europe/Helsinki")).date())
+    for pid in list(shop1.quotes):
+        if pid in ("463335", "462775", "476240"):
+            shop1.quotes[pid] = quote(pid, price=1.4, avail_date=friday)
+
+    first = c.post("/api/agent/ask", headers={"X-Agent-Key": "agent-lk"}, json={"text": text})
+    assert first.status_code == 200, first.text
+    first = first.json()
+    assert first["order"] is None and first["conversation_id"]
+
+    response = c.post("/api/agent/ask", headers={"X-Agent-Key": "agent-lk"},
+                      json={"follow_up": {"to": first["conversation_id"], "answer": "12 pcs oat milk"}})
+    assert response.status_code == 200, response.text
+    out = response.json()
+    chosen = [ln["product"]["name_en"] for ln in out.get("lines", []) if ln.get("chosen")]
+    assert out["request"]["items"][0]["query"] == "oat milk"
+    assert out["changes"] == [{"item": 0, "from": "milk", "to": "oat milk"}]
+    assert out["order"] is None or out["order"]["status"] != "confirmed"
+    assert not any("cow" in name.lower() or "semi-skimmed" in name.lower() for name in chosen)
+    assert "oat milk" in (out.get("question") or out.get("speak") or "").lower()
+
+
+def test_stated_amount_still_auto_confirms_within_limits(shop1, monkeypatch):  # noqa: F811
+    item = {"query": "pizza base", "amount": 10, "unit": "pcs", "dietary": []}
+    pizza_shop(shop1)
+    _fake_order_gemini(monkeypatch, item, assumption=None)
+
+    out = _post("10 pcs pizza base for Monday")
+
+    assert out["order"]["status"] == "confirmed"
+    assert not any(r["code"] == "ASSUMPTION_CONFIRM" for r in _reasons(out))
+
+
+def test_talk_ask_agent_holds_an_assumption_for_the_chef_tap(shop1, monkeypatch):  # noqa: F811
+    item = {"query": "milk", "amount": None, "unit": None, "dietary": [], "source": "milk"}
+    _fake_order_gemini(monkeypatch, item,
+                       {"amount": 12, "unit": "pcs", "assumption": "Assumed 12 pcs for standard kitchen use."})
+    text = "I want to do our usual Friday order. But I also want to add milk."
+    profile.save_onboarding("lapland-kitchen", {"business_type": "Lapland restaurant", "delivery_days": ["friday"],
+                                                "staples": ["milk", "butter", "cream"]})
+
+    _, first = asyncio.run(live.ask_agent("lapland-kitchen", {"text": text}))
+    short, out = asyncio.run(live.ask_agent(
+        "lapland-kitchen", {"text": "12 pcs", "conversation_id": first["conversation_id"]}))
+
+    assert out["order"]["status"] == "pending_approval"
+    assert short["order_status"] == "pending_approval"
+    assert "held for the chef's tap" in short["say"].lower()
 
 
 def test_failed_assumption_asks_with_natural_options(shop1, monkeypatch):  # noqa: F811
