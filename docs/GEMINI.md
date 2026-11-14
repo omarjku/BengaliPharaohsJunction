@@ -72,8 +72,9 @@ uses real Valio catalogue products. The 0.70 demo threshold produced 0 wrong aut
 orders and handled 14/15 correct product lines alone. Keep in mind: the 33-case set was tuned on itself, so this is development evidence rather than held-out proof. Traps include coffee milk versus milk, coffee cream versus cream, baking sugar sachets, dietary mismatches, and salted versus unsalted butter.
 
 The chat-agent edge evaluation is a Gemini-graded estimate from
-[`docs/testing/edge-eval-chat-2026-11-15.md`](testing/edge-eval-chat-2026-11-15.md):
-97/164 cases passed (59.1%), median 3.85 seconds per turn, and 0 unsafe auto-orders
+[`docs/testing/edge-eval-chat-2026-11-15-assume.md`](testing/edge-eval-chat-2026-11-15-assume.md):
+105/164 cases passed (64.0%; 97/164 before the next-delivery-day assumption, see
+[`edge-eval-chat-2026-11-15.md`](testing/edge-eval-chat-2026-11-15.md)), and 0 unsafe auto-orders
 in all 164 cases, including 10 injection attempts. The report is not a deterministic
 benchmark; its failure groups and manual-correction counts are included in the source
 report.
