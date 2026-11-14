@@ -44,3 +44,10 @@
 /* Inside the conversation the bar owns the bottom: the cards' action bars stay in the card. */
 .conv .decide.floating { position: static; display: flex; padding: 0; background: none; border: 0; }
 .conv .answer { margin-block-start: 0; }
+
+/* Switching layouts: the part that appears fades and rises a little (display none -> shown restarts the animation). */
+.conv-thread, .conv-stage, .conv-dock { animation: conv-in 240ms var(--ease-out); }
+@keyframes conv-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.conv-stage .orb-big { animation: conv-orb 280ms var(--ease-out); }
+@keyframes conv-orb { from { opacity: 0; transform: translateY(16px) scale(0.85); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .conv-thread, .conv-stage, .conv-dock, .conv-stage .orb-big { animation: none; } }

@@ -152,7 +152,10 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     }
   })
   function toggleLayout() {
-    const next = layout === 'orb' ? 'thread' : 'orb'
+    chooseLayout(layout === 'orb' ? 'thread' : 'orb')
+  }
+  // Swipe up on the orb = voice only (big orb, thread hidden); swipe down = voice + text (thread, small orb).
+  function chooseLayout(next: VoiceLayout) {
     setLayout(next)
     try {
       localStorage.setItem('valio-aimo-voice-layout', next)
@@ -529,8 +532,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                   voiceOn={!!talk.session}
                   layout={layout}
                   onToggle={toggleLayout}
-                  bigOrb={<Orb state={live.state} size="big" label={u.conv.orbToThread} onToggle={toggleLayout} orbRef={orbRef} />}
-                  smallOrb={<Orb state={live.state} size="small" label={u.conv.orbToBig} onToggle={toggleLayout} orbRef={orbRef} />}
+                  bigOrb={<Orb state={live.state} size="big" label={u.conv.orbToThread} onToggle={toggleLayout} onSwipe={(dir) => chooseLayout(dir === 'up' ? 'orb' : 'thread')} orbRef={orbRef} />}
+                  smallOrb={<Orb state={live.state} size="small" label={u.conv.orbToBig} onToggle={toggleLayout} onSwipe={(dir) => chooseLayout(dir === 'up' ? 'orb' : 'thread')} orbRef={orbRef} />}
                   status={
                     <p role="status" className={live.state === 'error' ? 'bad' : undefined}>
                       {live.muted ? u.conv.muted : live.state === 'connecting' ? u.talk.connecting : (live.tool ?? u.talk.state[live.state])}
