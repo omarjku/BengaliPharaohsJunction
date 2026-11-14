@@ -8,11 +8,16 @@ import './PhotoButton.css'
 // A photo of a handwritten note, a menu or a delivery slip becomes the request: read by POST /api/vision/read,
 // its text goes into the box and is asked at once. On an iPhone the file picker offers the camera or the library.
 const itemText = (i: PhotoRead['items'][number]) =>
-  typeof i === 'string' ? i : [i.amount ?? i.quantity, i.unit, i.name].filter((x) => x != null && x !== '').join(' ')
+  typeof i === 'string' ? i : i.text ?? [i.amount ?? i.quantity, i.unit, i.name].filter((x) => x != null && x !== '').join(' ')
 
 // variant "icon": a round 44 px camera button sized to sit inside the text box (like the mic); what was read then
 // floats just under the box, with a close button. Default "label": the camera icon with "Photo", status inline.
-export function PhotoButton({ disabled, onRead, variant = 'label' }: { disabled: boolean; onRead: (text: string) => void; variant?: 'label' | 'icon' }) {
+export function PhotoButton({ disabled, onRead, onPantry, variant = 'label' }: {
+  disabled: boolean
+  onRead: (text: string) => void
+  onPantry?: (have: string[], message: string | null) => void // a photo of what the kitchen already has (kind: pantry)
+  variant?: 'label' | 'icon'
+}) {
   const t = useCopy().UI.photo
   const input = useRef<HTMLInputElement>(null)
   const [thumb, setThumb] = useState<string | null>(null)
@@ -30,7 +35,12 @@ export function PhotoButton({ disabled, onRead, variant = 'label' }: { disabled:
     try {
       const r = await readPhoto(file)
       setRead(r)
-      if (r.text.trim()) onRead(r.text.trim())
+      // A pantry or fridge photo isn't an order: its items are what the kitchen HAS, for the next menu (this order only).
+      const have = r.items.map(itemText).filter(Boolean)
+      if (r.kind === 'pantry' && onPantry) {
+        if (have.length) onPantry(have, r.message ?? null)
+        else setError(t.nothing)
+      } else if (r.text.trim()) onRead(r.text.trim())
       else setError(t.nothing)
     } catch (err) {
       setError(errorText(err))

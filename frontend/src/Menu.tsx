@@ -15,6 +15,8 @@ type Props = {
   onBusy: (busy: boolean) => void
   onAnnounce: (text: string) => void
   after?: ReactNode // shown right under the answer, before the cart
+  have?: string[] // what the kitchen has for this order only (a pantry photo): sent with every re-plan
+  onReplanned?: (plan: MenuRun) => void // the cart changed: the thread's line above the card is rewritten
   menuText?: string // the chef's menu as asked: with it, portions can be changed and the cart re-planned
 }
 const UNITS = ['L', 'dl', 'cl', 'ml', 'kg', 'g', 'pcs'] as const
@@ -23,12 +25,13 @@ const productName = (l: Line) => tidyName(l.product.name_en ?? l.product.name_fi
 const orderable = (l: Line) => l.quote != null && l.quote.orderable && l.quantity?.quantity != null && l.line_total_cents != null
 
 // A menu became a proposed cart: the chef checks the portions, then orders the cart as one order.
-export function MenuResult({ plan: proposed, covers, requestedDate, onAction, onBusy, onAnnounce, after, menuText }: Props) {
+export function MenuResult({ plan: proposed, covers, requestedDate, onAction, onBusy, onAnnounce, after, menuText, have, onReplanned }: Props) {
   // The plan on screen: the proposal, or the re-plan after the chef changed portions.
   const [plan, setPlan] = useState(proposed)
   const [portions, setPortions] = useState<Record<string, string>>({}) // "dish|ingredient" -> the chef's amount per portion
   const [spares, setSpares] = useState<Record<string, string>>({}) // ingredient -> the chef's spare percent (0-20)
   const [replanning, setReplanning] = useState(false)
+  const [back, setBack] = useState<Set<string>>(new Set()) // left-out ingredients the chef chose to buy anyway (include)
   const canEdit = !!menuText && covers != null
   const planFor = { covers, date: requestedDate }
   const c = useCopy()
@@ -84,6 +87,7 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
       return [{ ingredient: ing.query, spare_percent: n }]
     }),
   ]
+  const pendingBack = plan.ingredients.filter((ing) => ing.have && back.has(ing.query)).length
   // The cart's spare in one sentence, with its cost (never presented as free).
   const spareNote = plan.decision.reasons.find((r) => r.code === 'MENU_ASSUMPTIONS' && typeof r.facts.spare_percent === 'number')
   const sparePct = spareNote ? Number(spareNote.facts.spare_percent) : 0
@@ -101,8 +105,15 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
     onBusy(true)
     setError(null)
     try {
-      const next = await planMenu({ menu_text: menuText, covers, requested_date: planFor.date, overrides: changed })
+      const next = await planMenu({
+        menu_text: menuText,
+        covers,
+        requested_date: planFor.date,
+        overrides: [...changed, ...[...back].map((ingredient) => ({ ingredient, include: true }))],
+        ...(have?.length ? { have } : {}),
+      })
       setPlan(next)
+      onReplanned?.(next)
       setPortions({})
       setSpares({})
       setSwap({})
@@ -244,12 +255,12 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
                 </article>
               ))}
             </div>
-            {changed.length > 0 && (
+            {(changed.length > 0 || pendingBack > 0) && (
               <div className="actions mt-replan">
                 <button type="button" className="btn" onClick={() => void replan()} disabled={replanning}>
-                  {replanning ? t.updating : t.update(changed.length)}
+                  {replanning ? t.updating : t.update(changed.length + pendingBack)}
                 </button>
-                <button type="button" className="btn plain" onClick={() => (setPortions({}), setSpares({}))} disabled={replanning}>
+                <button type="button" className="btn plain" onClick={() => (setPortions({}), setSpares({}), setBack(new Set()))} disabled={replanning}>
                   {t.undoPortions}
                 </button>
               </div>
@@ -258,6 +269,11 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
 
           <section className="instead mt-step" aria-labelledby="menu-cart">
             <StepHead n={3} id="menu-cart" title={t.theCart} sub={t.step3Sub(c.money(total))} />
+            {plan.cart_coverage && (plan.cart_coverage.to_check > 0 || plan.cart_coverage.not_found.length > 0 || plan.cart_coverage.have > 0) && (
+              <p className="mt-coverage small">
+                {t.coverage(c.money(plan.cart_total_cents), plan.cart_coverage.in_cart, plan.cart_coverage.ingredients, plan.cart_coverage.to_check, c.money(plan.cart_coverage.check_total_cents), plan.cart_coverage.have)}
+              </p>
+            )}
             {sparePct > 0 && <p className="mt-spare-total small">{t.spareTotal(c.count(Math.round(sparePct)), c.money(spareCost), c.count(Math.round(spareRounding)))}</p>}
             {plan.ingredients.map((ing, i) => {
               const lines = plan.lines.filter((l) => l.item === i)
@@ -295,7 +311,23 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
                       {ing.spare_reason && <span className="mt-spare-why">{ing.spare_reason}</span>}
                     </div>
                   )}
-                  {chosen.length === 0 && (
+                  {ing.have && (
+                    <p className="mt-have">
+                      <span className="option-why">{t.youHave(ing.have.matched, ing.have.source === 'this_order')}</span>{' '}
+                      {canEdit && (
+                        <button
+                          type="button"
+                          className="link accent inline"
+                          aria-pressed={back.has(ing.query)}
+                          onClick={() => setBack((b) => { const n = new Set(b); if (!n.delete(ing.query)) n.add(ing.query); return n })}
+                          disabled={replanning}
+                        >
+                          {back.has(ing.query) ? t.addAnywayOn : t.addAnyway}
+                        </button>
+                      )}
+                    </p>
+                  )}
+                  {chosen.length === 0 && !ing.have && (
                     <p className="option-why warn">
                       {others.length ? t.noConfident : t.nothingFits}
                     </p>
@@ -353,17 +385,17 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
                 <strong className="num">{c.money(total)}</strong> <span className="quiet">{c.UI.result.exclVat}</span>
               </span>
             </div>
-            {changed.length > 0 && (
+            {(changed.length > 0 || pendingBack > 0) && (
               <div className="actions mt-replan">
                 <button type="button" className="btn" onClick={() => void replan()} disabled={replanning}>
-                  {replanning ? t.updating : t.update(changed.length)}
+                  {replanning ? t.updating : t.update(changed.length + pendingBack)}
                 </button>
-                <button type="button" className="btn plain" onClick={() => (setPortions({}), setSpares({}))} disabled={replanning}>
+                <button type="button" className="btn plain" onClick={() => (setPortions({}), setSpares({}), setBack(new Set()))} disabled={replanning}>
                   {t.undoPortions}
                 </button>
               </div>
             )}
-            {orderLines.length > 0 && changed.length === 0 && (
+            {orderLines.length > 0 && changed.length === 0 && pendingBack === 0 && (
               <div className={`decide${totalSeen ? ' floating' : ''}`}>
                 <button type="button" className="btn" onClick={orderCart} disabled={ordering}>
                   {ordering ? c.UI.result.ordering : t.orderCart(c.money(total))}
