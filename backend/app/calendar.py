@@ -305,7 +305,7 @@ def _fresh_cached_cutoffs(today: date) -> dict[date, dict]:
             continue
         candidates.setdefault(requested_day, []).append(quote)
     out = {}
-    for requested_day in sorted(candidates)[:3]:
+    for requested_day in sorted(candidates):
         quotes = candidates[requested_day]
         quote = min(quotes, key=lambda item: item.get("order_cutoff") or "")
         closing = quote.get("order_cutoff")
