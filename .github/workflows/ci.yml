@@ -89,6 +89,15 @@ jobs:
       - packages-tests
       - frontend
     steps:
+      # CRACI runs jobs behind its firewall; the API needs an explicit direct TLS connection (docs: setup-action-network).
+      - uses: cracicorp/setup@v1
+        with:
+          network: |
+            default: allow
+            connections:
+              - tls:
+                  serverNamePatterns: [api.craci.com]
+                  ports: [443]
       - name: Check out repository
         uses: actions/checkout@v4
       - name: Collect CRACI SBOM and network evidence
