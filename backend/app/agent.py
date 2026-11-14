@@ -1192,6 +1192,7 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
     # still go to the door. Request-level problems (injection, grounding, no mandate, duplicates) hold everything.
     item_ids = {id(r) for r in res["item_reasons"]}
     blocked = any(r.severity is not INFO and id(r) not in item_ids for r in reasons)
+    request_blocked = blocked  # injection, grounding, unparsed text...: no per-line next steps may skip these
     orderable = [ln for ln in chosen if ln["item"] not in res["failed_items"]]
     async with _buyer_lock(buyer_id):  # duplicate check and placing are one step per buyer (Codex #8)
         if orderable and not blocked and mandate and not _AGAIN.search(text) and (dup := recent_duplicate(buyer_id, orderable, now, requested)):
@@ -1236,4 +1237,5 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
     for ln in lines:
         ln.pop("_weakest", None)  # internal: the weakest question is in confidence_reason and the audit facts
     return {"request": request, "lines": lines, "decision": decision.model_dump(mode="json"), "order": order,
-            "audit_id": audit_id, "held_items": sorted(res["failed_items"])}  # lines held back: each gets a next step
+            "audit_id": audit_id,  # lines held back for their own reasons: each gets a next step (none if the
+            "held_items": [] if request_blocked else sorted(res["failed_items"])}  # whole request was held)
