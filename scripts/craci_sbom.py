@@ -262,10 +262,10 @@ def _job_ids(repository: str, run_id: str, sha: str, token: str, warnings: list[
     for job in jobs:
         if str(job.get("run_id", run_id)) != str(run_id):
             continue
-        if sha and job.get("head_sha") and job["head_sha"] != sha:
-            continue
         if job.get("conclusion") == "success" and job.get("id") is not None:
             selected.append(str(job["id"]))
+    if not selected:
+        warnings.append(f"No finished CRACI jobs found in run {run_id} ({len(jobs)} jobs listed)")
     return selected
 
 
