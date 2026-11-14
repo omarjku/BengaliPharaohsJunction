@@ -35,3 +35,15 @@
   3. **Low:** the health request in `App.tsx` was never cancelled, so in StrictMode a late failure could overwrite a success. **Fixed:** a cancelled flag, and the error is cleared on success.
   4. **Low:** `AuditLog.actorLabel` split on `:`, but approver names may contain `:`. **Fixed:** an anchored regex, `^human:(.+?)(?::(approve|reject))?$`, so the action is read from the end.
 - No issues in the other areas: no null mismatches, no keys in URLs or error text, localStorage failures handled, no double submit, and focus and aria-live intact.
+
+## 2026-11-14 · Run 3 (M2, background, didn't block): review of the M2 UI diff
+- **Command:** `codex exec -s read-only -m gpt-5.6-terra -c model_reasoning_effort=high`
+- **Cost:** 72,044 tokens
+- **Ask:** check the new rendering against the backend shapes:
+  - substitutes and `alternative_order` (`gate.py`, `orders.py`);
+  - line and decision confidence (`agent.py`);
+  - the "Use this order" re-POST (body, `X-Agent-Key`);
+  - React state bugs.
+- **Finding:** `line.facts` isn't emitted by `agent.py`, so it would never render. **Rejected as out of date:** Codex reviewed the branch before `origin/omar/m1-integration` was merged in. After the merge, Room 1's PR #15 emits `facts: {delivery_reliability, carbon_kg_per_kg, origin}` (`agent.py:396`), which is exactly what the UI reads.
+- Nothing else found: no null crashes, the request body and headers are right, no double submit or stale order.
+- **Drafting:** I wrote this change myself, not Codex.
