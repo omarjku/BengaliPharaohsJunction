@@ -56,7 +56,7 @@ export function AuditLog({ refreshKey }: { refreshKey: number }) {
           {entries.map((e) => (
             <li key={e.id}>
               <p>
-                <span className={`badge ${e.decision.outcome.toLowerCase()}`}>{outcomeView(e.decision.outcome)[1]}</span>{' '}
+                <Chip entry={e} />{' '}
                 <time dateTime={e.timestamp}>{formatDateTime(e.timestamp)}</time>{' '}
                 <span className="muted">· {actorLabel(e.actor)}</span>
               </p>
@@ -74,6 +74,14 @@ export function AuditLog({ refreshKey }: { refreshKey: number }) {
       )}
     </section>
   )
+}
+
+// A human sign-off shows what the human did; otherwise the decision's outcome.
+function Chip({ entry }: { entry: AuditEntry }) {
+  const action = /:(approve|reject)$/.exec(entry.actor)?.[1]
+  if (entry.actor.startsWith('human:') && action)
+    return <span className={`badge ${action === 'approve' ? 'auto' : 'decline'}`}>{action === 'approve' ? 'Approved' : 'Rejected'}</span>
+  return <span className={`badge ${entry.decision.outcome.toLowerCase()}`}>{outcomeView(entry.decision.outcome)[1]}</span>
 }
 
 // actor is 'buyer_agent', 'valio_front_door' or 'human:<name>:approve|reject'.

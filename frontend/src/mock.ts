@@ -80,14 +80,14 @@ const MILK: Fixture = {
         name_fi: 'Valio Eila® 3 % maitojuoma 1 l laktoositon', sales_unit: 'ST', delivery_reliability: 1.0,
       }),
       quote: quote({
-        product_id: '463335', price: 1.4, comparison_price: 1.4, comparison_unit: 'L', available_amount: 2400,
+        product_id: '463335', price: 1.4, comparison_price: 1.4, comparison_unit: 'L', available_amount: 9999999999, // Valio's "plenty"
         order_cutoff: '2026-11-15T13:00:00+02:00',
       }),
       quantity: qty('463335', 1000, 'L', 'ST', 1000, 1, '1,000 L ÷ 1 L per ST (1 LTR per ST) = 1,000 ST.'),
       line_total_cents: 140000,
       why: 'Lactose free, 1 l cartons in stock for Monday, best delivery reliability (100 %).',
       chosen: true,
-      confidence: 0.96,
+      confidence: 0.959, // floors to 0.95, as the backend does
       confidence_reason: 'Lactose-free milk in 1 l cartons: exactly what the request asks for.',
       facts: { delivery_reliability: 1.0, carbon_kg_per_kg: 1.1, origin: 'fi' },
     },
@@ -282,7 +282,7 @@ function log(actor: string, buyer_id: string, text: string, d: Decision): string
   return id
 }
 
-const orders = new Map<string, { buyer: string; res: OrderResponse }>()
+const orders = new Map<string, { buyer: string; res: OrderResponse; signedOffBy?: string }>()
 
 export const mockApi = {
   async health(): Promise<Health> {
@@ -353,7 +353,13 @@ export const mockApi = {
     const status: OrderStatus = action === 'approve' ? 'confirmed' : 'rejected'
     const d = o.res.decision // the backend re-runs the gate on approve; the reasons the human saw stay on it
     o.res = { ...o.res, status, decision: d, audit_id: log(`human:Chef (mock key):${action}`, o.buyer, `Order ${orderId}`, d) }
+    o.signedOffBy = 'Chef (mock key)'
     return o.res
+  },
+
+  async order(orderId: string): Promise<{ signed_off_by: string | null }> {
+    await wait()
+    return { signed_off_by: orders.get(orderId)?.signedOffBy ?? null }
   },
 
   async audit(): Promise<AuditEntry[]> {
