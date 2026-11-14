@@ -33,14 +33,14 @@ Current routes include quote lookup, product search, quantity resolution, order 
 
 ## Visibility of decisions and assumptions
 
-- `PurchaseRequest.text` keeps the buyer's original words.
+- `PurchaseRequest.text` keeps the buyer's original words on agent runs; for a direct `POST /api/orders` the door writes a short summary of the lines instead.
 - `Quote` records price, availability, quantity-known state, source, fetch time, validity, and cut-off.
 - `Decision.reasons` is sorted by severity. Each reason has a code, plain message, facts, and an optional suggested fix.
-- `Decision.alternatives` records proposed substitutes. `Decision.confidence` exists in the contract but the current agent and gate do not populate it.
+- `Decision.alternatives` records proposed substitutes. `Decision.confidence` is the Gemini Decisions confidence of the weakest chosen line (agent runs only; the front door leaves it empty).
 - `AuditEntry` stores the request, mandate, quotes, decision, and rejected options.
-- The agent uses Gemini only for request parsing and product matching. Quantity, price, stock, mandate, and order checks are deterministic. The front door checks again with fresh Valio quotes.
+- The agent uses Gemini for request parsing, product matching and a Decisions-API confidence check on each chosen line. Quantity, price, stock, mandate, and order checks are deterministic. The front door checks again with fresh Valio quotes.
 - A Terminal quantity reported as `999999` is represented as unknown, not unlimited.
-- A `pending_approval` order is stored for human approval. A `refused` order is not stored, but the gate run is audited.
+- A `pending_approval` order is stored for human approval. A `refused` order is not stored, but the gate run is audited. A pending order that fails the re-check at approval stays stored, as `refused`.
 
 ## GS1 allergen data
 
@@ -73,9 +73,9 @@ The `ProductFacts` contract represents allergens as a name-to-status map. The cu
 
 ### Product identifiers and GTIN
 
-The current catalogue and contracts carry Valio product IDs, not GTINs. Valio's raw product file does have `gtin` and `salesUnitGtin` fields (see its schema), but `backend/app/catalogue.py` does not copy them into the slim catalogue, so carrying them is a small change.
+The current catalogue and contracts carry Valio product IDs, not GTINs. Valio's product data schema (`valio_aimo_junction26_product_data_schema.json`, downloaded with the data, not in git) does define `gtin` and `salesUnitGtin` fields, but `backend/app/catalogue.py` does not copy them into the slim catalogue, so carrying them is a small change.
 
-- Catalogue records use `p["id"]` and expose it as `product_id`.
+- Catalogue records keep Valio's product code as `id`.
 - `ProductId` is a numeric string of one to twelve digits.
 - `OrderLine`, `Quote`, and `ProductFacts` have `product_id`, but no `gtin`, EAN, or barcode field.
 
@@ -91,7 +91,7 @@ This table proposes where current fields could go. It does not add those fields 
 
 | Current field | UBL / Peppol element | Proposed mapping and gap |
 |---|---|---|
-| `PurchaseRequest.id`; stored `order_id` | `cbc:ID` | Use as the order document ID. Direct `OrderRequest` has no caller-supplied ID, so the identity rule is open. |
+| `PurchaseRequest.id`; the stored order's `id` (`order_id` in responses) | `cbc:ID` | Use as the order document ID. Direct `OrderRequest` has no caller-supplied ID, so the identity rule is open. |
 | `PurchaseRequest.created_at`; order creation time | `cbc:IssueDate`, optional `cbc:IssueTime` | Use the order creation time. Do not use `requested_date` as the issue date. |
 | `OrderRequest.buyer_id`; `PurchaseRequest.buyer_id` | `cac:BuyerCustomerParty` | Candidate for a buyer party identifier. The value is an internal buyer ID. A Peppol endpoint ID, scheme, legal name, and address are not in the current model. |
 | Valio seller context | `cac:SellerSupplierParty` | Required by Peppol. Seller party identifiers and legal party data are not in the current order contract. Add them before serialization. |

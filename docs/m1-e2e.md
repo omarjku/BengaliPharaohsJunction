@@ -38,7 +38,7 @@ The same product: 1,500 ST × EUR 1.40 = **EUR 2,100.00**. The front door holds 
 Sign-off:
 - `POST /api/orders/{id}/approve` with the **agent key** → **401**. An agent can never approve its own order.
 - The same call with the buyer's **`X-Approver-Key`** → **200**. The door re-runs the gate with fresh quotes first
-  (cut-offs pass, prices change), then confirms. `signed_off_by` is the approver key's name, never the body.
+  and confirms if nothing changed; a changed price keeps it pending, and a passed cut-off refuses it. `signed_off_by` is the approver key's name, never the body.
 
 ## C. Prompt injection: asked, nothing ordered
 
@@ -47,7 +47,7 @@ Sign-off:
 The chef's text reaches Gemini only inside `<buyer_request>` tags, marked untrusted. Two deterministic guards run
 after Gemini:
 - Instruction-like text ("ignore", "return only", "system prompt", ...) adds a `LOW_CONFIDENCE` ASK_HUMAN reason.
-- Every parsed item must be grounded in the chef's own words (product, amount and unit). A steered parse that says
+- Every parsed item must be grounded in the chef's own words (product and amount, and the unit for L/kg-type measures). A steered parse that says
   butter when the text says milk adds another reason.
 
 Result: **`ASK_HUMAN`, `order: null`**, audited. The human sees why and is asked to check where the text came from.
@@ -66,7 +66,7 @@ Result: **`ASK_HUMAN`, `order: null`**, audited. The human sees why and is asked
   4. Then Finnish origin, only when within 10% of the cheapest viable total.
   5. Then the cheapest total, then Gemini's rank.
 - **Line facts**: every quoted line carries `facts: {delivery_reliability, carbon_kg_per_kg, origin}` from Valio's
-  static data. The chosen line's `why` lists them, and names the runner-up when reliability or Finnish origin decided
+  static data. The chosen line's `why` lists the ones Valio has, and names the runner-up when reliability or Finnish origin decided
   the choice.
 - **Order or ask**: problems the door can't see stop the run before any order. These are no match, a missing amount,
   a quantity that needs confirming, an ungrounded or instruction-like parse, a whole item with nothing orderable, and
