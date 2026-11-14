@@ -52,6 +52,15 @@ Accuracy 33/33; traps score ≤ 0.26, correct products ≥ 0.67. Each extra guar
 
 Each answer comes back with `speak`, one sentence in the chef's language, and the read-back says exactly that.
 
+**Latest live orders** (smoke-kitchen, the demo mandate: auto-approve up to €1,500; threshold 0.70; Sat 14 Nov, after the ranking fix):
+
+| request | chosen (confidence, total) | outcome |
+|---|---|---|
+| 1000 L lactose-free milk | Valio semi-skimmed lactose-free (0.85, €1,560); whole milk 0.90 at €1,640 is a near-tie, so the cheaper wins; coffee milk no longer appears | held: **€60 over the €1,500 limit** |
+| 100 litraa laktoositonta maitoa | the same, €156 | **confirmed** |
+| 10 L lactose-free cream | Valio low-fat cream 1 l (0.74, €29.70) over whipping cream (0.70) | **confirmed** |
+| 10 kg sugar for baking | caster sugar (≈0.84); the sachets are no longer candidates | confirmed |
+
 ## Guardrails: Gemini can only add caution
 
 - **No Gemini answer can permit anything** a hard rule forbids, add an allergen exception or raise a limit. Each extra question can only turn "order" into "ask".
