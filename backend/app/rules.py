@@ -136,6 +136,7 @@ def with_default_limit(m: Mandate) -> Mandate:
 
 
 # --- routes' logic
+MAX_RULE_CHECKS = 20
 FAITHFUL_MIN = 0.5  # P(rule reflects the chef's text) below this → an open question (backend/eval/guards_eval.py)
 
 
@@ -183,8 +184,11 @@ async def compile_rules(text: str, who: Principal) -> dict:
     texts = rule_texts(proposed)
     doubts = [OpenQuestion(question=f"Did you mean: \"{t}\"?", why=f"A check found this may not match your words "
                            f"(Gemini Decisions: {agent._pct(y)}).")
-              for t, y in zip(texts, await asyncio.gather(*(faithful(text, t) for t in texts)))
+              for t, y in zip(texts, await asyncio.gather(*(faithful(text, t) for t in texts[:MAX_RULE_CHECKS])))
               if y is not None and y < FAITHFUL_MIN]
+    if len(texts) > MAX_RULE_CHECKS:  # bounded paid fan-out; the unchecked rest still can't be saved unreviewed
+        doubts.append(OpenQuestion(question=f"{len(texts) - MAX_RULE_CHECKS} more rules weren't checked "
+                                   "automatically; please review them before saving.", why="Too many rules at once."))
     if doubts:  # a doubtful rule is never saved silently: saving needs every open question answered
         proposed = proposed.model_copy(update={"open_questions": [*proposed.open_questions, *doubts]})
     return {"proposed_mandate": proposed.model_dump(mode="json"),
