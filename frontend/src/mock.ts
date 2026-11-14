@@ -7,7 +7,7 @@ import { ApiError } from './api'
 //   contains "error"                     -> a failed request (to see the error state)
 //   anything else                        -> AUTO, order confirmed (small butter order)
 import type {
-  AdminFilter, AdminRow, LiveEvent, LiveSocket, PhotoRead, SecurityEvent, AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
+  AdminFilter, AdminRow, BuyerProfile, KitchenContext, LiveEvent, LiveSocket, PhotoRead, SecurityEvent, AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
   AskInput, AskResponse, CompileResult, Mandate, MenuInput, MenuRun, Product, RuleChange, SaveResult, Quote, QuantityResolution, Reason, RunInput, Substitute,
 } from './types'
 
@@ -353,6 +353,54 @@ function log(actor: string, buyer_id: string, text: string, d: Decision): string
 
 const orders = new Map<string, { buyer: string; res: OrderResponse; signedOffBy?: string }>()
 
+let mockProfile: BuyerProfile = {
+  buyer_id: 'lapland-kitchen',
+  dietary: [{ tag: 'gluten_free', label: 'Gluten-free kitchen', because: 'You told me during onboarding.' }],
+  usual_product_ids: ['463335', '464411', '463196'],
+  memories: [
+    {
+      id: 'memory-business', kind: 'business_type', key: 'business_type', text: '60-seat bistro', scope: 'always',
+      source: 'onboarding', created_at: '2026-10-12T09:00:00+03:00', used_because: 'Helps estimate menu quantities.', product_id: null,
+    },
+    {
+      id: 'memory-milk', kind: 'usual_product', key: '463335', text: 'Valio Eila milk drink 1 l lactose free', scope: 'always',
+      source: 'chosen_alternative', created_at: '2026-10-29T14:30:00+02:00', used_because: 'You chose this product for a previous order.', product_id: '463335',
+    },
+    {
+      id: 'memory-cream', kind: 'usual_product', key: '464194', text: 'Valio whipping cream 1 l lactose free', scope: 'this_order',
+      source: 'answered_question', created_at: '2026-11-07T11:15:00+02:00', used_because: 'You confirmed this product for this order.', product_id: '464194',
+    },
+  ],
+}
+
+const MOCK_KITCHEN_CONTEXT: KitchenContext = {
+  buyer_id: 'lapland-kitchen',
+  period: { from: '2026-09-20', to: '2026-11-13' },
+  covers: {
+    avg_per_weekday: { mon: 46.5, tue: 52.1, wed: 48.7, thu: 61.2, fri: 78.4, sat: 84.6, sun: null },
+    busiest_days: ['fri', 'sat'], last_7_days: 326, trend_pct: 8.4,
+  },
+  revenue: { last_7_days_eur: 18420.5, source: 'demo seed (simulated door counter and POS export)' },
+  leftovers_recent: [
+    { date: '2026-11-13', item: 'mashed potatoes', amount: 6.5, unit: 'kg' },
+    { date: '2026-11-12', item: 'lingonberries', amount: null, unit: 'kg' },
+  ],
+  spend: {
+    per_week_cents: [
+      { week: '2026-W40', cents: 112430 }, { week: '2026-W41', cents: 128900 }, { week: '2026-W42', cents: 119750 },
+      { week: '2026-W43', cents: 136420 }, { week: '2026-W44', cents: 142180 }, { week: '2026-W45', cents: 151600 },
+    ],
+    source: 'front door orders',
+  },
+  usual_products: [
+    { product_id: '463335', name: 'Valio Eila milk drink 1 l lactose free', typical_quantity: 12, unit: 'ST', times_ordered: 8 },
+    { product_id: '464411', name: 'Valio butter 500 g unsalted', typical_quantity: 20, unit: 'ST', times_ordered: 6 },
+    { product_id: '463196', name: 'Valio soft quark 250 g', typical_quantity: 2, unit: 'KI', times_ordered: 5 },
+  ],
+  sources: ['demo seed (simulated door counter and POS export)', 'front door orders'],
+  simulated: true,
+}
+
 // Menu → cart (POST /api/agent/menu): two dishes for 80 covers. Amounts per cover are the agent's estimates.
 const menuLine = (
   item: number, dishes: string[], p: Product, price: number, amount: number, unit: string, units: number, per: number, chosen = true,
@@ -528,6 +576,22 @@ function dateFrom(text: string, override?: string): string {
 }
 
 export const mockApi = {
+  async profile(): Promise<BuyerProfile> {
+    await wait()
+    return structuredClone(mockProfile)
+  },
+
+  async forgetMemory(id: string): Promise<BuyerProfile> {
+    await wait()
+    mockProfile = { ...mockProfile, memories: mockProfile.memories.filter((memory) => memory.id !== id) }
+    return structuredClone(mockProfile)
+  },
+
+  async kitchenContext(): Promise<KitchenContext> {
+    await wait()
+    return structuredClone(MOCK_KITCHEN_CONTEXT)
+  },
+
   // Pretend speech-to-text: the demo's example sentences, in turn.
   async transcribe(audio: Blob): Promise<string> {
     await wait()

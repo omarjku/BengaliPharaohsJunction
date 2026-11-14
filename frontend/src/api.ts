@@ -1,5 +1,5 @@
 import type {
-  AdminFilter, AdminRow, AgentRun, BuyerProfile, Memory, LiveEvent, LiveSocket, PhotoRead, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
+  AdminFilter, AdminRow, AgentRun, BuyerProfile, KitchenContext, Memory, LiveEvent, LiveSocket, PhotoRead, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
 } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
@@ -348,8 +348,13 @@ export const verifySignature = (signed_statement: Record<string, unknown>, signa
 // The calling buyer's profile (read-only): standing dietary needs and usual products.
 export const getProfile = () =>
   MOCK
-    ? Promise.resolve<BuyerProfile>({ buyer_id: 'lapland-kitchen', dietary: [], usual_product_ids: [], memories: [] })
+    ? mock().then((m) => m.profile())
     : api<BuyerProfile>('/api/profile', { headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')
+
+export const getKitchenContext = () =>
+  MOCK
+    ? mock().then((m) => m.kitchenContext())
+    : api<KitchenContext>('/api/kitchen/context', { headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')
 
 // Talk (live voice conversation) and the photo button: on unless a build sets VITE_TALK=0 / VITE_PHOTO=0; the
 // buttons also hide when /api/health says the backend can't do it (talk: false / vision: false).
@@ -398,7 +403,7 @@ export async function readPhoto(image: File): Promise<PhotoRead> {
 // preference is the human's call, never the agent's).
 export const forgetMemory = (id: string) =>
   MOCK
-    ? Promise.resolve<BuyerProfile>({ buyer_id: 'lapland-kitchen', dietary: [], usual_product_ids: [], memories: [] })
+    ? mock().then((m) => m.forgetMemory(id))
     : api<BuyerProfile>(`/api/profile/memories/${encodeURIComponent(id)}`, { method: 'DELETE', headers: keyHeader('X-Approver-Key', getKeys().approverKey) }, 'approver')
 export const rememberChoice = (product_id: string, scope: 'this_order' | 'always', text?: string) =>
   MOCK

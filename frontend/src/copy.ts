@@ -83,12 +83,12 @@ export function headline(r: Reason): string {
 
 // Gemini Decisions API confidence, in one voice everywhere. Floored like the backend, so 79.9% never reads as 80%.
 export const CONFIDENT_AT = 0.8
-export const pct = (c: number) => `${Math.floor(c * 100)}%`
-export const matched = (c: number) => (c >= CONFIDENT_AT ? `Matched by Gemini · ${pct(c)}` : `Gemini’s best guess · ${pct(c)}, please check`)
+export const pct = (c: number): string => `${Math.floor(c * 100)}%`
+export const matched = (c: number): string => (c >= CONFIDENT_AT ? `Matched by Gemini · ${pct(c)}` : `Gemini’s best guess · ${pct(c)}, please check`)
 export const CONFIDENCE_MEANS: string = 'The percentage is Gemini’s confidence that this is the product you meant. Below 80%, the agent asks you first.'
 
 // Backend sentences shown as they are, minus the machine bits.
-export const humanize = (msg: string) =>
+export const humanize = (msg: string): string =>
   msg
     .replace(/\s*\((\d\.\d+|\d+%) vs your (\d\.\d+) threshold\)/g, (_, _c, t) => ` (below the ${Math.round(Number(t) * 100)}% it needs to order on its own)`)
     .replace(/EUR ([\d,]+)\.00/g, '€$1')
@@ -118,10 +118,10 @@ const UNITS: Record<string, string> = {
   ST: 'pack', KPL: 'piece', KI: 'case', CS: 'case', PAK: 'pack', PKT: 'pack', KG: 'kg', L: 'litre', LTR: 'litre',
   PS: 'bag', BAG: 'bag', RAS: 'box', RS: 'tray', PLO: 'bottle', TLK: 'tin', KRT: 'carton', PRK: 'jar',
 }
-export const unitName = (code: string | null | undefined) => (code ? (UNITS[code.toUpperCase()] ?? code) : 'unit')
+export const unitName = (code: string | null | undefined): string => (code ? (UNITS[code.toUpperCase()] ?? code) : 'unit')
 const PLURAL: Record<string, string> = { box: 'boxes', kg: 'kg', g: 'g', L: 'L' }
 // "640 packs", "1 case", "27.2 kg".
-export const amountOf = (n: number, code: string | null | undefined) => {
+export const amountOf = (n: number, code: string | null | undefined): string => {
   const u = unitName(code)
   return `${n.toLocaleString('en-US')} ${n === 1 ? u : (PLURAL[u] ?? `${u}s`)}`
 }
@@ -131,7 +131,7 @@ const ALLERGENS: Record<string, string> = {
   AM: 'milk', AE: 'egg', AF: 'fish', AN: 'tree nuts', AP: 'peanuts', AY: 'soy', AW: 'gluten', AC: 'crustaceans',
   AS: 'sesame', BC: 'celery', BM: 'mustard', AU: 'sulphites', NL: 'lupin', UM: 'molluscs', UW: 'wheat',
 }
-export const allergen = (v: unknown) => ALLERGENS[String(v).toUpperCase()] ?? String(v).toLowerCase()
+export const allergen = (v: unknown): string => ALLERGENS[String(v).toUpperCase()] ?? String(v).toLowerCase()
 const cents = (v: unknown) => euro(Math.round(Number(v)))
 const words = (v: unknown) => String(v).toLowerCase().replace(/_/g, ' ')
 
@@ -169,12 +169,12 @@ export function ruleLines(m: Mandate): { text: string; said: string | null; word
 // The starting text when the chef changes their rules: every rule as one plain sentence (blocked products and the end
 // date included), so recompiling it keeps everything and only what the chef edits changes. Not the source quotes: the
 // compiler may give every rule the whole original text.
-export const ruleWords = (m: Mandate) => [...new Set(ruleLines(m).map((l) => l.words ?? l.text).filter(Boolean))].join('\n')
+export const ruleWords = (m: Mandate): string => [...new Set(ruleLines(m).map((l) => l.words ?? l.text).filter(Boolean))].join('\n')
 
 const CHANGE_WORD: Record<string, string> = { tighter: 'Stricter', looser: 'Looser', changed: 'Changed' }
-export const changeWord = (c: RuleChange) => CHANGE_WORD[c.change] ?? c.change
+export const changeWord = (c: RuleChange): string => CHANGE_WORD[c.change] ?? c.change
 // The backend's change text, with euros written the way a chef writes them.
-export const changeText = (c: RuleChange) => {
+export const changeText = (c: RuleChange): string => {
   if (c.field === 'guidance') return `Preferences: ${Array.isArray(c.after) && c.after.length ? c.after.join(' ') : 'none'}`
   const t = c.text.replace(/EUR ([\d,]+)\.00/g, '€$1').replace(/EUR ([\d,.]+)/g, '€$1').replace(/ → /g, ' to ')
   return t.charAt(0).toUpperCase() + t.slice(1)
@@ -194,17 +194,17 @@ export function loosenSentence(c: RuleChange): string {
 
 // --- Formatting, in this language's style (Finnish: 1 560,00 €, ma 16.11.).
 export const LANG = 'en' as const
-export const money = (cents: number) => formatCents(cents)
-export const price = (euros: number) => formatEuro(euros)
-export const day = (ymd: string) => formatDay(ymd)
-export const dateTime = (iso: string) => formatDateTime(iso)
-export const longDay = (iso: string) =>
+export const money = (cents: number): string => formatCents(cents)
+export const price = (euros: number): string => formatEuro(euros)
+export const day = (ymd: string): string => formatDay(ymd)
+export const dateTime = (iso: string): string => formatDateTime(iso)
+export const longDay = (iso: string): string =>
   new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/Helsinki' }).format(new Date(iso))
-export const weekday = (ymd: string) => new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${ymd}T00:00:00Z`))
-export const count = (n: number) => n.toLocaleString('en-US')
-export const stock = (n: number) => stockText(n)
-export const flag = (f: string) => flagLabel(f)
-export const country = (code: string) => {
+export const weekday = (ymd: string): string => new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${ymd}T00:00:00Z`))
+export const count = (n: number): string => n.toLocaleString('en-US')
+export const stock = (n: number): string => stockText(n)
+export const flag = (f: string): string => flagLabel(f)
+export const country = (code: string): string => {
   try {
     return new Intl.DisplayNames(['en'], { type: 'region' }).of(code.toUpperCase()) ?? code.toUpperCase()
   } catch {
@@ -215,7 +215,7 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : many)
 
 // --- Every other word on screen.
 export const UI = {
-  nav: { main: 'Main', order: 'Order', history: 'History', rules: 'Rules', keys: 'Keys' },
+  nav: { main: 'Main', order: 'Order', history: 'History', kitchen: 'Kitchen', rules: 'Rules', keys: 'Keys' },
   hmenu: { open: 'Menu', close: 'Close menu', language: 'Language', theme: 'Appearance', light: 'Light', dark: 'Dark', fi: 'Suomi', en: 'English' },
   lang: { switchTo: 'Suomeksi', short: 'FI', label: 'FI, suomeksi' }, // the switch offers the other language, in that language
   greeting: (part: 'morning' | 'afternoon' | 'evening', name: string | null, waiting: number) =>
@@ -512,8 +512,57 @@ export const UI = {
     },
   },
   kitchen: {
-    signedIn: (name: string) => `Signed in as ${name}`,
+    signedIn: (name: string): string => `Signed in as ${name}`,
     switch: 'Switch kitchen',
+    onboardingTitle: 'Tell me about your kitchen',
+    onboardingIntro: 'Share the kitchen details you want the agent to remember as guidance. You can change them later.',
+    onboardingOpen: 'Tell the agent',
+    onboardingClose: 'Close onboarding',
+    factsTitle: 'What I know about your kitchen',
+    factsNote: 'From your kitchen profile. The agent uses it as guidance, never as a rule.',
+    factsLoading: 'Loading your kitchen profile…',
+    factsNeedKey: 'Add your agent key under Keys to see what the agent knows about your kitchen.',
+    factsFailed: 'Couldn’t load your kitchen profile.',
+    factsNothing: 'Nothing recorded yet.',
+    dietary: 'Always',
+    sourceLine: (source: string): string => `SOURCE: ${source}`,
+    source: {
+      onboarding: 'From onboarding',
+      chat: (date: string): string => `From a chat on ${date}`,
+      choice: (date: string): string => `From a choice you made on ${date}`,
+      profile: 'From your kitchen profile',
+      unknown: 'Source not reported',
+      dateMissing: 'date not reported',
+    },
+    scope: { always: 'always', this_order: 'this order only' } as Record<string, string>,
+    revoke: 'Revoke',
+    revoking: 'Revoking…',
+    revokeFailed: 'That memory could not be revoked.',
+    revokeNeedsKey: 'Add your approver key under Keys to revoke a remembered preference.',
+    usualFromHistory: (n: number): string => `${n} usual ${n === 1 ? 'product' : 'products'} from your order history`,
+    historyTitle: "Your kitchen's history",
+    historyLoading: 'Loading your kitchen history…',
+    historyNeedKey: 'Add your agent key under Keys to see your kitchen history.',
+    historyFailed: 'Couldn’t load your kitchen history.',
+    historyEmpty: 'No kitchen history has been reported yet.',
+    simulated: 'Simulated demo data',
+    notReported: 'not reported',
+    percent: (value: number): string => `${value > 0 ? '+' : ''}${value}%`,
+    amount: (value: number, unit: string): string => `${value} ${unit}`,
+    coversLast7: (n: string): string => `Last 7 days: ${n} covers`,
+    trend: (value: string): string => `Trend: ${value}`,
+    busiest: (days: string): string => `Busiest days: ${days}`,
+    averageWeekday: 'Average covers per weekday',
+    revenueLast7: (value: string): string => `Revenue, last 7 days: ${value}`,
+    recentLeftovers: 'Recent leftovers',
+    leftoverDate: (date: string): string => `Logged ${date}`,
+    leftover: (item: string, amount: string): string => `${item}: ${amount}`,
+    usualProducts: 'Usual products',
+    spendPerWeek: 'Spend per week',
+    spendWeek: (week: string, value: string): string => `${week}: ${value}`,
+    sourceValue: (source: string): string => `Source: ${source}`,
+    sourcesValue: (sources: string): string => `Sources: ${sources}`,
+    weekdays: { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' },
   },
   conv: {
     field: 'Message the agent',

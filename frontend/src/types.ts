@@ -333,6 +333,25 @@ export type BuyerProfile = {
   memories: Memory[]
 }
 
+export type KitchenDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
+
+export type KitchenContext = {
+  buyer_id: string
+  period: { from: string; to: string }
+  covers: {
+    avg_per_weekday: Record<KitchenDay, number | null>
+    busiest_days: string[]
+    last_7_days: number
+    trend_pct: number | null
+  }
+  revenue: { last_7_days_eur: number | null; source: string }
+  leftovers_recent: { date: string; item: string; amount: number | null; unit: string | null }[]
+  spend: { per_week_cents: { week: string; cents: number }[]; source: string }
+  usual_products: { name: string; product_id?: string; typical_quantity?: number | null; unit?: string | null; times_ordered?: number }[]
+  sources: string[]
+  simulated: boolean
+}
+
 // One remembered preference (GET /api/profile memories): scope this_order | always; revoke with DELETE (approver key).
 export type Memory = {
   id: string
