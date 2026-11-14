@@ -41,7 +41,7 @@ Screens: `3-needs-ok-1280.png` (held for the chef), `4-approved-390.png` (approv
 **1000 L milk → €1,400, ordered alone. 1500 L → held → chef approves. Menu for 80 → cart.**
 
 > **Notes:** Live, measured Sun 15 Nov:
-> - 1000 L: Gemini 0.90 on the cheapest milk, €1,400, AUTO confirmed.
+> - 1000 L: Gemini ≈0.9 on the cheapest milk, €1,400, AUTO confirmed.
 > - 1500 L: €2,100, LINE_OVER_CAP + SPEND_OVER_LIMIT, held. The agent key gets 401 on approve; the approver key
 >   confirms.
 > - Menu: always ASK_HUMAN (MENU_ASSUMPTIONS).
@@ -86,7 +86,7 @@ Screens: `3-needs-ok-1280.png` (held for the chef), `4-approved-390.png` (approv
 | **0.8** | **11** | **0** |
 | 0.9 | 8 | 0 |
 
-Sugar sachets for baking: **0.44**. Caster sugar: **0.94**.
+Sugar sachets for baking: **below 0.5**. Caster sugar: **≈0.9**.
 
 > **Notes:**
 > - Gemini Decisions API: calibrated P(yes) on 30 hand-labelled cases with real Valio products.

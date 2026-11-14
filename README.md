@@ -113,13 +113,13 @@ allergen exclusions, and uses Gemini to distinguish the requested product from
 keyword neighbours. `backend/app/quantity.py` converts amounts without silently
 guessing. The demo story, the same in every doc (measured live on Sun 15 Nov):
 - **1000 L lactose-free milk:** Gemini scores the cheapest option, Eila lactose-free
-  milk drink, 0.90. At EUR 1,400 that is within the mandate, so it is **confirmed
+  milk drink, ≈0.9. At EUR 1,400 that is within the mandate, so it is **confirmed
   automatically**.
 - **1500 L:** EUR 2,100 is over the EUR 2,000 per-line cap and the EUR 1,500 limit,
   so the door holds it (`pending_approval`) and the approver key confirms it.
-- **Gemini's doubt:** for "10 kg sugar for baking", 500 × 5 g sachets score 0.44
-  and caster sugar 0.94, so the agent picks the caster sugar.
-- The second path is menu to cart.
+- **Gemini's doubt:** for "10 kg sugar for baking", 500 × 5 g sachets score below 0.5
+  and caster sugar ≈0.9, so the agent picks the caster sugar.
+- The second path is menu to cart. Exact scores per run are in `docs/GEMINI.md`.
 Details: [`docs/m1-e2e.md`](docs/m1-e2e.md), [`docs/GEMINI.md`](docs/GEMINI.md).
 
 ### J3 — Autonomy and controls

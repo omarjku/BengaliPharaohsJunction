@@ -35,15 +35,15 @@ Otherwise it asks the chef, with the reason and alternatives."
 **0:40 Demo 1: the happy path, end to end (50 s). J1, J2.**
 1. Type "1000 L lactose-free milk for Monday".
 2. "Gemini read the request, and Gemini's Decisions API judged each candidate: all three milks are what the chef
-   asked for, 0.90 or higher. So the cheapest wins: €1,400, within the chef's limit, confirmed by itself."
+   asked for, around 0.9 or higher. So the cheapest wins: €1,400, within the chef's limit, confirmed by itself."
    (**J2**: exactly what the buyer asked for.)
 3. "Every quote is live from Valio's API: price, stock, cut-off. Here are the facts: on time 100%, 1.1 kg CO2 per
    kg, Finnish."
 4. Now "1500 L": "€2,100 is over the chef's €1,500 limit and the €2,000 per-line cap, so the door holds it." Switch
    to the approver key and approve. "The agent key can't approve; only the human can." (**J1**: request → lookup →
    order → approval, for real.)
-5. If time allows: "10 kg sugar for baking". "Gemini doubts the 5-gram sachets, at 0.44, and picks caster sugar, at
-   0.94."
+5. If time allows: "10 kg sugar for baking". "Gemini doubts the 5-gram sachets, below 0.5, and picks caster sugar,
+   around 0.9. The first match isn't what you meant."
 
 **1:30 Demo 2: a trap (30 s). J4.**
 1. Run a Terminal product, for example "60 L Arla lactose-free whole milk drink for Monday".

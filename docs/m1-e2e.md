@@ -29,17 +29,18 @@ mock, live Gemini.
 
 | product | Decisions P(yes) | line total | |
 |---|---|---|---|
-| 464201 Valio semi-skimmed milk 1 l lactose free UHT | 0.97 | EUR 1,560.00 | alternative |
-| 464073 Valio whole milk 1 l lactose free UHT | 0.95 | EUR 1,640.00 | alternative |
-| **463335 Valio Eila 3 % milk drink 1 l lactose free** | **0.90** | **EUR 1,400.00** | **chosen** |
+| 464201 Valio semi-skimmed milk 1 l lactose free UHT | ≈0.95 | EUR 1,560.00 | alternative |
+| 464073 Valio whole milk 1 l lactose free UHT | ≈0.95 | EUR 1,640.00 | alternative |
+| **463335 Valio Eila 3 % milk drink 1 l lactose free** | **≈0.9** | **EUR 1,400.00** | **chosen** |
 
-All three clear the 0.80 threshold, so the cheapest total wins.
+All three clear the 0.80 threshold, so the cheapest total wins. Exact scores per run are kept in one place,
+[`docs/GEMINI.md`](GEMINI.md), because Gemini output can shift a little between runs.
 
 4. EUR 1,400 is within the EUR 1,500 auto-approve limit, so the door returns **`confirmed`, outcome `AUTO`**.
 5. The audit log holds the agent's entry (the chef's words, the rejected Terminal options and why) and the door's
    entry.
 
-**History.** An earlier run (Sat 14 Nov) scored the milk drink 0.76. The agent then picked semi-skimmed milk at
+**History.** An earlier run (Sat 14 Nov) scored the milk drink below 0.8. The agent then picked semi-skimmed milk at
 EUR 1,560 and the order was held for the chef. Room 3's labelled evaluation showed that asking about product and
 quantity in one question biased the score (`docs/GEMINI.md`), so the judge now asks them separately.
 
@@ -59,9 +60,9 @@ Sign-off:
 
 | candidate | Decisions P(yes) | |
 |---|---|---|
-| **Dansukker caster sugar 1 kg** | **0.94** | **chosen** |
-| Dansukker icing sugar 500 g | 0.62 | behind |
-| Segafredo brown sugar 500 × 5 g sachets | **0.44** | behind |
+| **Dansukker caster sugar 1 kg** | **≈0.9** | **chosen** |
+| Dansukker icing sugar 500 g | ≈0.6 | behind |
+| Segafredo brown sugar 500 × 5 g sachets | **below 0.5** | behind |
 
 The order is held (`ALLERGEN_DATA_MISSING`: the product has no allergen record, so the peanut-free rule can't be
 verified).
