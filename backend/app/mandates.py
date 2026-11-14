@@ -15,8 +15,12 @@ _MANDATES = {m.buyer_id: m for m in [
             HardRule(kind=RuleKind.EXCLUDED_ALLERGEN, value="AP", source_text="Our kitchen is peanut-free."),
             HardRule(kind=RuleKind.AUTO_APPROVE_LIMIT_CENTS, value=150000,
                      source_text="Order on your own up to 1,500 euros per order; above that, ask me."),
+            HardRule(kind=RuleKind.MIN_DELIVERY_RELIABILITY, value=0.9,
+                     source_text="Deliveries up here are fragile: ask me before anything that arrives on time under 90%."),
         ],
-        guidance=[Preference(text="Prefer Finnish products when the price is similar.", scope=PreferenceScope.ALWAYS)],
+        # Soft: a ranking signal for the agent, never a reason to block or ask.
+        guidance=[Preference(text="Prefer Finnish-origin products when the price is similar.",
+                             scope=PreferenceScope.ALWAYS)],
         per_line_cap_cents=200000,
         weekly_budget_cents=600000,
     ),
