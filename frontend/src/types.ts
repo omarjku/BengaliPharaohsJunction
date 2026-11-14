@@ -364,3 +364,6 @@ export type Memory = {
   used_because: string | null
   product_id?: string | null
 }
+
+// Which part of the rules a plain sentence belongs to (Rules profile page filters).
+export type RuleCat = 'spending' | 'safety' | 'suppliers' | 'approvals' | 'other'
