@@ -37,8 +37,8 @@ def decisions(monkeypatch):
         # n = index of this call among JUDGE calls (meets/qty/sub/same); guard calls don't shift the numbering
         n = sum(1 for _, q in state["calls"] if set(q) & {"meets", "qty", "sub", "same"}) - 1
         # default "fine": 0.95 for the yes-is-good questions, 0.01 for steering (where yes means an attack)
-        return {k: {"type": "noul", "noul": sc.get(f"{k}_{n}", sc.get(k, 0.01 if k == "steering" else 0.95))}
-                for k in questions}
+        return {k: {"type": "noul", "noul": sc.get(f"{k}_{n}", sc.get(k, sc.get(k.split("_", 1)[0],
+                    0.01 if k == "steering" else 0.95)))} for k in questions}
     monkeypatch.setattr(agent, "_decisions", fake)
     return state
 
@@ -58,6 +58,8 @@ def gemini(monkeypatch, items=None, ranked=None):
     calls = []
 
     async def fake(system, prompt, schema, *_):
+        if schema is agent._ASSUME_SCHEMA:
+            return None
         assert "untrusted" in system and schema is agent._PARSE_SCHEMA
         assert "<buyer_request>" in prompt  # chef text only inside the delimiters
         calls.append(prompt)

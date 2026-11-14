@@ -6,6 +6,7 @@
     {"kind": "usual_product", "key": "gluten-free flour", "text": "Sunnuntai 1 kg gluten-free flour mix",
      "value": {"product_id": "475852"}},
     {"kind": "usual_product", "key": "mozzarella", "text": "Galbani mozzarella grated 2 kg",
-     "value": {"product_id": "471650"}}
+     "value": {"product_id": "471650"}},
+    {"kind": "preference_note", "key": "guest_extras", "text": "Guests often bring plus-ones", "value": {}}
   ]
 }

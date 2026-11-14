@@ -8,7 +8,7 @@ import wave
 import pytest
 from fastapi.testclient import TestClient
 
-from app import config, voice
+from app import config, orders, voice
 from app.main import app
 
 c = TestClient(app, raise_server_exceptions=False)
@@ -55,11 +55,12 @@ class FakeLive:
 
 
 @pytest.fixture
-def live(monkeypatch):
+def live(monkeypatch, tmp_path):
     fake = FakeLive()
     monkeypatch.setattr(voice, "connect", fake)
     monkeypatch.setattr(config, "AGENT_KEYS", "agent-chef=chef")
     monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(orders, "AUDIT_FILE", tmp_path / "audit.jsonl")
     return fake
 
 
