@@ -462,15 +462,34 @@ def save_mandate(req: SaveMandateRequest, who: Approver, response: Response,
 
 
 # --- One input for everyone: order, menu or unclear, routed by Gemini; date and guests read from the text.
+class FollowUp(BaseModel):
+    """The chef's answer to the question a previous /ask returned (its conversation_id, valid ~10 min)."""
+    model_config = ConfigDict(extra="forbid")
+    to: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
+    answer: str = Field(min_length=1, max_length=500, examples=["five litres"])
+
+    @field_validator("answer")
+    @classmethod
+    def utf8(cls, t: str) -> str:
+        return AgentRunRequest.utf8(t)
+
+
 class AskRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    text: str = Field(min_length=1, max_length=4000, examples=["milk and 30 croissants for tomorrow"])
+    text: str = Field(default="", max_length=4000, examples=["milk and 30 croissants for tomorrow"])
     requested_date: date | None = Field(default=None, description="Optional when the text states a day.")
+    follow_up: FollowUp | None = Field(default=None, description="Answer a question instead of a new request.")
 
     @field_validator("text")
     @classmethod
     def utf8(cls, t: str) -> str:
         return AgentRunRequest.utf8(t)
+
+    @model_validator(mode="after")
+    def _something(self) -> "AskRequest":
+        if not self.text.strip() and self.follow_up is None:
+            raise ValueError("send text, or follow_up with the answer to a question")
+        return self
 
 
 @app.post("/api/agent/ask")
@@ -480,7 +499,7 @@ async def agent_ask(req: AskRequest, who: Agent) -> dict:
     asked (no date, menu without guests, unclear, conflicting dates), only `decision` (ASK_HUMAN) follows and nothing
     runs. Needs X-Agent-Key."""
     _catalogue_ready()
-    return await ask.ask(req.text, req.requested_date, who.buyer_id)
+    return await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump())
 
 
 # --- Voice: push-to-talk audio → the chef's words (Gemini Live via our backend; the key never reaches the browser).
@@ -507,7 +526,7 @@ async def agent_ask_stream(req: AskRequest, who: Agent) -> StreamingResponse:
     async def work():
         progress.set_sink(queue.put_nowait)  # inside the task's own context: only this request's phases
         try:
-            queue.put_nowait(("result", await ask.ask(req.text, req.requested_date, who.buyer_id)))
+            queue.put_nowait(("result", await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump())))
         except HTTPException as e:
             queue.put_nowait(("error", {"status": e.status_code, "detail": e.detail}))
         except Exception:  # noqa: BLE001 - details stay in the server log
