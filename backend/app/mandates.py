@@ -1,8 +1,14 @@
-"""Server-side mandates, one per buyer. The agent flow loads the mandate from here, never from the client.
+"""Server-side mandates, one per buyer. The agent flow and the front door load the mandate from here, never from
+the client: the approver's saved mandate (data/mandates.json, via PUT /api/mandate) first, the seeded default second.
 
-ponytail: an in-code dict with one seeded demo buyer; move to the orders store (Postgres) when buyers can edit
-their own mandate in the UI.
+ponytail: a JSON file read on every get (tiny, and always current for the agent and the door); Postgres when the
+disk stops being enough (Render's disk is ephemeral, like the orders file).
 """
+import json
+import os
+import threading
+from pathlib import Path
+
 from trade_contracts import HardRule, Mandate, Preference
 from trade_contracts.common import PreferenceScope, RuleKind
 
@@ -28,8 +34,29 @@ _MANDATES = {m.buyer_id: m for m in [
 ]}
 
 
+STORE = Path(__file__).resolve().parents[2] / "data" / "mandates.json"
+_lock = threading.Lock()
+
+
+def _stored() -> dict[str, dict]:
+    with _lock:
+        return json.loads(STORE.read_text()) if STORE.exists() else {}
+
+
 def get(buyer_id: str) -> Mandate | None:
-    return _MANDATES.get(buyer_id)
+    saved = _stored().get(buyer_id)
+    return Mandate.model_validate(saved) if saved else _MANDATES.get(buyer_id)
+
+
+def put(m: Mandate) -> None:
+    """Store the approver-confirmed mandate for m.buyer_id (atomic write)."""
+    with _lock:
+        data = json.loads(STORE.read_text()) if STORE.exists() else {}
+        data[m.buyer_id] = m.model_dump(mode="json")
+        STORE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = STORE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False))
+        os.replace(tmp, STORE)
 
 
 # Gemini Decisions confidence below this → ask the chef. Kept beside the mandate because the v0.2 Mandate contract
