@@ -102,10 +102,12 @@ def _ask(intent: str, covers, when, source, question: str, code: C, fix: str, ki
             "question": question, "decision": decision.model_dump(mode="json"), "_kind": kind}
 
 
-async def ask(text: str, requested: date | None, buyer_id: str, follow_up: dict | None = None) -> dict:
+async def ask(text: str, requested: date | None, buyer_id: str, follow_up: dict | None = None,
+              have: list[str] | None = None) -> dict:
     """One input box, plus conversational follow-ups: with `follow_up` {to, answer} the chef's answer continues the
     request that asked (conversation.py). Every response gets `speak` and, when it asks something an answer can
     continue, `conversation_id`."""
+    menu.HAVE.set(have)  # what the kitchen has (this request only): a menu cart leaves it out; orders ignore it
     agent.start_budget()  # order-sized, before the preflight calls (Codex #17); menu.propose raises it to menu size
     if follow_up:
         entry = conversation.take(follow_up["to"], buyer_id)

@@ -145,6 +145,8 @@ OUR_QUESTIONS = {  # id → (question, input, kind, key)
     "spare_level": ("How much spare do you want for kitchen loss?", "choice", "preference_note", "spare_level"),
     "dietary": ("Which diets does your whole kitchen always follow?", "multi", "business_type", "dietary"),
     "cuisine": ("What do you cook, and how do you serve it?", "text", "preference_note", "cuisine"),
+    # Room 3 reads exactly this key and shape ({"items": [...]}) to leave staples out of menu carts.
+    "staples": ("What do you always keep in stock?", "multi", "preference_note", "staples"),
 }
 ALLERGEN_HINT = ("Avoiding {names} is remembered as guidance for suggestions. Want it as a hard rule? "
                  "Add it on the Rules screen.")
@@ -223,6 +225,12 @@ def normalize(qid: str, v):
         else:
             city, region = v, None
         return {"city": _free_text(city, "location"), "region": _free_text(region, "location") if region else None}
+    if qid == "staples":
+        items = [x.strip() for x in (v.split(",") if isinstance(v, str) else v if isinstance(v, list) else [])
+                 if isinstance(x, str) and x.strip()]
+        if not items or len(items) > 50:
+            raise ValueError("staples: list what you always keep in stock (up to 50 items), e.g. flour, sugar, salt")
+        return list(dict.fromkeys(_free_text(x, "staples")[:60] for x in items))
     if qid == "spare_level":
         if v not in SPARE_LEVELS:
             raise ValueError(f"spare_level: one of {', '.join(SPARE_LEVELS)}")
@@ -272,6 +280,8 @@ def _current(buyer_id: str) -> tuple[bool, dict]:
             out["spare_level"] = m.value.get("level")
         elif m.kind is MemoryKind.PREFERENCE_NOTE and m.key == "cuisine":
             out["cuisine"] = m.value.get("text")
+        elif m.kind is MemoryKind.PREFERENCE_NOTE and m.key == "staples":
+            out["staples"] = list(m.value.get("items") or [])
         if m.value.get("dietary"):
             out["dietary"] = sorted(set(out.get("dietary", [])) | set(m.value["dietary"]))
     onboarded = any(m.source is MemorySource.ONBOARDING for m in mems)
@@ -310,6 +320,7 @@ def save_onboarding(buyer_id: str, answers: dict) -> list[str]:
         "spare_level": lambda v: (f"Spare for kitchen loss: {v}", {"level": v}),
         "dietary": lambda v: ("Our kitchen is always " + ", ".join(t.replace("_", "-") for t in v), {"dietary": v}),
         "cuisine": lambda v: (f"We cook: {v}", {"text": v}),
+        "staples": lambda v: ("We always keep in stock: " + ", ".join(v), {"items": v}),
     }
     for qid, make in ours.items():
         if qid in answers:
@@ -328,7 +339,7 @@ allergens (allergens the kitchen must avoid, e.g. "peanuts"), spend_comfort (an 
 comfortable with, number), local_preference ("yes" / "no" / "no preference" for Finnish or local products),
 location {city, region}, spare_level ("none" / "low" / "normal" / "high": how much extra the chef wants against kitchen
 loss or running short), dietary (diets the WHOLE kitchen follows, from: {diets}), cuisine (what they cook and how they
-serve, short). unclear: anything the chef said that you could not place."""
+serve, short), staples (things the kitchen ALWAYS keeps in stock, e.g. flour, sugar, salt: only what the text says). unclear: anything the chef said that you could not place."""
 
 
 async def from_about(about: str) -> tuple[dict, list[str]]:
@@ -346,6 +357,7 @@ async def from_about(about: str) -> tuple[dict, list[str]]:
         "spare_level": {"type": "string", "enum": SPARE_LEVELS, "nullable": True},
         "dietary": {"type": "array", "items": {"type": "string", "enum": diets}, "nullable": True},
         "cuisine": {"type": "string", "nullable": True},
+        "staples": {"type": "array", "items": {"type": "string"}, "nullable": True},
         "unclear": {"type": "array", "items": {"type": "string"}}}, "required": ["unclear"]}
     out = await agent._gemini(ABOUT_SYSTEM.replace("{diets}", ", ".join(diets)),
                               f"<chef_text>\n{about}\n</chef_text>", schema)

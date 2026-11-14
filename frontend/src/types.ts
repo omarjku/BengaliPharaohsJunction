@@ -92,6 +92,8 @@ export type Line = {
   why: string
   chosen: boolean
   usual?: boolean // the buyer usually orders this product (profile or past confirmed orders)
+  spare?: SpareFacts
+  spare_suggestion?: SpareSuggestion
   check?: boolean // menu: a doubted line, left out of order_lines until the chef adds it
   confidence?: number | null // Gemini Decisions API: P(this product is what the buyer asked for)
   confidence_reason?: string | null
@@ -160,7 +162,7 @@ export type MenuIngredient = { name: string; per_cover: number | null; unit: str
 export type MenuRun = {
   menu: { dishes: { name: string; ingredients: MenuIngredient[] }[] }
   assumptions: { ingredient: string; dish: string; per_cover: number; unit: string | null; text: string; set_by?: 'chef' | 'agent' | 'gemini' }[]
-  ingredients: (RequestItem & { dishes: string[] })[]
+  ingredients: (RequestItem & { dishes: string[] } & SpareFacts & { amount_with_spare?: number | null })[]
   lines: Line[]
   cart_total_cents: number
   order_lines: { product_id: string; quantity: number }[]
@@ -169,7 +171,12 @@ export type MenuRun = {
 }
 // overrides: the chef's own portions (the menu screen's editable amounts per portion); they count as the chef's only
 // when the approver key is sent too (planMenu does), otherwise they are marked "agent" and still checked.
-export type PortionOverride = { ingredient: string; per_cover: number; unit: 'L' | 'dl' | 'cl' | 'ml' | 'kg' | 'g' | 'pcs'; dish?: string | null }
+export type PortionOverride = { ingredient: string; per_cover?: number; unit?: 'L' | 'dl' | 'cl' | 'ml' | 'kg' | 'g' | 'pcs'; dish?: string | null; spare_percent?: number }
+// Kitchen loss (Room 3): what the recipe needs, the spare on top (percent, why, where it came from) and how much of it
+// pack rounding already gives. Spare is never free: the UI always shows its cost.
+export type SpareFacts = { needed_amount?: number | null; spare_percent?: number | null; spare_reason?: string | null; spare_source?: string | null; spare_from_rounding?: number | null }
+// Direct orders: one tap of spare, offered, never added silently.
+export type SpareSuggestion = { percent: number; extra_quantity: number; unit: string | null; extra_sales_units?: number; extra_cost_cents: number; reason: string }
 export type MenuInput = { menu_text: string; covers: number; requested_date: string; overrides?: PortionOverride[] }
 
 // Rules (mandate). Money values are net-of-VAT cents; allergen values are GS1 codes ('AP') or plain words ('gluten').

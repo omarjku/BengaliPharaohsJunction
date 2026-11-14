@@ -27,6 +27,7 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
   // The plan on screen: the proposal, or the re-plan after the chef changed portions.
   const [plan, setPlan] = useState(proposed)
   const [portions, setPortions] = useState<Record<string, string>>({}) // "dish|ingredient" -> the chef's amount per portion
+  const [spares, setSpares] = useState<Record<string, string>>({}) // ingredient -> the chef's spare percent (0-20)
   const [replanning, setReplanning] = useState(false)
   const canEdit = !!menuText && covers != null
   const planFor = { covers, date: requestedDate }
@@ -66,14 +67,33 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
       return next
     })
   // Changed portions -> overrides; "Update the cart" re-plans with them (Room 3: POST /api/agent/menu overrides).
-  const changed: PortionOverride[] = plan.menu.dishes.flatMap((d) =>
-    d.ingredients.flatMap((i) => {
-      const v = portions[`${d.name}|${i.name}`]
+  const changed: PortionOverride[] = [
+    ...plan.menu.dishes.flatMap((d) =>
+      d.ingredients.flatMap((i) => {
+        const v = portions[`${d.name}|${i.name}`]
+        const n = v == null || v.trim() === '' ? null : Number(v)
+        if (n == null || !Number.isFinite(n) || n <= 0 || n === i.per_cover || !i.unit || !(UNITS as readonly string[]).includes(i.unit)) return []
+        return [{ ingredient: i.name, per_cover: n, unit: i.unit as PortionOverride['unit'], dish: d.name }]
+      }),
+    ),
+    // spare per ingredient (0-20 %), the chef's own
+    ...plan.ingredients.flatMap((ing) => {
+      const v = spares[ing.query]
       const n = v == null || v.trim() === '' ? null : Number(v)
-      if (n == null || !Number.isFinite(n) || n <= 0 || n === i.per_cover || !i.unit || !(UNITS as readonly string[]).includes(i.unit)) return []
-      return [{ ingredient: i.name, per_cover: n, unit: i.unit as PortionOverride['unit'], dish: d.name }]
+      if (n == null || !Number.isFinite(n) || n < 0 || n > 20 || n === ing.spare_percent) return []
+      return [{ ingredient: ing.query, spare_percent: n }]
     }),
-  )
+  ]
+  // The cart's spare in one sentence, with its cost (never presented as free).
+  const spareNote = plan.decision.reasons.find((r) => r.code === 'MENU_ASSUMPTIONS' && typeof r.facts.spare_percent === 'number')
+  const sparePct = spareNote ? Number(spareNote.facts.spare_percent) : 0
+  const spareRounding = spareNote && typeof spareNote.facts.from_rounding === 'number' ? Number(spareNote.facts.from_rounding) : 0
+  const spareCost = sparePct > 0 ? Math.round(plan.cart_total_cents - plan.cart_total_cents / (1 + sparePct / 100)) : 0
+  // One ingredient's spare cost: what the chosen line buys beyond what the recipe needs (spare + pack rounding).
+  const spareCostOf = (l: Line | undefined, needed: number | null | undefined) => {
+    const got = l?.quantity?.delivered
+    return l?.line_total_cents != null && got && needed != null && got > needed ? Math.round(l.line_total_cents * (1 - needed / got)) : 0
+  }
   async function replan() {
     if (!menuText || covers == null || !changed.length) return
     if (!MOCK && !getKeys().agentKey) return setError(c.UI.result.keysFirst)
@@ -84,6 +104,7 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
       const next = await planMenu({ menu_text: menuText, covers, requested_date: planFor.date, overrides: changed })
       setPlan(next)
       setPortions({})
+      setSpares({})
       setSwap({})
       setAdded(new Set())
       onAnnounce(t.announce(forWhom, c.money(next.cart_total_cents)))
@@ -228,7 +249,7 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
                 <button type="button" className="btn" onClick={() => void replan()} disabled={replanning}>
                   {replanning ? t.updating : t.update(changed.length)}
                 </button>
-                <button type="button" className="btn plain" onClick={() => setPortions({})} disabled={replanning}>
+                <button type="button" className="btn plain" onClick={() => (setPortions({}), setSpares({}))} disabled={replanning}>
                   {t.undoPortions}
                 </button>
               </div>
@@ -237,6 +258,7 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
 
           <section className="instead mt-step" aria-labelledby="menu-cart">
             <StepHead n={3} id="menu-cart" title={t.theCart} sub={t.step3Sub(c.money(total))} />
+            {sparePct > 0 && <p className="mt-spare-total small">{t.spareTotal(c.count(Math.round(sparePct)), c.money(spareCost), c.count(Math.round(spareRounding)))}</p>}
             {plan.ingredients.map((ing, i) => {
               const lines = plan.lines.filter((l) => l.item === i)
               const chosen = swap[i] ? [swap[i]] : lines.filter((l) => l.chosen)
@@ -247,6 +269,32 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
                     {amount(ing.amount, ing.unit)} {ing.query}
                   </p>
                   <p className="quiet small">{t.forDishes(ing.dishes)}</p>
+                  {ing.needed_amount != null && ing.spare_percent != null && (
+                    <div className="mt-spare quiet small">
+                      <span>
+                        {t.spareLine(amount(ing.needed_amount, ing.unit), c.count(ing.spare_percent))}
+                        {spareCostOf(chosen[0], ing.needed_amount) > 0 && <> {t.spareCost(c.money(spareCostOf(chosen[0], ing.needed_amount)))}</>}
+                      </span>
+                      {canEdit && (
+                        <label className="mt-spare-edit">
+                          <input
+                            className="mt-portion num"
+                            type="number"
+                            inputMode="numeric"
+                            min={0}
+                            max={20}
+                            step={1}
+                            value={spares[ing.query] ?? String(ing.spare_percent)}
+                            onChange={(e) => setSpares((s) => ({ ...s, [ing.query]: e.target.value }))}
+                            aria-label={t.spareAria(ing.query)}
+                            disabled={replanning || !!ordered}
+                          />{' '}
+                          {t.spareUnit}
+                        </label>
+                      )}
+                      {ing.spare_reason && <span className="mt-spare-why">{ing.spare_reason}</span>}
+                    </div>
+                  )}
                   {chosen.length === 0 && (
                     <p className="option-why warn">
                       {others.length ? t.noConfident : t.nothingFits}
@@ -305,7 +353,17 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
                 <strong className="num">{c.money(total)}</strong> <span className="quiet">{c.UI.result.exclVat}</span>
               </span>
             </div>
-            {orderLines.length > 0 && (
+            {changed.length > 0 && (
+              <div className="actions mt-replan">
+                <button type="button" className="btn" onClick={() => void replan()} disabled={replanning}>
+                  {replanning ? t.updating : t.update(changed.length)}
+                </button>
+                <button type="button" className="btn plain" onClick={() => (setPortions({}), setSpares({}))} disabled={replanning}>
+                  {t.undoPortions}
+                </button>
+              </div>
+            )}
+            {orderLines.length > 0 && changed.length === 0 && (
               <div className={`decide${totalSeen ? ' floating' : ''}`}>
                 <button type="button" className="btn" onClick={orderCart} disabled={ordering}>
                   {ordering ? c.UI.result.ordering : t.orderCart(c.money(total))}

@@ -23,3 +23,8 @@
 .mt-portion:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
 .mt-yours { color: var(--accent); }
 .mt-replan { margin-block-start: var(--s3); }
+/* Spare per ingredient: what the recipe needs, the spare with its cost and why; editable 0-20 %. */
+.mt-spare { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); margin-block: var(--s1); }
+.mt-spare-edit { display: inline-flex; align-items: center; gap: var(--s1); }
+.mt-spare-why { flex-basis: 100%; }
+.mt-spare-total { color: var(--ink-2); margin-block-end: var(--s3); }

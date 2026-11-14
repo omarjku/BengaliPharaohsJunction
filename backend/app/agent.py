@@ -689,6 +689,7 @@ async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[st
     return ids, True
 
 
+_PACK_SIZE = re.compile(r"\b(\d+(?:[.,]\d+)?)\s*(kg|g|l|dl|cl|ml)\b", re.I)
 EGG_KG = 0.05  # one shelled egg, about 50 g: the shown assumption when eggs are counted but sold by weight
 _EGG_COUNT = re.compile(r"\b(?:XL|L|M|S)(\d{1,3})\b")
 _PIECES = re.compile(r"(?:(\d{1,4})\s*x\s*\d+(?:[.,]\d+)?\s*(?:g|kg|ml|cl|dl|l)\b|(\d{1,4})\s*(?:pcs|pc|kpl)\b)", re.I)
@@ -706,6 +707,23 @@ def resolve(p: dict, amount: float, unit: str) -> dict:
         return w | {"needs_confirmation": True, "explanation": f"{gate._qty(amount)} eggs × about "
                     f"{int(EGG_KG * 1000)} g each (assumption) = {gate._qty(amount * EGG_KG)} kg; " + w["explanation"]}
     q = quantity.resolve(p, amount, unit)
+    if q["quantity"] is None and unit.lower() in quantity.MEASURES and unit.lower() not in ("pcs", "units") \
+            and (pack := _PACK_SIZE.search(name)) and not re.match(r"\s*\d+\s*x\s", name):
+        # no weight/volume recorded, but the name says one pack ("BLUEBERRY PUNNET 125G"): 4 kg = 32 punnets
+        # (pantry/spare check: the menu's blueberries were left out of the cart). The quantity judge still checks it.
+        size, pu = float(pack[1].replace(",", ".")), pack[2].lower()
+        dim, base = quantity.MEASURES.get(unit.lower(), (None, 0))
+        pdim, pbase = quantity.MEASURES.get(pu, (None, 0))
+        if dim and dim == pdim and size > 0:
+            per = Fraction(str(size)) * pbase / base  # one pack in the asked unit
+            lot = Fraction(str(p.get("lot_size") or 1))
+            step = max(Fraction(lot.numerator), Fraction(1))
+            n = math.ceil(Fraction(str(amount)) / per / step) * step
+            return q | {"quantity": int(n), "per_sales_unit": float(per), "delivered": float(n * per),
+                        "over_delivery": float(n * per) - amount, "rounded_up": n * per != amount, "confidence": "medium",
+                        "needs_confirmation": False,
+                        "explanation": f"{gate._qty(amount)} {unit} ÷ {float(per):g} {unit} per "
+                                       f"{p['sales_unit']} (from the product name) = {int(n)} {p['sales_unit']}."}
     if unit.lower() not in ("pcs", "units") or (q["quantity"] is not None and not q["needs_confirmation"]):
         return q
     m = _PIECES.search(name)
