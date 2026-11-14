@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { placeOrder } from './api'
-import { amountOf, headline, humanize, tidyName } from './copy'
-import { errorText, formatCents, formatDay } from './format'
+import { tidyName } from './copy'
+import { errorText } from './format'
+import { useCopy } from './i18n'
 import { RunResult } from './RunResult'
 import type { Line, MenuRun, OrderResponse } from './types'
 
@@ -12,15 +13,17 @@ type Props = {
   onAction: () => void // something was ordered (refresh the history)
   onBusy: (busy: boolean) => void
   onAnnounce: (text: string) => void
+  after?: ReactNode // shown right under the answer, before the cart
 }
 
 const productName = (l: Line) => tidyName(l.product.name_en ?? l.product.name_fi ?? l.product.id)
-const amount = (n: number | null, unit: string | null) => [n?.toLocaleString('en-US'), unit].filter(Boolean).join(' ')
-const and = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`)
 
 // A menu became a proposed cart: the chef checks the portions, then orders the cart as one order.
-export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAnnounce }: Props) {
+export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAnnounce, after }: Props) {
   const planFor = { covers, date: requestedDate }
+  const c = useCopy()
+  const t = c.UI.menu
+  const amount = (n: number | null, unit: string | null) => [n != null ? c.count(n) : null, unit].filter(Boolean).join(' ')
   const [ordering, setOrdering] = useState(false)
   const [ordered, setOrdered] = useState<OrderResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -38,12 +41,12 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
   // The decision's reasons about a product in the cart (not the generic 'amounts are estimates' one).
   const concerns = (l: Line) =>
     plan.decision.reasons.filter((r) => r.product_id === l.product.id && r.severity !== 'INFO' && r.code !== 'MENU_ASSUMPTIONS')
-  const forWhom = covers ? `for ${covers.toLocaleString('en-US')} guests` : 'for your menu'
+  const forWhom = covers ? t.forGuests(c.count(covers)) : t.forMenu
 
   useEffect(() => {
-    onAnnounce(`Ready to order. A cart ${forWhom}, ${formatCents(plan.cart_total_cents)}.`)
+    onAnnounce(t.announce(forWhom, c.money(plan.cart_total_cents)))
     heading.current?.focus()
-  }, [plan, forWhom, onAnnounce])
+  }, [plan, forWhom, onAnnounce, t, c])
 
   async function orderCart() {
     setOrdering(true)
@@ -64,7 +67,7 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
     <>
       {error && (
         <div className="problem" role="alert">
-          <strong>That didn’t go through.</strong>
+          <strong>{c.UI.failed}</strong>
           {error}
         </div>
       )}
@@ -73,7 +76,7 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
         <RunResult
           key={ordered.audit_id}
           run={{
-            request: { summary: `Menu ${forWhom}`, items: plan.ingredients },
+            request: { summary: t.summary(forWhom), items: plan.ingredients },
             lines: plan.lines,
             decision: plan.decision,
             order: ordered,
@@ -88,19 +91,20 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
 
       {!ordered && (
         <>
-          <section className="answer" aria-label="Proposed cart">
-            <p className="status neutral">Ready to order</p>
+          <section className="answer" aria-label={t.aria}>
+            <p className="status neutral">{c.UI.status.ready}</p>
             <h2 ref={heading} tabIndex={-1} className="answer-text">
-              A cart {forWhom}, {formatCents(plan.cart_total_cents)}.
+              {t.cart(forWhom, c.money(plan.cart_total_cents))}
             </h2>
             <p className="answer-sub">
-              Portions are estimates. Check them before you order. Delivery {formatDay(planFor.date)}, prices excl. VAT.
+              {t.sub(c.day(planFor.date))}
             </p>
           </section>
 
+          {after}
           <section className="instead" aria-labelledby="menu-cart">
             <h2 className="title" id="menu-cart">
-              The cart
+              {t.theCart}
             </h2>
             {plan.ingredients.map((ing, i) => {
               const lines = plan.lines.filter((l) => l.item === i)
@@ -111,34 +115,34 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
                   <p className="dish">
                     {amount(ing.amount, ing.unit)} {ing.query}
                   </p>
-                  <p className="quiet small">For {and(ing.dishes)}</p>
+                  <p className="quiet small">{t.forDishes(ing.dishes)}</p>
                   {chosen.length === 0 && (
                     <p className="option-why warn">
-                      {others.length ? 'No confident match, so nothing is in the cart for this. See the options.' : 'Nothing on Valio’s list fits this.'}
+                      {others.length ? t.noConfident : t.nothingFits}
                     </p>
                   )}
                   {chosen.map((l) => (
                     <div key={l.product.id} className="split-row">
                       <span>{productName(l)}</span>
                       <span className="qty r">
-                        {l.quantity?.quantity != null ? amountOf(l.quantity.quantity, l.quantity.sales_unit) : 'Amount unclear'}
+                        {l.quantity?.quantity != null ? c.amountOf(l.quantity.quantity, l.quantity.sales_unit) : t.amountUnclear}
                       </span>
-                      <span className="r">{l.line_total_cents !== null ? formatCents(l.line_total_cents) : '—'}</span>
+                      <span className="r">{l.line_total_cents !== null ? c.money(l.line_total_cents) : '—'}</span>
                       {concerns(l).map((r, k) => (
                         <span key={k} className="option-why warn concern">
-                          {headline({ ...r, message: humanize(r.message) })}
+                          {c.headline({ ...r, message: c.humanize(r.message) })}
                         </span>
                       ))}
                     </div>
                   ))}
                   {others.length > 0 && (
                     <details>
-                      <summary className="small">Other options ({others.length})</summary>
+                      <summary className="small">{c.UI.result.other(others.length)}</summary>
                       <ul className="more-body">
                         {others.map((l) => (
                           <li key={l.product.id} className="option">
                             <span>{productName(l)}</span>
-                            <span className="option-side quiet">{l.line_total_cents !== null ? formatCents(l.line_total_cents) : '—'}</span>
+                            <span className="option-side quiet">{l.line_total_cents !== null ? c.money(l.line_total_cents) : '—'}</span>
                           </li>
                         ))}
                       </ul>
@@ -149,13 +153,13 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
             })}
             <div className="split-total" ref={totalRef}>
               <span>
-                <strong className="num">{formatCents(plan.cart_total_cents)}</strong> <span className="quiet">excl. VAT</span>
+                <strong className="num">{c.money(plan.cart_total_cents)}</strong> <span className="quiet">{c.UI.result.exclVat}</span>
               </span>
             </div>
             {plan.order_lines.length > 0 && (
               <div className={`decide${totalSeen ? ' floating' : ''}`}>
                 <button type="button" className="btn" onClick={orderCart} disabled={ordering}>
-                  {ordering ? 'Ordering…' : `Order this cart · ${formatCents(plan.cart_total_cents)}`}
+                  {ordering ? c.UI.result.ordering : t.orderCart(c.money(plan.cart_total_cents))}
                 </button>
               </div>
             )}
@@ -163,7 +167,7 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
 
           <section className="instead" aria-labelledby="menu-dishes">
             <h2 className="title" id="menu-dishes">
-              Amounts per cover
+              {t.amounts}
             </h2>
             <div className="more flush">
               {plan.menu.dishes.map((d) => (
@@ -171,7 +175,7 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
                   <summary>
                     {d.name}
                     <span className="quiet small summary-count">
-                      {d.ingredients.length} ingredients
+                      {t.ingredients(d.ingredients.length)}
                     </span>
                   </summary>
                   <ul className="more-body">
@@ -181,7 +185,7 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
                           <p>{i.name}</p>
                           {i.assumption && <p className="quiet small">{i.assumption}</p>}
                         </div>
-                        <p className="option-side quiet">{i.per_cover != null ? `${amount(i.per_cover, i.unit)} per cover` : 'Amount unclear'}</p>
+                        <p className="option-side quiet">{i.per_cover != null ? t.perCover(amount(i.per_cover, i.unit)) : t.amountUnclear}</p>
                       </li>
                     ))}
                   </ul>

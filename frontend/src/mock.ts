@@ -1,3 +1,4 @@
+import { ApiError } from './api'
 // Mock backend for VITE_MOCK=1 / ?mock=1 (dev only). Products are real catalogue entries; prices,
 // stock and cut-offs are illustrative. Which fixture you get depends on the request text:
 //   contains "1000" / "1 000" / "1,000"  -> ASK_HUMAN, order pending_approval (the lactose-free milk case)
@@ -430,6 +431,7 @@ const MENU: Omit<MenuRun, 'audit_id'> = {
 }
 
 // --- Rules: the seeded Lapland kitchen mandate, a tiny rule reader, and the backend's diff wording.
+let mandateVersion = 1
 let mandate: Mandate = {
   contract_version: '0.2', id: 'lapland-kitchen-2026-11', buyer_id: 'lapland-kitchen', uncertainty_policy: 'ask',
   hard_rules: [
@@ -553,13 +555,26 @@ export const mockApi = {
       }
       return { intent: 'order', requested_date, request: f.request, lines: f.lines, decision: f.decision, order, audit_id }
     }
-    return { intent: 'order', requested_date, ...(await mockApi.run({ text, requested_date })) }
+    const res = { intent: 'order' as const, requested_date, ...(await mockApi.run({ text, requested_date })) }
+    // Helsinki bistro, in a hurry: the same suggestions the backend makes (urgent.py), never an order.
+    if (/\b(asap|now|today|urgent|heti|nyt|tänään|kiire)/i.test(text)) {
+      const ready = new Date(Date.now() + 4 * 3_600_000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Helsinki' })
+      return { ...res, urgent_options: [
+        { kind: 'walk_in', label: 'Pick it up yourself now: Valio Aimo Cash & Carry Helsinki', address: 'Vanha Talvitie 2, Helsinki (Sörnäinen, Tukkutori)',
+          hours: 'today 08:00–17:00 (open now)', phone: '010 381 7645', assumption: true,
+          text: 'Vanha Talvitie 2, Helsinki (Sörnäinen, Tukkutori), today 08:00–17:00 (open now). Store stock is not confirmed via the API: call 010 381 7645 before you go.' },
+        { kind: 'click_and_collect', label: 'Click & Collect (Helsinki only)', assumption: true,
+          text: `Order for pickup at Valio Aimo Cash & Carry Helsinki: ready from about 4 hours after it is confirmed (around ${ready} if confirmed now, within opening hours). Placed on Valio's own site; the agent doesn't place pickup orders.` },
+        { kind: 'next_delivery', label: 'Next delivery', assumption: false, text: `The earliest Valio delivery for these products is ${requested_date} if ordered before 2026-11-15T13:00:00+02:00.` },
+      ] }
+    }
+    return res
   },
 
 
-  async getMandate(): Promise<Mandate> {
+  async getMandate(): Promise<{ mandate: Mandate; etag: string }> {
     await wait()
-    return structuredClone(mandate)
+    return { mandate: structuredClone(mandate), etag: `"v${mandateVersion}"` }
   },
 
   async compile(text: string): Promise<CompileResult> {
@@ -576,13 +591,16 @@ export const mockApi = {
     }
   },
 
-  async saveMandate(next: Mandate): Promise<SaveResult> {
+  async saveMandate(next: Mandate, etag: string | null): Promise<SaveResult & { etag: string }> {
     await wait()
+    if (etag && etag !== `"v${mandateVersion}"`)
+      throw new ApiError(412, 'The rules changed since you loaded them; reload, review and save again.')
+    mandateVersion++
     if (next.open_questions.length) throw new Error('Request failed (422): Answer the open questions first (or remove them), then save.')
     const changes = diffRules(mandate, next)
     mandate = { ...structuredClone(next), id: `lapland-kitchen-${Date.now()}` }
     const d = decision('AUTO', changes.map((c) => reason('LIMIT_CHANGE_ATTEMPT', 'INFO', `Chef (mock key) changed the rules: ${c.text} (${c.change}).`)))
-    return { mandate: structuredClone(mandate), changes, audit_id: log('human:Chef (mock key):mandate', 'lapland-kitchen', `Rules changed by Chef (mock key): ${changes.map((c) => c.text).join('; ') || 'no changes'}`, d) }
+    return { etag: `"v${mandateVersion}"`, mandate: structuredClone(mandate), changes, audit_id: log('human:Chef (mock key):mandate', 'lapland-kitchen', `Rules changed by Chef (mock key): ${changes.map((c) => c.text).join('; ') || 'no changes'}`, d) }
   },
 
 

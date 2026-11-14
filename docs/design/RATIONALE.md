@@ -58,6 +58,13 @@ A kebab shop ordering döner meat shouldn't be asked "for how many guests". So t
 - **What happens next depends on what was asked.** An order shows the usual answer. A menu shows "A cart for 80 guests, €…". A menu without a guest count asks one thing: "For how many guests?", with the number field right there. The answer goes into the box and the agent reads it again. An unclear request asks for more in plain words.
 - **Navigation is Order · History · Rules · Keys.** There's no separate Menu tab.
 
+## Finnish and English
+- **One switch.** "FI / EN" in the header, defaulting to the browser's language and remembered on the device. The switch names the other language in that language.
+- **Everything the interface says swaps.** All wording lives in `copy.ts` and `copy.fi.ts`, and `i18n.ts` checks at build time that the Finnish module says everything the English one does. Money, dates and stock are also written in each language's style (`1 560,00 €`, `ma 16.11.`).
+- **Some English remains, on purpose.** The chef's own words, and sentences the backend writes in English (Gemini's reasoning, rule source text). Room 1 marks these as "backend English".
+- **Need it sooner?** It sits right under the answer, not below the details. It is always a suggestion, never an order: walk-in at the Helsinki Cash & Carry with today's hours and the number to call, Click & Collect, and the next delivery. The facts are re-said in the chef's language.
+- **Rules versioning.** The screen saves against the version it showed (`If-Match`). If someone changed the rules meanwhile: "Someone changed these rules a moment ago. Here's the latest." The latest rules load, and the chef's text stays in the box.
+
 ## Known gaps
 - Product names come straight from Valio's catalogue ("Valio Eila® 3 % milk drink 1 l lactose free"). Cleaning them up would need a naming pass in the data.
 - History can't tell "Valio held for your OK" apart from "Valio refused" when the front door's outcome was an ask, because the audit entry doesn't store the order status. The opening screen's waiting count avoids this by checking each order's real status.

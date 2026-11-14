@@ -44,7 +44,28 @@ export const MOCK =
 
 type AuthRole = 'agent' | 'approver'
 
+// An error that keeps its HTTP status, for the few places that act on it (412: someone saved first).
+export class ApiError extends Error {
+  status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
 export async function api<T>(path: string, init?: RequestInit, authRole?: AuthRole): Promise<T> {
+  return json<T>(await request(path, init, authRole))
+}
+
+async function json<T>(res: Response): Promise<T> {
+  try {
+    return (await res.json()) as T
+  } catch {
+    throw new Error('Backend returned an unexpected response.')
+  }
+}
+
+async function request(path: string, init?: RequestInit, authRole?: AuthRole): Promise<Response> {
   let res: Response
   try {
     res = await fetch(`${BASE}${path}`, {
@@ -57,17 +78,13 @@ export async function api<T>(path: string, init?: RequestInit, authRole?: AuthRo
   if (!res.ok) {
     const detail = await errorDetail(res)
     if (res.status === 401 || res.status === 403) {
-      if (authRole === 'agent') throw new Error(`Enter a valid agent key in Keys. ${detail}`)
-      if (authRole === 'approver') throw new Error(`Approver key needed: enter it in Keys. ${detail}`)
+      if (authRole === 'agent') throw new ApiError(res.status, `Enter a valid agent key in Keys. ${detail}`)
+      if (authRole === 'approver') throw new ApiError(res.status, `Approver key needed: enter it in Keys. ${detail}`)
     }
-    if (res.status === 503) throw new Error(detail)
-    throw new Error(`Request failed (${res.status}): ${detail}`)
+    if (res.status === 503) throw new ApiError(503, detail)
+    throw new ApiError(res.status, `Request failed (${res.status}): ${detail}`)
   }
-  try {
-    return (await res.json()) as T
-  } catch {
-    throw new Error('Backend returned an unexpected response.')
-  }
+  return res
 }
 
 // FastAPI errors look like {"detail": "..."} or {"detail": [{"msg": "..."}]}; never show raw bodies.
@@ -108,13 +125,25 @@ export const planMenu = (input: MenuInput) =>
 
 // Rules: approver key only (the agent key gets 401). Compile never saves; PUT saves after the chef confirms.
 const approver = () => ({ 'X-Approver-Key': getKeys().approverKey })
-export const getMandate = () => (MOCK ? mock().then((m) => m.getMandate()) : api<Mandate | null>('/api/mandate', { headers: approver() }, 'approver'))
+// The rules' version travels as an ETag: read it with the rules, send it back as If-Match when saving (412 if someone
+// saved in between). Cross-origin, the backend must list ETag in Access-Control-Expose-Headers, or this reads null
+// and saves go without If-Match, as before.
+export const getMandate = async (): Promise<{ mandate: Mandate | null; etag: string | null }> => {
+  if (MOCK) return mock().then((m) => m.getMandate())
+  const res = await request('/api/mandate', { headers: approver() }, 'approver')
+  return { mandate: await json<Mandate | null>(res), etag: res.headers.get('ETag') }
+}
 export const compileRules = (text: string) =>
   MOCK ? mock().then((m) => m.compile(text)) : api<CompileResult>('/api/mandate/compile', { ...post({ text }), headers: approver() }, 'approver')
-export const saveMandate = (mandate: Mandate, confirm_large_change: boolean) =>
-  MOCK
-    ? mock().then((m) => m.saveMandate(mandate))
-    : api<SaveResult>('/api/mandate', { method: 'PUT', body: JSON.stringify({ mandate, confirm_large_change }), headers: approver() }, 'approver')
+export const saveMandate = async (mandate: Mandate, confirm_large_change: boolean, etag: string | null): Promise<SaveResult & { etag: string | null }> => {
+  if (MOCK) return mock().then((m) => m.saveMandate(mandate, etag))
+  const res = await request(
+    '/api/mandate',
+    { method: 'PUT', body: JSON.stringify({ mandate, confirm_large_change }), headers: { ...approver(), ...(etag ? { 'If-Match': etag } : {}) } },
+    'approver',
+  )
+  return { ...(await json<SaveResult>(res)), etag: res.headers.get('ETag') }
+}
 
 // The human picked a proposal (e.g. the split order): the agent's key places it, the front door re-checks it.
 export const placeOrder = (input: OrderInput) =>
