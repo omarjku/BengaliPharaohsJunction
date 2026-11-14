@@ -1,0 +1,60 @@
+{
+  "file": "out/front-door-draft-v1.mp4",
+  "issues": [
+    {
+      "rule": "frozen",
+      "p": "P2",
+      "at": 8.433333,
+      "says": "nothing changes for 4.6 s; give it a reason to hold, or cut it shorter"
+    },
+    {
+      "rule": "frozen",
+      "p": "P2",
+      "at": 15.466667,
+      "says": "nothing changes for 4.5 s; give it a reason to hold, or cut it shorter"
+    },
+    {
+      "rule": "frozen",
+      "p": "P2",
+      "at": 33.9,
+      "says": "nothing changes for 3.7 s; give it a reason to hold, or cut it shorter"
+    },
+    {
+      "rule": "frozen",
+      "p": "P2",
+      "at": 73.933333,
+      "says": "nothing changes for 3.2 s; give it a reason to hold, or cut it shorter"
+    },
+    {
+      "rule": "frozen",
+      "p": "P2",
+      "at": 91.466667,
+      "says": "nothing changes for 5.5 s; give it a reason to hold, or cut it shorter"
+    },
+    {
+      "rule": "frozen",
+      "p": "P2",
+      "at": 99.466667,
+      "says": "nothing changes for 4.5 s; give it a reason to hold, or cut it shorter"
+    },
+    {
+      "rule": "frozen",
+      "p": "P2",
+      "at": 105.1,
+      "says": "nothing changes for 3.9 s; give it a reason to hold, or cut it shorter"
+    },
+    {
+      "rule": "frozen",
+      "p": "P2",
+      "at": 109.966667,
+      "says": "nothing changes for 5.0 s; give it a reason to hold, or cut it shorter"
+    }
+  ],
+  "passed": [
+    "flashing: no more than 3 flashes a second found (a screen, not a certification)",
+    "clipped: all 64 texts fit the frame",
+    "safe areas: no text in the UI zones",
+    "reading: every text holds long enough",
+    "contrast: 64 texts at 3:1 or better against their pixels"
+  ]
+}

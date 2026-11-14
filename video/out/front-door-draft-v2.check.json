@@ -1,0 +1,12 @@
+{
+  "file": "out/front-door-draft-v2.mp4",
+  "issues": [],
+  "passed": [
+    "frozen: nothing holds still for 3 s",
+    "flashing: no more than 3 flashes a second found (a screen, not a certification)",
+    "clipped: all 64 texts fit the frame",
+    "safe areas: no text in the UI zones",
+    "reading: every text holds long enough",
+    "contrast: 64 texts at 3:1 or better against their pixels"
+  ]
+}
