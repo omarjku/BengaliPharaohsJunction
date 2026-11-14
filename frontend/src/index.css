@@ -541,3 +541,17 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
 .photo-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
 .photo-error { color: var(--bad); }
 .photo-unreadable { color: var(--warn); }
+
+/* Quick Order: one bounded requisition card (text + voice side by side), actions underneath */
+.qo-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(28,31,35,0.05); overflow: hidden; }
+.qo-head { display: flex; justify-content: space-between; gap: var(--s3); padding: var(--s3) var(--s4); border-block-end: 1px solid var(--line); background: var(--paper); font-weight: 600; font-size: 0.8125rem; line-height: 1.2; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
+.qo-grid { display: grid; gap: var(--s4); padding: var(--s4); }
+.qo-grid.has-voice { grid-template-columns: minmax(0, 1fr) 13rem; }
+.qo-card .ask-box:has(> .ask-field) { box-shadow: none; }
+.qo-hint { position: absolute; inset-inline-end: var(--s3); inset-block-end: var(--s2); font: 500 0.6875rem/1 ui-monospace, monospace; color: var(--ink-3); background: var(--wash); padding: 3px 6px; border-radius: 4px; pointer-events: none; }
+.qo-voice { display: grid; justify-items: center; align-content: center; gap: var(--s2); padding: var(--s4); text-align: center; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; }
+.qo-voice-title { font-weight: 600; font-size: 0.75rem; line-height: 1; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-2); }
+.qo-voice .mic { position: static; width: 56px; height: 56px; }
+.qo-actions { display: inline-flex; gap: var(--s2); }
+.qo-actions .btn { min-height: 48px; }
+@media (max-width: 640px) { .qo-grid.has-voice { grid-template-columns: 1fr; } .qo-actions { width: 100%; } .qo-actions .btn:last-child { flex: 1; } }

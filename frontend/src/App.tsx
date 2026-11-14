@@ -407,20 +407,36 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                 <label className="ask-label" htmlFor="text">
                   {u.ask.label}
                 </label>
-                <div className="ask-box">
-                <textarea
-                  id="text"
-                  ref={field}
-                  className={`ask-field${micOn ? ' with-mic' : ''}`}
-                  rows={3}
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  onKeyDown={submitOnCmdEnter}
-                  placeholder={example}
-                  aria-describedby="text-help"
-                  required
-                />
-                {micOn && !convo && <MicButton voice={voice} disabled={running || deciding} />}
+                <div className="qo-card">
+                  <div className="qo-head">
+                    <span>{u.ask.heading}</span>
+                    <span className="faint">{u.ask.langNote}</span>
+                  </div>
+                  <div className={`qo-grid${micOn && !convo ? ' has-voice' : ''}`}>
+                    <div className="ask-box">
+                      <textarea
+                        id="text"
+                        ref={field}
+                        className="ask-field"
+                        rows={4}
+                        value={text}
+                        onChange={(e) => setText(e.target.value)}
+                        onKeyDown={submitOnCmdEnter}
+                        placeholder={example}
+                        aria-describedby="text-help"
+                        required
+                      />
+                      <span className="qo-hint" aria-hidden="true">{u.ask.cmdEnter}</span>
+                    </div>
+                    {micOn && !convo && (
+                      <div className="qo-voice">
+                        <span className="qo-voice-title">{u.ask.voiceTitle}</span>
+                        <MicButton voice={voice} disabled={running || deciding} />
+                        <span className="faint small">{u.ask.voiceHint}</span>
+                        <VoiceStatus voice={voice} />
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <p className="sr-only" id="text-help">
                   {u.ask.help(c.EXAMPLES)}
@@ -464,11 +480,15 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                     />
                   </label>
                   {/* One primary per screen: once there's an answer, asking again is the quiet option. */}
-                  <button type="submit" className={`btn${result ? ' plain accent-text' : ''}`} disabled={running || deciding || !text.trim()}>
-                    {running ? u.ask.asking : result ? u.ask.again : u.ask.ask}
-                  </button>
+                  <span className="qo-actions">
+                    <button type="button" className="btn plain" disabled={running || !text} onClick={() => { setText(''); field.current?.focus() }}>
+                      {u.ask.clear}
+                    </button>
+                    <button type="submit" className="btn" disabled={running || deciding || !text.trim()}>
+                      {running ? u.ask.asking : result ? u.ask.again : u.ask.run}
+                    </button>
+                  </span>
                 </div>
-                {micOn && !convo && <VoiceStatus voice={voice} />}
                 {empty && (
                   <p className="try">
                     {MOCK ? u.ask.tryDemo : u.ask.try}
