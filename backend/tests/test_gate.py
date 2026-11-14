@@ -103,6 +103,25 @@ def test_allergen_rule_without_data_or_unmappable_value_asks(shop):
     assert set(codes(res)) == {"ALLERGEN_DATA_MISSING", "MANDATE_INVALID"} and res.status == "pending_approval"
 
 
+def test_unrelated_free_from_does_not_verify_an_excluded_allergen(shop):
+    shop.products["103"]["allergens"]["free_from"] = ["AM"]
+    res = run([("103", 1)], mandate(rules=[("excluded_allergen", "AP")]))
+    assert res.status == "pending_approval" and codes(res) == ["ALLERGEN_DATA_MISSING"]
+    assert res.decision.reasons[0].message == "Mystery item has no allergen data for peanuts, so your rule can't be verified."
+
+
+def test_nonempty_contains_list_is_a_complete_declaration_for_other_excluded_allergen(shop):
+    shop.products["103"]["allergens"]["contains"] = ["AM"]
+    res = run([("103", 1)], mandate(rules=[("excluded_allergen", "AP")]))
+    assert res.status == "confirmed" and codes(res) == []
+
+
+def test_free_from_excluded_allergen_passes(shop):
+    shop.products["103"]["allergens"]["free_from"] = ["AP"]
+    res = run([("103", 1)], mandate(rules=[("excluded_allergen", "AP")]))
+    assert res.status == "confirmed" and codes(res) == []
+
+
 def test_uncertainty_policy_decline_and_approve(shop):
     shop.quotes["463038"] = quote("463038", "Terminal", 999999.0, price=31.31, unit="KI")  # cut-off still open
     assert run([("463038", 1)]).status == "pending_approval"
