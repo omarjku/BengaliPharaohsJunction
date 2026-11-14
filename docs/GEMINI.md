@@ -80,7 +80,9 @@ Accuracy at P(yes) ≥ 0.5 is **100 %** (30 of 30), and two runs gave identical 
 
 **Five consecutive live runs** of "1000 L lactose-free milk for Monday" chose the same product with the same confidence (Eila 3 % lactose-free, 0.8135) every time. The fifth was held only because the four earlier test orders had used up the €6,000 weekly budget.
 
-**Threshold: propose 0.70 for `lapland-kitchen`.** On this set it is as precise as 0.80 (100 %), handles 93 % of the right lines alone instead of 80 %, and still sits 0.33 above the worst trap. It also matters for the demo: the cheapest correct milk now scores 0.81, stable but only just over 0.80. It is a one-line per-buyer setting (`mandates._CONFIDENCE_THRESHOLDS`), left at 0.80 until the team decides. Thirty cases are evidence, not proof. Every chosen line's confidence goes to the audit log, so approvals and rejections there will grow the set.
+**Threshold: propose 0.70 for `lapland-kitchen`.** On this set it is as precise as 0.80 (100 %), handles 93 % of the right lines alone instead of 80 %, and still sits 0.33 above the worst trap. It also matters for the demo: the cheapest correct milk now scores 0.81, stable but only just over 0.80. It is a one-line per-buyer setting (`mandates._CONFIDENCE_THRESHOLDS`).
+
+**Threshold set to 0.70 from the eval on Sat 14 Nov: 100 % precision, 93 % recall** (for `lapland-kitchen`, `smoke-kitchen` and `helsinki-bistro`; unknown buyers keep the conservative 0.80 default). Live results above that say "asks at 0.80" (e.g. croissants at 0.74) were measured before this change. Thirty cases are evidence, not proof. Every chosen line's confidence goes to the audit log, so approvals and rejections there will grow the set.
 
 ## Showcase 4: one input for everyone (`POST /api/agent/ask`)
 

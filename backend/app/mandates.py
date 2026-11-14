@@ -107,7 +107,9 @@ def restore(buyer_id: str, previous: dict | None) -> None:
 # Gemini Decisions confidence below this → ask the chef. Kept beside the mandate because the v0.2 Mandate contract
 # has no field for it (extra fields are forbidden); add `min_confidence` to the contract in the next version.
 DEFAULT_CONFIDENCE_THRESHOLD = 0.8
-_CONFIDENCE_THRESHOLDS = {"lapland-kitchen": 0.8, "smoke-kitchen": 0.8}
+# 0.70 from the labelled eval (backend/eval, Sat 14 Nov): 30/30, 0 wrong autos at 0.6-0.9, traps <= 0.37; at 0.70
+# precision 100 %, recall 93 % (80 % at 0.80). Unknown buyers keep the conservative default.
+_CONFIDENCE_THRESHOLDS = {"lapland-kitchen": 0.7, "smoke-kitchen": 0.7}
 
 
 def confidence_threshold(buyer_id: str) -> float:
