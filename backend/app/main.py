@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import catalogue, config, orders, quantity, valio
+from . import agent, catalogue, config, orders, quantity, valio
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -190,3 +190,25 @@ async def reject_order(order_id: OrderId, body: SignOff) -> dict:
 def audit(buyer_id: BuyerId, limit: Annotated[int, Query(ge=1, le=1000)] = 100) -> list[dict]:
     """The buyer's audit trail (contract AuditEntry objects), oldest first."""
     return orders.audit_log(buyer_id, limit)
+
+
+# --- Milestone 1 buyer agent: text -> catalogue -> Valio quote -> quantity -> decision -> front-door order -> audit.
+class AgentRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=2000, examples=["1000 L lactose-free milk for Monday"])
+    requested_date: date = Field(examples=["2026-11-16"])
+    buyer_id: BuyerId = Field(examples=["lapland-kitchen"])
+
+    @field_validator("requested_date")
+    @classmethod
+    def near_today(cls, d: date) -> date:
+        return QuoteRequest.near_today(d)
+
+
+@app.post("/api/agent/run")
+async def agent_run(req: AgentRunRequest) -> dict:
+    """The buyer's agent end to end. The mandate is loaded server-side for buyer_id (never from the client).
+    Returns {request, lines, decision, order, audit_id}: every candidate quoted (chosen or not, with why), a contract
+    Decision, the front door's order response when an order was placed (else null), and the audit entry id."""
+    _catalogue_ready()
+    return await agent.run(req.text, req.requested_date, req.buyer_id)
