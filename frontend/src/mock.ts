@@ -2,11 +2,12 @@
 // stock and cut-offs are illustrative. Which fixture you get depends on the request text:
 //   contains "1000" / "1 000" / "1,000"  -> ASK_HUMAN, order pending_approval (the lactose-free milk case)
 //   contains "cream" or "tomorrow"       -> refused at the front door (cut-off passed)
+//   contains "stock" or "split"          -> refused for partial stock, with substitutes + a split order proposal
 //   contains "error"                     -> a failed request (to see the error state)
 //   anything else                        -> AUTO, order confirmed (small butter order)
 import type {
-  AgentRun, Alternative, AuditEntry, Decision, Health, Line, OrderResponse, OrderStatus, Product, Quote,
-  QuantityResolution, Reason, RunInput,
+  AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
+  Product, Quote, QuantityResolution, Reason, RunInput, Substitute,
 } from './types'
 
 const NOW = '2026-11-14T10:00:00+00:00'
@@ -51,12 +52,21 @@ const reason = (code: string, severity: Reason['severity'], message: string, r: 
   code, severity, message, facts: {}, suggested_fix: null, product_id: null, ...r,
 })
 
-const decision = (outcome: Decision['outcome'], reasons: Reason[], alternatives: Alternative[] = []): Decision => ({
+const decision = (
+  outcome: Decision['outcome'], reasons: Reason[], alternatives: Alternative[] = [], confidence: number | null = null,
+): Decision => ({
   contract_version: '0.2', request_id: 'req-mock', outcome, reasons, primary_reason: reasons[0] ?? null,
-  confidence: 0.9, alternatives, rules_version: 'mock', decided_at: NOW,
+  confidence, alternatives, rules_version: 'mock', decided_at: NOW,
 })
 
-type Fixture = { request: AgentRun['request']; lines: Line[]; decision: Decision; status: OrderStatus }
+type Fixture = {
+  request: AgentRun['request']
+  lines: Line[]
+  decision: Decision
+  status: OrderStatus
+  substitutes?: Substitute[]
+  alternative_order?: AlternativeOrder | null
+}
 
 const MILK: Fixture = {
   request: {
@@ -77,6 +87,20 @@ const MILK: Fixture = {
       line_total_cents: 140000,
       why: 'Lactose free, 1 l cartons in stock for Monday, best delivery reliability (100 %).',
       chosen: true,
+      confidence: 0.96,
+      confidence_reason: 'Lactose-free milk in 1 l cartons: exactly what the request asks for.',
+      facts: { delivery_reliability: 1.0, carbon_kg_per_kg: 1.1, origin: 'fi' },
+    },
+    {
+      product: product({ id: '462775', name_en: 'Arla Milkdrink 1L lactose free fat free UHT Suomesta', brand: 'Arla', sales_unit: 'ST' }),
+      quote: quote({ product_id: '462775', price: 1.25, comparison_price: 1.25, comparison_unit: 'L', available_amount: 2000 }),
+      quantity: qty('462775', 1000, 'L', 'ST', 1000, 1, '1,000 L ÷ 1 L per ST (1 LTR per ST) = 1,000 ST.'),
+      line_total_cents: 125000,
+      why: 'Cheapest, but a fat-free UHT milk drink rather than milk.',
+      chosen: false,
+      confidence: 0.76,
+      confidence_reason: 'A fat-free UHT "milk drink", not the fresh milk a kitchen usually means by "milk".',
+      facts: { delivery_reliability: 0.947, carbon_kg_per_kg: 1.0, origin: 'fi' },
     },
     {
       product: product({ id: '463038', name_en: 'Valio Eila® semi skimmed milk drink 10 l novobox lactose free', sales_unit: 'KI' }),
@@ -98,7 +122,8 @@ const MILK: Fixture = {
         product_id: '463335', suggested_fix: 'Approve, or reduce the quantity.', facts: { line_total_cents: 140000, cap_cents: 30000 },
       }),
     ],
-    [{ product_id: '462775', summary: 'Arla lactose-free milk drink 1 l: only 51 in stock, not enough for 1000 L.' }],
+    [{ product_id: '462775', summary: 'Arla lactose-free milk drink 1 l is cheaper, but Gemini rates it 0.76 as a match for "milk".' }],
+    0.96,
   ),
   status: 'pending_approval',
 }
@@ -168,6 +193,78 @@ const CREAM: Fixture = {
     [{ product_id: '461273', summary: 'Valio whipping cream 20 l novobox lactose free (2 boxes), delivered Tue 17 Nov.' }],
   ),
   status: 'refused',
+  substitutes: [
+    {
+      product_id: '464699', replaces: '464194', tier: 'best', name: 'Valio whipping cream 1 l lactose free, organic',
+      why_safe: 'Same category (cream), lactose free like the original, no allergens you excluded.',
+      unit: 'ST', unit_price_cents: 590, reliability: 0.947, origin: 'fi', available: null,
+    },
+    {
+      product_id: '461273', replaces: '464194', tier: 'better', name: 'Valio whipping cream 20 l novobox lactose free',
+      why_safe: 'Same cream, lactose free, sold in 20 l boxes.', unit: 'KI', unit_price_cents: 8200, reliability: 1.0,
+      origin: 'fi', available: 12,
+    },
+    {
+      product_id: '466012', replaces: '464194', tier: 'good', name: 'Arla cooking cream 15 % 1 l lactose free',
+      why_safe: 'Lactose free, but a cooking cream: it will not whip.', unit: 'ST', unit_price_cents: 310,
+      reliability: 0.88, origin: 'se', available: 400,
+    },
+  ],
+}
+
+const SHORT: Fixture = {
+  request: {
+    summary: '1000 × 500 g unsalted butter, delivered Monday 16 Nov',
+    items: [{ query: 'unsalted butter 500 g', amount: 1000, unit: 'pcs', claims: [], exclude_allergens: [] }],
+  },
+  lines: [
+    {
+      product: product({ id: '464411', name_en: 'Valio butter 500 g unsalted', sales_unit: 'ST', claims: [], delivery_reliability: 1.0 }),
+      quote: quote({ product_id: '464411', price: 4.85, comparison_price: 9.7, comparison_unit: 'KG', available_amount: 640 }),
+      quantity: qty('464411', 1000, 'pcs', 'ST', 1000, 1, '1,000 pcs = 1,000 ST (1 piece = 1 ST).'),
+      line_total_cents: 485000,
+      why: 'Exact match, but only 640 in stock.',
+      chosen: true,
+      confidence: 0.98,
+      confidence_reason: 'Unsalted butter in 500 g packs, as asked.',
+      facts: { delivery_reliability: 1.0, carbon_kg_per_kg: 9.6, origin: 'fi' },
+    },
+  ],
+  decision: decision(
+    'ASK_HUMAN',
+    [
+      reason('STOCK_PARTIAL', 'ASK_HUMAN', 'Only 640 ST of Valio butter 500 g unsalted available, 1000 ordered.', {
+        product_id: '464411', suggested_fix: 'Reduce to 640 and cover the rest with an alternative.',
+        facts: { available: 640, requested: 1000 },
+      }),
+    ],
+    [],
+    0.98,
+  ),
+  status: 'refused',
+  substitutes: [
+    {
+      product_id: '464420', replaces: '464411', tier: 'best', name: 'Valio butter 500 g unsalted, organic',
+      why_safe: 'Same category (butter), unsalted, same 500 g pack.', unit: 'ST', unit_price_cents: 595,
+      reliability: 0.98, origin: 'fi', available: 900,
+    },
+    {
+      product_id: '466731', replaces: '464411', tier: 'good', name: 'Lurpak butter 500 g unsalted',
+      why_safe: 'Unsalted butter, 500 g, no allergens you excluded.', unit: 'ST', unit_price_cents: 640,
+      reliability: null, origin: 'dk', available: null,
+    },
+  ],
+  alternative_order: {
+    lines: [
+      { product_id: '464411', name: 'Valio butter 500 g unsalted', quantity: 640, unit: 'ST', unit_price_cents: 485, line_total_cents: 310400 },
+      {
+        product_id: '464420', name: 'Valio butter 500 g unsalted, organic', quantity: 360, unit: 'ST', unit_price_cents: 595,
+        line_total_cents: 214200, replaces: '464411',
+      },
+    ],
+    total_cents: 524600,
+    summary: 'Split across products: 640 ST of Valio butter 500 g unsalted + 360 ST of Valio butter 500 g unsalted, organic (best substitute). New total €5,246.00 net; needs your approval, then order these lines.',
+  },
 }
 
 let seq = 0
@@ -197,12 +294,15 @@ export const mockApi = {
     await wait()
     const text = input.text.toLowerCase()
     if (text.includes('error')) throw new Error('Request failed (500): mock backend error')
-    const f = structuredClone(/1[ ,]?000/.test(text) ? MILK : /cream|tomorrow/.test(text) ? CREAM : BUTTER)
+    const f = structuredClone(
+      /stock|split/.test(text) ? SHORT : /1[ ,]?000/.test(text) ? MILK : /cream|tomorrow/.test(text) ? CREAM : BUTTER,
+    )
+    const buyer = input.buyer_id ?? 'lapland-kitchen' // the real backend takes it from the agent key
     const chosen = f.lines.filter((l) => l.chosen)
     const order: OrderResponse = {
       order_id: f.status === 'refused' ? null : `00000000-0000-4000-8000-${String(seq + 1).padStart(12, '0')}`,
       status: f.status,
-      audit_id: log('valio_front_door', input.buyer_id, `Order via Valio front door: ${f.request.summary}`, f.decision),
+      audit_id: log('valio_front_door', buyer, `Order via Valio front door: ${f.request.summary}`, f.decision),
       total_cents: chosen.reduce((a, l) => a + (l.line_total_cents ?? 0), 0),
       lines: chosen.map((l) => ({
         product_id: l.product.id, name: l.product.name_en ?? l.product.id, quantity: l.quantity?.quantity ?? null,
@@ -211,9 +311,38 @@ export const mockApi = {
       })),
       decision: f.decision,
       rejected_options: [],
+      substitutes: f.substitutes ?? [],
+      alternative_order: f.alternative_order ?? null,
     }
-    if (order.order_id) orders.set(order.order_id, { buyer: input.buyer_id, res: order })
-    return { request: f.request, lines: f.lines, decision: f.decision, order, audit_id: log('buyer_agent', input.buyer_id, input.text, f.decision) }
+    if (order.order_id) orders.set(order.order_id, { buyer: buyer, res: order })
+    return { request: f.request, lines: f.lines, decision: f.decision, order, audit_id: log('buyer_agent', buyer, input.text, f.decision) }
+  },
+
+  // The front door re-checks a placed order; here anything over €1,000 needs the chef's OK.
+  async place(input: OrderInput): Promise<OrderResponse> {
+    await wait()
+    const known = new Map<string, { name: string; unit: string | null; cents: number | null }>()
+    for (const f of [MILK, BUTTER, CREAM, SHORT]) {
+      for (const l of f.lines) known.set(l.product.id, { name: l.product.name_en ?? l.product.id, unit: l.product.sales_unit, cents: l.quote?.price != null ? Math.round(l.quote.price * 100) : null })
+      for (const s of f.substitutes ?? []) known.set(s.product_id, { name: s.name, unit: s.unit, cents: s.unit_price_cents })
+    }
+    const lines = input.lines.map(({ product_id, quantity }) => {
+      const k = known.get(product_id)
+      return {
+        product_id, name: k?.name ?? product_id, quantity, unit: k?.unit ?? null, unit_price_cents: k?.cents ?? null,
+        line_total_cents: k?.cents != null ? Math.round(k.cents * quantity) : null,
+      }
+    })
+    const total = lines.reduce((a, l) => a + (l.line_total_cents ?? 0), 0)
+    const over = total > 100000
+    const d = decision(over ? 'ASK_HUMAN' : 'AUTO', over ? [reason('SPEND_OVER_LIMIT', 'ASK_HUMAN', `This order is ${(total / 100).toFixed(2)} € net, above your €1,000.00 auto-order limit.`, { suggested_fix: 'Approve, or reduce the order.' })] : [])
+    const res: OrderResponse = {
+      order_id: `00000000-0000-4000-8000-${String(seq + 1).padStart(12, '0')}`, status: over ? 'pending_approval' : 'confirmed',
+      audit_id: log('valio_front_door', 'lapland-kitchen', 'Order via Valio front door (split proposal)', d),
+      total_cents: total, lines, decision: d, rejected_options: [], substitutes: [], alternative_order: null,
+    }
+    orders.set(res.order_id!, { buyer: 'lapland-kitchen', res })
+    return res
   },
 
   async decide(orderId: string, action: 'approve' | 'reject'): Promise<OrderResponse> {

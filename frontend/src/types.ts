@@ -81,6 +81,9 @@ export type QuantityResolution = {
   explanation: string
 }
 
+// Room 1: static facts about the product, shown when present.
+export type LineFacts = { delivery_reliability: number | null; carbon_kg_per_kg: number | null; origin: string | null }
+
 export type Line = {
   product: Product
   quote: Quote | null
@@ -88,6 +91,30 @@ export type Line = {
   line_total_cents: number | null
   why: string
   chosen: boolean
+  confidence?: number | null // Gemini Decisions API: P(this product is what the buyer asked for)
+  confidence_reason?: string | null
+  facts?: LineFacts
+}
+
+// gate._substitutes: up to 3 allergen-safe substitutes per refused line, best first.
+export type Substitute = {
+  product_id: string
+  replaces: string
+  tier: 'best' | 'better' | 'good'
+  why_safe: string
+  name: string
+  unit: string | null
+  unit_price_cents: number | null
+  reliability: number | null
+  origin: string | null
+  available: number | null // null = unknown
+}
+
+// gate._alternative_order: a split proposal when stock is short. Never automatic; re-POST its lines to order.
+export type AlternativeOrder = {
+  lines: (OrderLine & { replaces?: string; tier?: Substitute['tier'] })[]
+  total_cents: number
+  summary: string
 }
 
 export type OrderStatus = 'confirmed' | 'pending_approval' | 'refused' | 'rejected'
@@ -111,6 +138,8 @@ export type OrderResponse = {
   lines: OrderLine[]
   decision: Decision
   rejected_options: { product_id: string; reasons: Reason[] }[]
+  substitutes?: Substitute[] // absent on reject responses
+  alternative_order?: AlternativeOrder | null
 }
 
 export type AgentRun = {
@@ -121,7 +150,8 @@ export type AgentRun = {
   audit_id: string
 }
 
-export type RunInput = { text: string; requested_date: string; buyer_id: string }
+export type RunInput = { text: string; requested_date: string; buyer_id?: string }
+export type OrderInput = { requested_date: string; lines: { product_id: string; quantity: number }[] }
 
 // Contract AuditEntry (GET /api/audit, oldest first).
 export type AuditEntry = {

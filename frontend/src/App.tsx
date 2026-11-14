@@ -6,12 +6,11 @@ import { RunResult } from './RunResult'
 import type { AgentRun, Health } from './types'
 
 const EXAMPLE = 'We need 1000 L of lactose-free milk delivered by Monday.'
-const DEFAULT_BUYER = 'lapland-kitchen' // the buyer with a server-side mandate; the agent key decides once /api/agent/run checks it
 export default function App() {
   const [keys, setKeyDraft] = useState(getKeys) // the inputs; applied on Save
   const [text, setText] = useState(EXAMPLE)
   const [date, setDate] = useState(nextMonday)
-  const [buyerId, setBuyerId] = useState(DEFAULT_BUYER)
+  const [runDate, setRunDate] = useState(date) // the date the shown run was for (split orders reuse it)
   const [run, setRun] = useState<AgentRun | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -29,13 +28,13 @@ export default function App() {
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    const buyer = buyerId.trim()
     setRunning(true)
     setAnnounce('Asking the agent…')
     setError(null)
     setRun(null)
+    setRunDate(date)
     try {
-      setRun(await runAgent({ text: text.trim(), requested_date: date, buyer_id: buyer }))
+      setRun(await runAgent({ text: text.trim(), requested_date: date }))
     } catch (err) {
       setError(errorText(err))
       setAnnounce('')
@@ -92,17 +91,10 @@ export default function App() {
           <h2>What do you need?</h2>
           <label htmlFor="text">Request</label>
           <textarea id="text" rows={3} value={text} onChange={(e) => setText(e.target.value)} required />
-          <div className="row">
-            <div>
-              <label htmlFor="date">Delivery date</label>
-              <input id="date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-            </div>
-            <div>
-              <label htmlFor="buyer">Buyer ID</label>
-              <input id="buyer" value={buyerId} onChange={(e) => setBuyerId(e.target.value)} required />
-            </div>
-          </div>
-          <button type="submit" disabled={running || deciding || !text.trim() || !buyerId.trim()}>
+          <label htmlFor="date">Delivery date</label>
+          <input id="date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+          <p className="muted">The buyer is the one your agent key belongs to.</p>
+          <button type="submit" disabled={running || deciding || !text.trim()}>
             {running ? 'Asking the agent…' : 'Ask the agent'}
           </button>
         </form>
@@ -117,7 +109,7 @@ export default function App() {
           </p>
         )}
         {run && (
-          <RunResult key={run.audit_id} run={run} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} />
+          <RunResult key={run.audit_id} run={run} requestedDate={runDate} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} />
         )}
 
         <AuditLog refreshKey={auditKey} />
