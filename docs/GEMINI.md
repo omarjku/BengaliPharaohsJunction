@@ -51,6 +51,20 @@ On price alone, the agent would have bought the "milk drink" (EUR 1,400, within 
 - "10 kg sugar for baking for Monday": Dansukker caster sugar 1 kg **0.94** (chosen), icing sugar 0.62, Segafredo
   brown sugar 500 × 5 g sachets **0.44**. The order is held for `ALLERGEN_DATA_MISSING`.
 
+**Live check on the deployed API, Sun 15 Nov, after the ranking fix** (`smoke-kitchen`, threshold 0.70; confidence
+leads, price breaks ties within 0.10):
+- "100 litraa laktoositonta maitoa maanantaiksi": whole milk 0.90 (EUR 164), **semi-skimmed 0.85 (EUR 156, chosen:
+  a near-tie, so the cheaper wins), confirmed**; Eila milk drink 0.68 (a different product).
+- "1000 L lactose-free milk for Monday": the same scores, semi-skimmed EUR 1,560, held (`SPEND_OVER_LIMIT`, EUR 60
+  over). 1500 L: EUR 2,340, held (`LINE_OVER_CAP` + `SPEND_OVER_LIMIT`).
+- "10 L of lactose-free cream for Monday": **low-fat cream 0.74 (EUR 29.70, confirmed)**, whipping cream 0.70.
+- "10 kg sugar for baking for Monday": caster sugar 1 kg **0.84**, chosen. The sachets aren't among the candidates
+  any more. Held for `ALLERGEN_DATA_MISSING`.
+- Kebab: "20 kg döner kebab meat" → Well Kebab kebab meat at 0.61, below 0.70, so the agent asks.
+- Before the fix, at 09:45: Valio *coffee* milk lactose free scored 0.72 and won on price (EUR 1,300, confirmed), and
+  "10 L lactose-free cream" picked coffee cream. Our QA caught it. Coffee milk and coffee cream are now labelled
+  traps in the eval.
+
 This is the one place for exact live scores. Other docs say ≈0.9 or below 0.5.
 
 **Trap, "60 L Arla lactose-free whole milk drink for Monday"**: the only match is a Terminal product whose cut-off has passed, so nothing is ordered (ASK_HUMAN). The substitutes the door's finder suggests are each judged: "Eila 3 % milk drink: 0.82 that it is an acceptable substitute", most acceptable first. Substitutes below 0.80 are marked "check before accepting".

@@ -17,8 +17,10 @@ CASH_AND_CARRY = {
 }
 CLICK_AND_COLLECT_HOURS = 4  # "as early as four hours after confirmation", Helsinki only
 
-URGENT = re.compile(r"\b(asap|as soon as possible|right away|right now|now|urgent\w*|today|tonight|this morning|"
-                    r"this afternoon|in \d+\s*(min|mins|minutes|h|hours?)|heti|nyt|kiire\w*|tänään|pikaisesti)\b", re.I)
+# Timing wording only: a bare "now"/"nyt" elsewhere in a sentence is not urgency (QA round 2).
+URGENT = re.compile(r"\b(asap|as soon as possible|right away|right now|(need|needed|want)\w*\s+(it\s+|them\s+|this\s+)?now|"
+                    r"now please|urgent\w*|today|tonight|this morning|this afternoon|in \d+\s*(min|mins|minutes|h|"
+                    r"hours?)|heti|kiire\w*|tänään|pikaisesti|nyt heti)\b", re.I)
 
 
 def _late(lines: list[dict], requested: date) -> bool:
@@ -49,8 +51,9 @@ def _next_delivery(lines: list[dict]) -> dict:
 
 
 def urgent_options(text: str, buyer_id: str, requested: date, now: datetime, lines: list[dict]) -> list[dict] | None:
-    """None unless the chef signals urgency, the delivery is for today, or Valio can't deliver in time."""
-    if not (URGENT.search(text) or requested <= now.date() or _late(lines, requested)):
+    """Only when it IS urgent (timing wording, or delivery wanted today) AND Valio's earliest delivery is later than
+    needed: otherwise the normal delivery already serves the chef and pickup suggestions are noise."""
+    if not ((URGENT.search(text) or requested <= now.date()) and _late(lines, requested)):
         return None
     if mandates.location(buyer_id) != "helsinki":
         return [_next_delivery(lines)]

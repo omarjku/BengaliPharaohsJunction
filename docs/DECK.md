@@ -37,23 +37,25 @@ The door re-checks every order, from any agent, against the buyer's mandate. Uns
 
 ### 4. Demo
 Screens: `3-needs-ok-390.png` (held for the chef), `4-approved-390.png` (approved on a phone).
-**One box, English or Finnish. 1000 L milk → ordered alone. 1500 L → chef approves. Menu → "how many guests?"**
+**One box, typed or spoken, in Finnish too. 100 L milk → ordered alone. 1000 L → €60 over → chef approves. Menu → cart.**
 
 > **Notes:** Live, measured Sun 15 Nov:
-> - 1000 L: Gemini ≈0.9 on the cheapest milk, €1,400, AUTO confirmed.
-> - 1500 L: €2,100, LINE_OVER_CAP + SPEND_OVER_LIMIT, held. The agent key gets 401 on approve; the approver key
->   confirms.
+> - "100 litraa laktoositonta maitoa": semi-skimmed, EUR 156, AUTO confirmed.
+> - 1000 L: EUR 1,560, EUR 60 over the limit, held. The agent key gets 401 on approve; the approver key confirms.
+> - Menu for 80: a cart of about EUR 881, 7 lines, always asks.
+> - Exact products and prices of the latest live run: `docs/m1-e2e.md` and `docs/GEMINI.md`.
 > - Menu: always ASK_HUMAN (MENU_ASSUMPTIONS).
 
-### 4b. Voice, during service (optional; only if voice lands)
+### 4b. Voice, during service
 **"Cream for Monday?" Asked hands-free, before the cut-off.**
 One box for kebab shops, cafés and restaurants, typed or spoken. Same door, same rules.
 
 > **Notes:**
-> - Push-to-talk via Gemini Live.
+> - Push-to-talk. Gemini transcribe-live, about 1.3 s, Finnish too. Measured live: 10 L of cream confirmed
+>   about 5 s after speaking.
+> - Helsinki: "as soon as possible" gets Cash & Carry and Click & Collect suggestions (about 4 h), never a pickup order.
 > - Valio Aimo delivers in about 24 h on agreed days, so the win is catching the cut-off during service, not
 >   same-hour delivery.
-> - The slide is ready in `docs/deck/index.html` as a commented-out block.
 
 ### 5. Trust and controls (J3)
 - **Hard rules refuse:** allergens, claims, max price, cut-off
@@ -82,7 +84,7 @@ One box for kebab shops, cafés and restaurants, typed or spoken. Same door, sam
 - OpenAPI 3.1 and JSON Schemas
 - MCP server: any agent plugs in
 - Signed statements (Ed25519)
-- GS1 allergens; Peppol mapped; AP2 / RFC 9421 next
+- RFC 9421 agent signing; GS1; Peppol mapped; AP2 next
 
 > **Notes:**
 > - Point to `docs/STANDARDS.md` for the standards table (implemented / mapped / next).
@@ -96,7 +98,7 @@ One box for kebab shops, cafés and restaurants, typed or spoken. Same door, sam
 | **0.7** | **14** | **0** |
 | 0.8 | 12 | 0 |
 
-Sugar sachets for baking: **below 0.5**. Caster sugar: **≈0.9**.
+Sugar sachets for baking: **below 0.4** (eval). Coffee milk for "milk": a trap our QA caught, now in the eval.
 
 > **Notes:**
 > - Gemini Decisions API: calibrated P(yes) on 30 hand-labelled cases with real Valio products.

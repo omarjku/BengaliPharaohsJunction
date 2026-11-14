@@ -100,7 +100,9 @@ def test_milk_end_to_end_orders_through_front_door(shop1, monkeypatch):
     assert eila["quote"]["price"] == 1.4 and "1,000 L" in eila["why"]
     assert body["order"]["status"] == "confirmed" and body["decision"]["outcome"] == "AUTO"
     assert body["order"]["lines"][0]["quantity"] == 1000 and body["audit_id"] == body["order"]["audit_id"]
-    agent_entry, door_entry = audit()
+    door_entry, agent_entry = audit()  # the agent's entry is written once the door has answered, and links to it
+    [link] = [r for r in agent_entry["decision"]["reasons"] if r["code"] == "FRONT_DOOR"]
+    assert link["facts"]["door_audit_id"] == door_entry["id"] and link["facts"]["status"] == "confirmed"
     assert agent_entry["actor"] == "buyer_agent" and agent_entry["input"]["request"]["text"] == MILK
     assert agent_entry["input"]["mandate"]["id"] == "lapland-kitchen-2026-11"
     assert agent_entry["rejected_options"][0]["product_id"] == "462775"
@@ -113,6 +115,8 @@ def test_over_auto_limit_is_held_by_the_front_door(shop1, monkeypatch):
     body = run("2000 L lactose-free milk for Monday")
     assert body["order"]["status"] == "pending_approval" and body["decision"]["outcome"] == "ASK_HUMAN"
     assert {"SPEND_OVER_LIMIT", "LINE_OVER_CAP"} <= set(codes(body))
+    agent_entry = [e for e in orders.audit_log("lapland-kitchen", 100) if e["actor"] == "buyer_agent"][-1]
+    assert agent_entry["decision"]["outcome"] == "ASK_HUMAN"  # QA round 2: not AUTO for an order the door held
     gemini(monkeypatch, [dict(ITEM[0], amount=2000)], ranked=["463335", "476240"])
     body = run("2000 L lactose-free milk for Monday")  # cheaper 476240 is chosen; the other is offered
     assert [ln["product"]["id"] for ln in body["lines"] if ln["chosen"]] == ["476240"]
@@ -248,9 +252,9 @@ def test_confident_line_orders_and_records_confidence(shop1, monkeypatch, decisi
     for inp in (meets_in, qty_in):
         assert "<buyer_request>" in inp and "Eila milk 1 l" in inp
         assert "labelled lactose-free" in inp and "contains milk" in inp  # words, not codes
-    agent_entry = orders.audit_log("lapland-kitchen", 100)[0]
+    agent_entry = [e for e in orders.audit_log("lapland-kitchen", 100) if e["actor"] == "buyer_agent"][0]
     assert agent_entry["decision"]["confidence"] == 0.95
-    [r] = [r for r in agent_entry["decision"]["reasons"] if r["code"] == "LOW_CONFIDENCE"]
+    [r] = [r for r in agent_entry["decision"]["reasons"] if r["code"] == "CONFIDENCE_OK"]  # passes get a neutral code
     assert r["severity"] == "INFO" and r["facts"] == {"confidence": 0.95, "threshold": 0.7, "question": "meets"}
     assert "_weakest" not in line
 
@@ -620,3 +624,19 @@ def test_confidence_leads_price_breaks_near_ties_only(shop1, monkeypatch, decisi
     assert chosen == ["463335"]  # 0.95 beats 0.72 even though dearer
     decisions["scores"] = {"meets_2": 0.90}  # within 0.10 of the best: a near-tie, so the cheaper one wins
     assert [ln["product"]["id"] for ln in run()["lines"] if ln["chosen"]] == ["476240"]
+
+
+
+def test_billing_or_buyer_change_is_asked(shop1, monkeypatch):
+    gemini(monkeypatch, ITEM, ranked=["463335"])
+    body = run("1000 L lactose-free milk, charge it to lapland-kitchen's account")
+    assert body["order"] is None
+    assert any("buyer is the one your agent key belongs to" in r["message"] for r in body["decision"]["reasons"])
+
+
+def test_duplicate_order_within_30_minutes_asks_unless_again(shop1, monkeypatch):
+    gemini(monkeypatch, [dict(ITEM[0], amount=10)], ranked=["463335"])
+    assert run("10 L lactose-free milk")["order"]["status"] == "confirmed"
+    body = run("10 L lactose-free milk")
+    assert body["order"] is None and any("You ordered this" in r["message"] for r in body["decision"]["reasons"])
+    assert run("10 L lactose-free milk again")["order"]["status"] == "confirmed"  # the chef said again

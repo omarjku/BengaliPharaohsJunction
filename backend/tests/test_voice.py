@@ -143,3 +143,23 @@ def test_decoder_is_pinned_to_the_declared_type(live):
     assert post(wav(1.0), "audio/webm").status_code == 422
     with pytest.raises(ValueError):
         voice.to_pcm16(b"#EXTM3U\n#EXT-X-TARGETDURATION:1\nhttp://169.254.169.254/latest\n", "audio/mpeg")
+
+
+def test_silence_is_refused_fast_without_calling_gemini(live):
+    """QA round 2: a 3 s silent WAV took 16.6 s and came back 503."""
+    import time
+    silent = io.BytesIO()
+    with wave.open(silent, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16_000)
+        w.writeframes(b"\x00\x00" * 48_000)
+    t = time.monotonic()
+    r = post(silent.getvalue())
+    assert r.status_code == 422 and "didn't hear any words" in r.json()["detail"]
+    assert time.monotonic() - t < 2 and live.sent == []  # Gemini never called
+
+
+def test_decoder_errors_are_plain_sentences(live):
+    detail = post(b"definitely not audio", "audio/webm").json()["detail"]
+    assert detail == "I couldn't read that recording. Try again, or type the order." and "Errno" not in detail

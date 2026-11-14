@@ -13,7 +13,8 @@ The buyer's agent is the visitor, and Valio wants a front door.
 Front Door is the door Valio Aimo could offer to its buyers' own AI agents.
 
 A kebab shop, café or restaurant types a need into one box, in English or Finnish ("1000 L lactose-free milk for
-Monday", "20 kg döner kebab meat"), or pastes a menu, and the agent asks for the number of guests if needed. Our Gemini
+Monday", "20 kg döner kebab meat"), or pastes a menu, and the agent asks for the number of guests if needed. Or says it: push-to-talk voice lets a chef
+order hands-free mid-service, before the delivery cut-off. Our Gemini
 buyer agent finds the right products, quotes Valio's API live and converts the amounts. It orders on its own only
 when it is sure and within the buyer's rules. Everything else goes to the chef, with reasons and alternatives.
 
@@ -29,8 +30,10 @@ Gartner expects most B2B buying to run through AI agents by 2028. Valio Aimo alr
 customers, but restaurants will bring their own agents, and nothing checks them at the door. **Front Door** is that
 door: the interface and operating model Valio could offer buyers' agents.
 
-**The buyer's agent (Gemini).** One box for kebab shops, cafés and restaurants, in English or Finnish: an order, or a
-menu (it asks "for how many guests?" when it needs to).
+**The buyer's agent (Gemini).** One box for kebab shops, cafés and restaurants, typed or spoken, in English or Finnish:
+an order, or a menu (it asks "for how many guests?" when it needs to). Voice is push-to-talk, transcribed by Gemini in
+about a second. Valio delivers in about 24 h on agreed days, so the point is catching the cut-off hands-free during
+service.
 - Gemini parses it.
 - Our agent searches Valio's full catalogue, quotes the live Valio API (price, stock, cut-off) and converts litres
   and kilos into sales units exactly.
@@ -59,11 +62,6 @@ Valio's side and never sent by the agent. It uses fresh quotes.
 
 Codex was our adversary: 62 findings, 43 fixed, each with a test.
 
-**Optional line, only if voice ships before submission** (add it to both descriptions):
-- Voice: "Push-to-talk via Gemini Live, so a chef mid-service can order hands-free and the agent catches the order
-  cut-off. Valio delivers in about 24 hours on agreed days, so the cut-off is what matters."
-- If voice ships, add "Gemini Live API" to Technologies used.
-
 ## Challenges
 - **Valio Aimo: Trusted Trade Agents** (main challenge)
 - **Best Use of Gemini API**
@@ -72,7 +70,8 @@ Codex was our adversary: 62 findings, 43 fixed, each with a test.
 
 ## Technologies used
 Python 3, FastAPI, Pydantic, httpx, `cryptography` (Ed25519), React 19, TypeScript, Vite, Google Gemini API
-(`gemini-4-hydrogen` structured output, Gemini Decisions API), Model Context Protocol (official Python SDK), OpenAPI
+(`gemini-4-hydrogen` structured output, Gemini Decisions API, Gemini transcribe-live for voice), RFC 9421 HTTP Message
+Signatures (optional agent signing), Model Context Protocol (official Python SDK), OpenAPI
 3.1 / JSON Schema, Render, Claude Code, OpenAI Codex CLI, RAEA (video), Playwright (deck PDF).
 
 ## Links

@@ -27,13 +27,12 @@ AP2 and Mastercard Agent Pay use signed mandates, and Visa adds spend controls t
 We have one half of that. The door signs what it decided (an Ed25519 statement on every order response, verifiable
 at `/.well-known/front-door-keys.json`), but the buyer's mandate is still trusted because it is stored at our end.
 
-**Recommended next standard: RFC 9421 signed requests, then AP2-style signed mandates.** The weakest link today is
-identity. An agent proves itself with a static shared secret, and the mandate is trusted because it is stored at
-our end. Signing each `POST /api/orders` with RFC 9421 gives every agent its own key and makes each order
-non-repudiable in the audit log, at the cost of a key directory and a signature check. It is a published RFC and it
-needs no new payload format. Once agents are identified, the stored `Mandate` can be issued to the buyer as a
-signed, expiring AP2-style intent mandate, and Valio could verify it without holding a copy. Peppol export comes
-after that, for the order document itself.
+**Recommended next standard: AP2-style signed mandates.** RFC 9421 agent signing is now implemented as an option:
+a buyer that registers an Ed25519 key in `AGENT_SIGNING_KEYS` must sign every order and agent call, on top of its
+key (see "Signed agent requests" below, and `scripts/sign_request.py`). That gives each agent its own key pair and
+makes its orders non-repudiable. The remaining weak spot is the mandate, which is trusted because it is stored at
+our end. Next, it can be issued to the buyer as a signed, expiring AP2-style intent mandate, so Valio could verify
+it without holding a copy. Peppol export comes after that, for the order document itself.
 
 ## Published open formats
 

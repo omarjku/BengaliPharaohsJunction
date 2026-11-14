@@ -56,7 +56,7 @@ def test_menu_without_guests_asks_and_never_guesses(shop1, monkeypatch):  # noqa
 
 def test_unclear_no_date_and_conflicting_dates_ask(shop1, monkeypatch):  # noqa: F811
     route(monkeypatch, "unclear")
-    assert post("hello there")["question"].startswith("What would you like to order?")
+    assert post("hello there")["question"] == "I can only help with ordering from Valio. What do you need?"
     route(monkeypatch, "order")
     assert post("20 kg butter", requested=None)["question"] == "For which delivery day?"
     assert post("20 kg butter tomorrow", requested=None)["date_source"] == "text"
@@ -122,13 +122,18 @@ def test_lapland_urgency_gets_the_honest_next_delivery():
     assert opt["kind"] == "next_delivery" and "2026-11-16 if ordered before 2026-11-15T17:00:00+0200" in opt["text"]
 
 
-def test_not_urgent_and_on_time_means_no_suggestions_but_late_delivery_triggers_them():
+def test_urgent_options_need_urgency_and_a_late_delivery():
+    """QA round 2: only timing wording counts, and only when Valio can't deliver in time."""
     monday = datetime(2026, 11, 16).date()
-    assert urgent.urgent_options("20 kg butter for Monday", "helsinki-bistro", monday, SAT_10, [_q()]) is None
     late = [_q(avail="2026-11-18")]  # Valio's earliest is after the day needed
-    assert urgent.urgent_options("20 kg butter for Monday", "helsinki-bistro", monday, SAT_10, late)[0]["kind"] == "walk_in"
+    assert urgent.urgent_options("20 kg butter for Monday", "helsinki-bistro", monday, SAT_10, [_q()]) is None
+    assert urgent.urgent_options("20 kg butter for Monday", "helsinki-bistro", monday, SAT_10, late) is None  # not urgent
+    assert urgent.urgent_options("we have butter now, 20 kg for Monday", "helsinki-bistro", monday, SAT_10, late) is None
+    assert urgent.urgent_options("20 kg butter ASAP", "helsinki-bistro", monday, SAT_10, late)[0]["kind"] == "walk_in"
+    assert urgent.urgent_options("20 kg butter ASAP", "helsinki-bistro", SAT_10.date(), SAT_10, [_q()])  # today: late
     sun_20 = datetime(2026, 11, 15, 20, 0, tzinfo=ask.TZ)
-    assert "(closed now)" in urgent.urgent_options("butter now", "helsinki-bistro", sun_20.date(), sun_20, [])[0]["hours"]
+    opts = urgent.urgent_options("butter heti", "helsinki-bistro", sun_20.date(), sun_20, [_q(avail="2026-11-17")])
+    assert "(closed now)" in opts[0]["hours"]
 
 
 def test_ask_route_asap_means_today_with_urgent_options(shop1, monkeypatch):  # noqa: F811
@@ -160,7 +165,7 @@ def test_ask_stream_sends_phases_then_the_same_result(shop1, monkeypatch):  # no
     kind, body = ev[-1]
     assert kind == "result" and body["order"]["status"] == "confirmed" and body["intent"] == "order"
     assert set(body["timings_ms"]) == {"understand", "total"}
-    plain = post("1000 L lactose-free milk")  # the JSON route is unchanged (no phases leak into it)
+    plain = post("1000 L lactose-free milk again")  # the JSON route is unchanged (no phases leak into it)
     assert plain["order"]["status"] == "confirmed" and "timings_ms" in plain
 
 
@@ -170,3 +175,9 @@ def test_ask_stream_question_and_auth(shop1, monkeypatch):  # noqa: F811
                headers={"X-Agent-Key": "agent-lk"})
     assert _events(r.text)[-1][1]["question"] == "For how many guests?"
     assert c.post("/api/agent/ask/stream", json={"text": "milk"}).status_code == 401
+
+
+
+def test_past_date_says_so(shop1, monkeypatch):  # noqa: F811
+    route(monkeypatch, "order")
+    assert "is in the past" in post("20 kg butter for 2026-01-05", requested=None)["question"]
