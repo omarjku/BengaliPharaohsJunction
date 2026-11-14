@@ -89,18 +89,13 @@ jobs:
       - packages-tests
       - frontend
     steps:
-      # The default proxy answers 403 "Access denied" for api.craci.com (even to a fake token). No presets + default
-      # allow gives this job direct end-to-end connections (docs: setup-action-network, "Use standard CI networking").
-      - uses: cracicorp/setup@v1
-        with:
-          network: |
-            default: allow
-            presets: []
+      # CRACI's API answers 403 to calls from inside CRACI runners, so the CRACI evidence (SBOM, network trace) is
+      # fetched by the deployed app (backend/app/craci_evidence.py, /.well-known/front-door-build.json). This job only
+      # records the commit and run; it gets no CRACI token.
       - name: Check out repository
         uses: actions/checkout@v4
       - name: Collect CRACI SBOM and network evidence
         env:
-          CRACI_API_TOKEN: ${{ secrets.CRACI_API_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 scripts/craci_sbom.py
       - name: Write build provenance
