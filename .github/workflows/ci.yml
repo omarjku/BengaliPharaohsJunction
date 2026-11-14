@@ -118,7 +118,12 @@ jobs:
           }
           Path("build-provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
+      - name: Show CRACI evidence in the log
+        run: |
+          echo '--- build-provenance.json'; cat build-provenance.json
+          echo '--- craci-sbom-summary.json (first 4000 chars)'; head -c 4000 craci-sbom-summary.json; echo
       - name: Upload CRACI provenance
+        continue-on-error: true  # GitHub artifact storage quota is full on this account; the log above has the evidence
         uses: actions/upload-artifact@v4
         with:
           name: craci-provenance
