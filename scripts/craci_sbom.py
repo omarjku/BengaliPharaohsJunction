@@ -319,6 +319,10 @@ def main() -> int:
             warnings.append(f"CRACI token check: OK, sees {len(active.get('jobs', active) if isinstance(active, dict) else active)} active job(s)")
         except (CraciAPIError, ValueError, TypeError) as exc:
             warnings.append(f"CRACI token check: {exc}")
+        try:  # a fake token: 401 means the API is reachable from this runner (so a 403 above is about our token)
+            _get(f"{API_BASE_URL}/v1preview1/jobs?status=active", "invalid-probe", "application/json")
+        except CraciAPIError as exc:
+            warnings.append(f"CRACI reachability probe (fake token): {exc}")
     records: list[tuple[str, dict, bytes]] = []
     network_destinations: set[str] = set()
     for job_id in job_ids:
