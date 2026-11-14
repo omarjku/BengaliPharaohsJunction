@@ -39,7 +39,7 @@ export function Composer(p: {
     }
   }
   return (
-    <form className={`composer${p.voiceOn ? ' voice-on' : ''}`} onSubmit={submit}>
+    <form className={`composer${p.voiceOn ? ' voice-on' : ''}${p.text.trim() ? ' has-text' : ''}`} onSubmit={submit}>
       {p.photo}
       <label className="sr-only" htmlFor="text">
         {t.field}
@@ -59,13 +59,20 @@ export function Composer(p: {
         placeholder={p.placeholder}
         enterKeyHint="send"
       />
-      {p.text.trim() && (
-        <button type="submit" className="composer-btn composer-send" aria-label={t.send} title={t.send} disabled={p.busy}>
+      <span className={`composer-slot${p.onVoice && !p.voiceOn ? ' with-voice' : ''}`}>
+        <button type="submit" className="composer-btn composer-send" aria-label={t.send} title={t.send} disabled={p.busy} tabIndex={p.text.trim() ? undefined : -1} aria-hidden={p.text.trim() ? undefined : true} inert={!p.text.trim()}>
           <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
             <path d="M10 16V4M4.5 9.5 10 4l5.5 5.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
-      )}
+        {p.onVoice && !p.voiceOn && (
+          <button type="button" className="composer-btn composer-voice" aria-label={t.voice} title={t.voice} onClick={p.onVoice} disabled={p.busy} tabIndex={p.text.trim() ? -1 : undefined} aria-hidden={p.text.trim() ? true : undefined} inert={!!p.text.trim()}>
+            <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
+              <path d="M4 8v4M7.3 5v10M10.6 7v6M13.9 4v12M17 8v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
+          </button>
+        )}
+      </span>
       {p.voiceOn ? (
         <>
           <button type="button" className={`composer-btn${p.muted ? ' on' : ''}`} aria-pressed={p.muted} aria-label={p.muted ? t.unmute : t.mute} title={p.muted ? t.unmute : t.mute} onClick={p.onMute}>
@@ -84,13 +91,6 @@ export function Composer(p: {
       ) : (
         <>
           {!p.text.trim() && p.mic}
-          {p.onVoice && !p.text.trim() && (
-            <button type="button" className="composer-btn composer-voice" aria-label={t.voice} title={t.voice} onClick={p.onVoice} disabled={p.busy}>
-              <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
-                <path d="M4 8v4M7.3 5v10M10.6 7v6M13.9 4v12M17 8v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-              </svg>
-            </button>
-          )}
         </>
       )}
     </form>
