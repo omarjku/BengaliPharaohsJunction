@@ -79,3 +79,15 @@ check) for clipped text, contrast and loudness, then time the result at 1:55 or 
     value is catching the cut-off hands-free during service, not same-hour delivery.
   - The cut-off times come from the mock API (Stock usually 17:00 the day before, Terminal about 4 days before) and
     are demo assumptions. Never say "delivered in an hour".
+
+## New beats for photo input and Talk (pending merge)
+
+The draft is 1:55, and the hard cap is 2:00. To add the two new beats without going over, swap them in:
+
+| New beat | Replaces | Length | On screen | Caption |
+|---|---|---|---|---|
+| Photo of the handwritten list → cart | **Menu for 80** (11 s; the photo is the stronger "reads what chefs write" moment) | 11 s | Phone camera on `docs/demo-images/handwritten-list.jpg` → five lines read → cart | A handwritten list, in Finnish and English, becomes a checked cart |
+| Talk: the Helsinki bistro orders butter | **Sugar for baking** (6 s) plus 1 s each from History and Rules | 8 s | Talk on the phone: "Order butter for Monday" → "How much?" → the spoken answer → "You usually order this" | It talks back, and it knows the kitchen |
+
+If only one lands, use the photo beat and keep the sugar shot. The current Helsinki voice shot (cream, ASAP) stays
+in either case: it's the urgent-pickup moment, a different story from Talk.
