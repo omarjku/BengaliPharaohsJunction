@@ -66,6 +66,27 @@ def test_honey_cannot_be_safe_by_nature_for_a_vegan_diet():
     assert diet.check({"name_en": "Honey", "claims": [], "allergens": {}}, "vegan", True, model)["level"] == "unverifiable"
 
 
+def test_safe_by_nature_cannot_clear_ordinary_animal_products_for_vegan():
+    model = {"safe_by_nature": True, "single_ingredient_unprocessed": True,
+             "certain": True, "reason": "the model says it is suitable"}
+
+    for name in ("Milk", "Cheese", "Eggs", "Cream", "Butter", "Yoghurt"):
+        assert diet.check({"name_en": name, "claims": [], "allergens": {}}, "vegan", True, model)["level"] == "unverifiable"
+    assert diet.check({"name_en": "Vegan cheese", "claims": ["VEGAN"], "allergens": {}}, "vegan", True, model)["level"] == "verified"
+
+
+def test_vegan_backstop_catches_omitted_seafood_and_poultry_risks(monkeypatch):
+    async def under_reports(*_args, **_kwargs):
+        return {"vegan": []}
+
+    monkeypatch.setattr(agent, "_gemini", under_reports)
+    diet._RISK_CACHE.clear()
+
+    risks = asyncio.run(diet.at_risk(["prawns", "shrimp", "duck", "octopus", "oysters"], ["vegan"]))
+
+    assert risks["vegan"] == {"prawns", "shrimp", "duck", "octopus", "oysters"}
+
+
 @pytest.mark.parametrize("name,tag,claims,may,free,risk", [
     ("trace flour", "gluten_free", ("FREE_FROM_GLUTEN",), ("AW",), (), []),
     ("gluten trace ingredient", "gluten_free", ("FREE_FROM_GLUTEN",), ("AW",), (), []),
@@ -73,6 +94,10 @@ def test_honey_cannot_be_safe_by_nature_for_a_vegan_diet():
     ("vegan trace ingredient", "vegan", ("VEGAN",), ("AM",), (), []),
     ("partial free powder", "vegan", (), (), ("AM",), ["partial free powder"]),
     ("mayonnaise", "vegan", (), (), (), []),
+    ("prawns", "vegan", (), (), (), []),
+    ("duck", "vegan", (), (), (), []),
+    ("octopus", "vegan", (), (), (), []),
+    ("oysters", "vegan", (), (), (), []),
     ("honey", "vegan", ("VEGAN",), (), (), [{"ingredient": "honey", "safe_by_nature": True,
                                                    "single_ingredient_unprocessed": True, "certain": True,
                                                    "reason": "honey is natural"}]),

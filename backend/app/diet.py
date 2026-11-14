@@ -74,8 +74,10 @@ def _verified_basis(product: dict, diet: str) -> str | None:
 
 
 _PROCESSED_WORDS = re.compile(r"\b(?:sauces?|stocks?|broths?|sausages?|breads?|pasta|flavou?red|seasoned|marinated|mix|ready|soups?|bakery|baked|cakes?|pastr(?:y|ies)|dressings?|grav(?:y|ies)|cubes?|concentrate|instant|processed|filled|spreads?|nuggets?|burgers?|meals?)\b", re.I)
-_VEGAN_RISK_WORDS = re.compile(r"\b(?:honey|gelatine|gelatin|meat|beef|pork|chicken|turkey|lamb|veal|bacon|ham|sausage|fish|anchov(?:y|ies)|shellfish|cheese|milk|cream|butter|ghee|whey|casein|yog(?:h)?urt|egg|mayonnaise|mayo|lard|suet|collagen|rennet)\b", re.I)
-_VEGAN_CONFLICT_WORDS = re.compile(r"\b(?:honey|gelatine|gelatin|meat|beef|pork|chicken|turkey|lamb|veal|bacon|ham|fish|anchov(?:y|ies)|shellfish|ghee|whey|casein|lard|suet|collagen|rennet)\b", re.I)
+_VEGAN_RISK_WORDS = re.compile(r"\b(?:honey|gelatine|gelatin|meat|beef|pork|chicken|turkey|duck|lamb|veal|bacon|ham|sausage|fish|anchov(?:y|ies)|shellfish|prawns?|shrimp|octopus|oysters?|cheese|milk|cream|butter|ghee|whey|casein|yog(?:h)?urt|eggs?|mayonnaise|mayo|lard|suet|collagen|rennet)\b", re.I)
+_VEGAN_CONFLICT_WORDS = re.compile(r"\b(?:honey|gelatine|gelatin|meat|beef|pork|chicken|turkey|duck|lamb|veal|bacon|ham|fish|anchov(?:y|ies)|shellfish|prawns?|shrimp|octopus|oysters?|milk|cheese|cream|butter|ghee|whey|casein|yog(?:h)?urt|eggs?|lard|suet|collagen|rennet)\b", re.I)
+_VEGAN_HARD_CONFLICT_WORDS = re.compile(r"\b(?:honey|gelatine|gelatin|meat|beef|pork|chicken|turkey|duck|lamb|veal|bacon|ham|fish|anchov(?:y|ies)|shellfish|prawns?|shrimp|octopus|oysters?|ghee|whey|casein|lard|suet|collagen|rennet)\b", re.I)
+_EXPLICIT_VEGAN = re.compile(r"\b(?:vegan|plant[- ]based)\b", re.I)
 _GLUTEN_RISK_WORDS = re.compile(r"\b(?:flou?r|bread|pasta|noodles?|stock|broth|sauce|gravy|beer|malt|cereal|crumbs?)\b", re.I)
 
 
@@ -85,7 +87,12 @@ def _certain(value) -> bool:
 
 def _name_conflicts(product: dict, diet: str) -> bool:
     name = " ".join(str(product.get(key) or "") for key in ("name_en", "name_fi"))
-    return diet == "vegan" and bool(_VEGAN_CONFLICT_WORDS.search(name))
+    if diet != "vegan":
+        return False
+    # A vegan-labelled cheese/milk/egg alternative is allowed, but a label never clears hard animal-derived names.
+    if _VEGAN_HARD_CONFLICT_WORDS.search(name):
+        return True
+    return not ("VEGAN" in _claims(product) or _EXPLICIT_VEGAN.search(name)) and bool(_VEGAN_CONFLICT_WORDS.search(name))
 
 
 def requires_diet_check(product: dict, diet: str) -> bool:
