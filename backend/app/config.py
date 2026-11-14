@@ -20,3 +20,5 @@ AGENT_KEYS = os.getenv("AGENT_KEYS", "")
 APPROVER_KEYS = os.getenv("APPROVER_KEYS", "")
 # VALIO_ADMIN_KEYS: Valio staff reading every buyer's audit trail (X-Valio-Admin-Key), `key=valio[:name]`. Read-only.
 VALIO_ADMIN_KEYS = os.getenv("VALIO_ADMIN_KEYS", "")
+# Base64 of a 32-byte Ed25519 private key; signs every order response (signing.py). Unset → ephemeral dev key.
+FRONT_DOOR_SIGNING_KEY = os.getenv("FRONT_DOOR_SIGNING_KEY", "")

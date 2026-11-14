@@ -55,6 +55,7 @@ Set the variables from `.env.example`:
 | `AGENT_KEYS` | Comma-separated `key=buyer_id[:name]` entries for purchasing agents. |
 | `APPROVER_KEYS` | Comma-separated `key=buyer_id[:name]` entries for human approvers. |
 | `VALIO_ADMIN_KEYS` | Comma-separated `key=valio[:name]` entries for Valio staff: read-only `GET /api/admin/audit` across all buyers (`X-Valio-Admin-Key`). |
+| `FRONT_DOOR_SIGNING_KEY` | Base64 of a 32-byte Ed25519 seed; signs every order response (public key at `/.well-known/front-door-keys.json`, check with `POST /api/verify`; see `docs/STANDARDS.md`). Unset = ephemeral key. |
 
 Use long random values for the front-door keys. `AGENT_KEYS` authenticates
 `X-Agent-Key`; `APPROVER_KEYS` authenticates `X-Approver-Key`. If either key
