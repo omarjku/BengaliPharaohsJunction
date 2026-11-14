@@ -3,7 +3,7 @@ import pytest
 from conftest import REQ
 from fastapi.testclient import TestClient
 
-from app import agent, valio
+from app import agent, orders, valio
 from app.main import app
 
 c = TestClient(app, raise_server_exceptions=False)
@@ -42,7 +42,7 @@ def codes(body):
 
 
 def audit(buyer="lapland-kitchen"):
-    return c.get("/api/audit", params={"buyer_id": buyer}).json()
+    return orders.audit_log(buyer, 100)  # read the store directly: the audit route needs an approver key
 
 
 ITEM = [{"query": "milk", "amount": 1000, "unit": "L", "dietary": ["lactose_free"]}]

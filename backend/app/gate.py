@@ -8,6 +8,8 @@ Contract tension (contracts v0.2): only HARD_CODES may carry DECLINE severity, s
 is ASK_HUMAN in the `Decision`. But no human sign-off can make Valio deliver past its cut-off, so the
 door's own `status` refuses orders with a NOT_APPROVABLE reason: the human is told why and what to change.
 """
+import logging
+import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -19,12 +21,20 @@ from trade_contracts.common import RuleKind, UncertaintyPolicy
 
 from . import catalogue, valio
 
-RULES_VERSION = "t07-front-door-0.1"
+RULES_VERSION = "t07-front-door-0.2"
+log = logging.getLogger(__name__)
 ASK, DECLINE, INFO = Severity.ASK_HUMAN, Severity.DECLINE, Severity.INFO
 _RANK = {INFO: 0, ASK: 1, DECLINE: 2}
 
-# Valio physically can't deliver the line as ordered; the order has to change, a signature can't fix it.
-NOT_APPROVABLE = frozenset({C.CUTOFF_PASSED, C.UNDELIVERABLE, C.STOCK_NONE, C.STOCK_PARTIAL, C.PRICE_MISSING})
+# Mandate hard rules with no reason code in contracts v0.2. Until Zoha adds CLAIM_MISSING / UNIT_PRICE_OVER_MAX,
+# they borrow the closest code and carry facts["hard_rule"]; either way they are refused (see _blocking).
+CLAIM_MISSING = getattr(C, "CLAIM_MISSING", C.DATA_MISSING)
+UNIT_PRICE_OVER_MAX = getattr(C, "UNIT_PRICE_OVER_MAX", C.LINE_OVER_CAP)
+# Valio physically can't deliver the line as ordered, or the mandate forbids it: the order has to change,
+# a signature can't fix it.
+NOT_APPROVABLE = frozenset({C.CUTOFF_PASSED, C.UNDELIVERABLE, C.STOCK_NONE, C.STOCK_PARTIAL, C.PRICE_MISSING,
+                            CLAIM_MISSING, UNIT_PRICE_OVER_MAX} - {C.DATA_MISSING, C.LINE_OVER_CAP})
+NUMERIC_RULES = (RuleKind.MAX_UNIT_PRICE_CENTS, RuleKind.MIN_DELIVERY_RELIABILITY, RuleKind.AUTO_APPROVE_LIMIT_CENTS)
 # Claims worth keeping when looking for a substitute (dietary needs, not marketing claims like LOW_SODIUM_SALT).
 DIETARY_CLAIMS = {"FREE_FROM_LACTOSE", "FREE_FROM_GLUTEN", "VEGAN", "VEGETARIAN", "FREE_FROM_MILK"}
 MAX_ALTERNATIVES = 3
@@ -64,13 +74,26 @@ def _allergen_codes(value: str) -> set[str]:
     """Mandate allergen value ("AP", "peanut", "milk") → GS1 codes in the catalogue. Empty = can't interpret."""
     v = value.strip()
     if re.fullmatch(r"[A-Za-z]{2}", v):
-        return {v.upper()}
+        return {v.upper()} & catalogue.ALLERGEN_NAMES.keys()  # an unknown code ("ZZ") is MANDATE_INVALID, not ignored
     word = v.lower().rstrip("s")
     return {c for c, name in catalogue.ALLERGEN_NAMES.items() if word and word in name}
 
 
 def _rules(m: Mandate, kind: RuleKind) -> list:
     return [r.value for r in m.hard_rules if r.kind is kind]
+
+
+def _num(v) -> float | None:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def _nums(m: Mandate, kind: RuleKind) -> list[float]:
+    """Valid numeric rule values; check() reports the invalid ones as MANDATE_INVALID."""
+    return [f for v in _rules(m, kind) if (f := _num(v)) is not None]
 
 
 def _cutoff_passed(q: dict, now: datetime) -> bool:
@@ -136,13 +159,27 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
             rs.append(_r(C.PRICE_CHANGED, ASK, f"The price of {name} changed from {eur(approved_price)} to "
                          f"{eur(unit_cents)} per {unit} since it was approved.", pid, "Approve the new price or reject.",
                          old_unit_price_cents=approved_price, unit_price_cents=unit_cents))
+        for cap in _nums(m, RuleKind.MAX_UNIT_PRICE_CENTS):
+            if unit_cents > cap:
+                rs.append(_r(UNIT_PRICE_OVER_MAX, ASK, f"{name} costs {eur(unit_cents)} per {unit}, above your "
+                             f"{eur(int(cap))} maximum unit price.", pid, "Pick a cheaper alternative.",
+                             hard_rule=RuleKind.MAX_UNIT_PRICE_CENTS.value, unit_price_cents=unit_cents, max_cents=cap))
         if qty is not None:
             total = int((Decimal(unit_cents) * Decimal(str(qty))).quantize(Decimal(1), rounding=ROUND_HALF_UP))
             info["line_total_cents"] = total
+            if total < 1:
+                rs.append(_r(C.QTY_INVALID, DECLINE, f"The {name} line comes to {eur(total)}; an order line must be "
+                             "at least 1 cent.", pid, "Order a larger quantity.", line_total_cents=total, requested=qty))
             if total > m.per_line_cap_cents:
                 rs.append(_r(C.LINE_OVER_CAP, ASK, f"The {name} line is {eur(total)} (net of VAT), above your "
                              f"{eur(m.per_line_cap_cents)} per-line cap.", pid, "Approve, or reduce the quantity.",
                              line_total_cents=total, cap_cents=m.per_line_cap_cents))
+
+    for claim in sorted({str(v).strip().upper() for v in _rules(m, RuleKind.REQUIRED_CLAIM)}):
+        if claim not in (cat.get("claims") or []):
+            rs.append(_r(CLAIM_MISSING, ASK, f"{name} isn't labelled {claim}, which your mandate requires.", pid,
+                         f"Pick an alternative labelled {claim}.", hard_rule=RuleKind.REQUIRED_CLAIM.value,
+                         required_claim=claim))
 
     al = cat.get("allergens") or {}
     for code in sorted(excluded):
@@ -156,20 +193,20 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
         rs.append(_unknown(m.uncertainty_policy, C.ALLERGEN_DATA_MISSING, f"{name} has no allergen data, so your "
                            "allergen rules can't be verified.", pid, "Check the label, or pick a product with allergen data."))
 
-    for floor in _rules(m, RuleKind.MIN_DELIVERY_RELIABILITY):
+    for floor in _nums(m, RuleKind.MIN_DELIVERY_RELIABILITY):
         rel = cat.get("delivery_reliability")
         if rel is None:
             rs.append(_unknown(m.uncertainty_policy, C.DATA_MISSING, f"No delivery-reliability data for {name}.", pid,
-                               "Accept, or pick a product with a reliability record.", min_reliability=float(floor)))
-        elif rel < float(floor):
+                               "Accept, or pick a product with a reliability record.", min_reliability=floor))
+        elif rel < floor:
             rs.append(_r(C.LOW_RELIABILITY, ASK, f"{name} is delivered on time {rel:.0%} of the time, below your "
-                         f"{float(floor):.0%}.", pid, "Approve, or pick a more reliable product.",
-                         reliability=rel, min_reliability=float(floor)))
+                         f"{floor:.0%}.", pid, "Approve, or pick a more reliable product.",
+                         reliability=rel, min_reliability=floor))
     return rs, info
 
 
 def _blocking(r: Reason) -> bool:
-    return r.severity is DECLINE or r.code in NOT_APPROVABLE
+    return r.severity is DECLINE or r.code in NOT_APPROVABLE or "hard_rule" in r.facts
 
 
 def _sorted(rs: list[Reason]) -> list[Reason]:
@@ -179,7 +216,7 @@ def _sorted(rs: list[Reason]) -> list[Reason]:
 async def _alternatives(rejected: list[str], skip: set[str], requested: date, m: Mandate, excluded: set[str],
                         now: datetime) -> tuple[list[Alternative], list[RejectedOption]]:
     """Same category + same dietary claims, minus excluded allergens; re-quoted so we only offer orderable ones."""
-    need = {str(c) for c in _rules(m, RuleKind.REQUIRED_CLAIM)}
+    need = {str(c).strip().upper() for c in _rules(m, RuleKind.REQUIRED_CLAIM)}
     cands: dict[str, str] = {}  # candidate id -> the rejected product it replaces
     for pid in rejected:
         cat = catalogue.get(pid)
@@ -192,7 +229,11 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
                 cands.setdefault(c, pid)
     if not cands:
         return [], []
-    quotes = {q["product_id"]: q for q in await valio.get_quotes(list(cands), requested.isoformat())}
+    try:  # cached quotes are fine here: an alternative is only a suggestion, re-gated with fresh quotes when ordered
+        quotes = {q["product_id"]: q for q in await valio.get_quotes(list(cands), requested.isoformat())}
+    except Exception:
+        log.exception("alternatives lookup failed")  # the order's own verdict stands; just no alternatives
+        return [], []
     ok, bad = [], []
     for c, replaces in cands.items():
         q = quotes.get(c)
@@ -218,9 +259,14 @@ async def check(lines: list, requested: date, m: Mandate, request_id: str, spent
     Quotes are fetched here, server-side; nothing the client says about price or stock is trusted."""
     now = now or datetime.now(timezone.utc)
     ids = [ln.product_id for ln in lines]
-    quotes = {q["product_id"]: q for q in await valio.get_quotes(ids, requested.isoformat())}
+    quotes = {q["product_id"]: q for q in await valio.get_quotes(ids, requested.isoformat(), fresh=True)}
 
     order_rs: list[Reason] = []
+    for rule in m.hard_rules:
+        if rule.kind in NUMERIC_RULES and _num(rule.value) is None:
+            order_rs.append(_r(C.MANDATE_INVALID, ASK, f"Your {rule.kind.value} rule has a value that isn't a number "
+                               f"('{str(rule.value)[:40]}'), so it can't be checked.", None,
+                               "Fix the rule in the mandate.", rule_kind=rule.kind.value, rule_value=str(rule.value)[:40]))
     excluded: set[str] = set()
     for v in _rules(m, RuleKind.EXCLUDED_ALLERGEN):
         codes = _allergen_codes(str(v))
@@ -242,7 +288,7 @@ async def check(lines: list, requested: date, m: Mandate, request_id: str, spent
             rejected.append(RejectedOption(product_id=ln.product_id, reasons=_sorted(rs)))
 
     total = sum(li["line_total_cents"] or 0 for li in info)
-    limits = [int(float(v)) for v in _rules(m, RuleKind.AUTO_APPROVE_LIMIT_CENTS)]
+    limits = [int(v) for v in _nums(m, RuleKind.AUTO_APPROVE_LIMIT_CENTS)]
     if limits and total > min(limits):
         order_rs.append(_r(C.SPEND_OVER_LIMIT, ASK, f"This order is {eur(total)} (net of VAT), above your "
                            f"{eur(min(limits))} auto-approve limit.", None,

@@ -5,12 +5,14 @@ from contextlib import asynccontextmanager
 from datetime import date
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import agent, catalogue, config, orders, quantity, valio
+from . import agent, auth, catalogue, config, orders, quantity, valio
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -122,21 +124,50 @@ def resolve_quantity(req: QuantityRequest) -> dict:
 
 # --- Front door: orders + audit (T07). Responses: {order_id, status, audit_id, total_cents, lines, decision,
 # rejected_options}; status is confirmed | pending_approval | refused | rejected; decision is a contract Decision.
+# Auth (auth.py): X-Agent-Key places orders; X-Approver-Key reads / approves / rejects / audits. The buyer and the
+# approver's name come from the key. ONE uvicorn worker only: orders.py keeps its lock and store in-process.
 BuyerId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_.:-]{1,64}$")]
 OrderId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f-]{36}$")]  # uuid4
 MAX_ORDER_LINES = 50
+MAX_BODY_BYTES = 64 * 1024  # a full order (50 lines + a mandate with a 1000-id blocklist) is ~20 KB
+MANDATE_CAPS = {"hard_rules": 50, "blocklist": 1000, "guidance": 50, "open_questions": 20}
+Agent = Annotated[auth.Principal, Depends(auth.agent)]
+Approver = Annotated[auth.Principal, Depends(auth.approver)]
+
+
+@app.middleware("http")
+async def limit_body(request: Request, call_next):
+    """Refuse oversized bodies before they are read. Bodies without a Content-Length (chunked) are refused too,
+    since their size can't be checked up front; every normal JSON client sends one."""
+    if request.method in ("POST", "PUT", "PATCH"):
+        size = request.headers.get("content-length")
+        if size is None and request.headers.get("transfer-encoding"):
+            return JSONResponse({"detail": "Content-Length required"}, status_code=411)
+        if size is not None and (not size.isdigit() or int(size) > MAX_BODY_BYTES):
+            return JSONResponse({"detail": f"Request body over {MAX_BODY_BYTES} bytes"}, status_code=413)
+    return await call_next(request)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 without echoing the input back: a NaN in the body can't be JSON-encoded (it was a 500), and the
+    client already has what it sent."""
+    return JSONResponse({"detail": [{k: e[k] for k in ("type", "loc", "msg") if k in e} for e in exc.errors()]},
+                        status_code=422)
 
 
 class OrderLine(BaseModel):
     model_config = ConfigDict(extra="forbid")
     product_id: ProductId
-    quantity: float = Field(gt=0, le=100_000, description="In the product's sales unit (see the quote's sales_unit).")
+    quantity: float = Field(gt=0, le=100_000, allow_inf_nan=False,
+                            description="In the product's sales unit (see the quote's sales_unit).")
 
 
 class OrderRequest(BaseModel):
-    """An order at fixed prices. Price and stock are re-read from Valio here; the client can't set them."""
+    """An order at fixed prices. Price and stock are re-read from Valio here; the client can't set them.
+    The buyer is the one the X-Agent-Key belongs to; buyer_id is optional and must match it if sent."""
     model_config = ConfigDict(extra="forbid")
-    buyer_id: BuyerId
+    buyer_id: BuyerId | None = None
     requested_date: date = Field(examples=["2026-11-16"])
     lines: list[OrderLine] = Field(min_length=1, max_length=MAX_ORDER_LINES)
     mandate: Mandate
@@ -144,52 +175,65 @@ class OrderRequest(BaseModel):
     @field_validator("requested_date")
     @classmethod
     def near_today(cls, d: date) -> date:
+        if d < date.today():
+            raise ValueError("requested_date is in the past")
         return QuoteRequest.near_today(d)
 
     @model_validator(mode="after")
     def _consistent(self) -> "OrderRequest":
         if len({ln.product_id for ln in self.lines}) != len(self.lines):
             raise ValueError("each product_id may appear once per order")
-        if self.mandate.buyer_id != self.buyer_id:
-            raise ValueError("mandate.buyer_id must match buyer_id")
+        for field, cap in MANDATE_CAPS.items():
+            if len(getattr(self.mandate, field)) > cap:
+                raise ValueError(f"mandate.{field} may have at most {cap} entries")
         return self
 
 
-class SignOff(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    approver: Annotated[str, StringConstraints(pattern=r"^[\w .'-]{1,64}$")] = Field(examples=["Chef Aino"])
+def _mandate_for(who: auth.Principal, req: OrderRequest) -> Mandate:
+    """The mandate this order is judged by. Today: the one the agent sends, if it is its own buyer's.
+    m1-flow: swap the body for the stored mandate (mandates.py) here; nothing else changes."""
+    if (req.buyer_id or who.buyer_id) != who.buyer_id or req.mandate.buyer_id != who.buyer_id:
+        raise HTTPException(403, detail="This agent key may only order for its own buyer, under that buyer's mandate")
+    return req.mandate
 
 
 @app.post("/api/orders")
-async def place_order(req: OrderRequest) -> dict:
+async def place_order(req: OrderRequest, who: Agent) -> dict:
     """Valio's front door (D2): re-checks the order against hard rules with fresh quotes. AUTO → confirmed,
     ASK_HUMAN → pending_approval, a hard violation or something Valio can't deliver → refused (nothing stored),
-    always with reasons, suggested fixes and alternatives. Every run is audited."""
+    always with reasons, suggested fixes and alternatives. Every run is audited. Needs X-Agent-Key."""
+    mandate = _mandate_for(who, req)
     _catalogue_ready()
-    return await orders.place(req.buyer_id, req.requested_date, req.lines, req.mandate)
+    return await orders.place(who.buyer_id, req.requested_date, req.lines, mandate)
 
 
 @app.get("/api/orders/{order_id}")
-async def get_order(order_id: OrderId) -> dict:
-    return orders.get(order_id)
+def get_order(order_id: OrderId, who: Approver) -> dict:
+    """One of the approver's buyer's orders. Needs X-Approver-Key."""
+    return orders.get(order_id, who.buyer_id)
 
 
 @app.post("/api/orders/{order_id}/approve")
-async def approve_order(order_id: OrderId, body: SignOff) -> dict:
-    """Human sign-off; re-runs the gate first (cut-offs pass, prices and stock change)."""
+async def approve_order(order_id: OrderId, who: Approver) -> dict:
+    """Human sign-off as the key's owner; re-runs the gate first (cut-offs pass, prices and stock change).
+    Needs X-Approver-Key; a request body is ignored."""
     _catalogue_ready()
-    return await orders.approve(order_id, body.approver)
+    return await orders.approve(order_id, who)
 
 
 @app.post("/api/orders/{order_id}/reject")
-async def reject_order(order_id: OrderId, body: SignOff) -> dict:
-    return await orders.reject(order_id, body.approver)
+async def reject_order(order_id: OrderId, who: Approver) -> dict:
+    """Human refusal as the key's owner. Needs X-Approver-Key; a request body is ignored."""
+    return await orders.reject(order_id, who)
 
 
 @app.get("/api/audit")
-def audit(buyer_id: BuyerId, limit: Annotated[int, Query(ge=1, le=1000)] = 100) -> list[dict]:
-    """The buyer's audit trail (contract AuditEntry objects), oldest first."""
-    return orders.audit_log(buyer_id, limit)
+def audit(who: Approver, buyer_id: BuyerId | None = None, limit: Annotated[int, Query(ge=1, le=1000)] = 100) -> list[dict]:
+    """The approver's buyer's audit trail (contract AuditEntry objects), oldest first. buyer_id, if sent, must
+    be that buyer. Needs X-Approver-Key."""
+    if (buyer_id or who.buyer_id) != who.buyer_id:
+        raise HTTPException(403, detail="This approver key may only read its own buyer's audit trail")
+    return orders.audit_log(who.buyer_id, limit)
 
 
 # --- Milestone 1 buyer agent: text -> catalogue -> Valio quote -> quantity -> decision -> front-door order -> audit.

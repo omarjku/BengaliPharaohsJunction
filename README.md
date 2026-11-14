@@ -23,6 +23,13 @@ cp .env.example .env    # then fill in VALIO_API_KEY and GEMINI_API_KEY
 - `frontend/`: Vite + React + TypeScript. In production it calls the backend at `VITE_API_URL`.
 - Calls to Valio's API must send a `User-Agent` header (see `docs/valio-api-notes.md`).
 
+## Front door auth (backend)
+The order routes need API keys from env (see `.env.example`), as comma-separated `key=buyer_id[:name]` lists:
+- `AGENT_KEYS`: the buyer's purchasing agent sends `X-Agent-Key` to `POST /api/orders`. The buyer comes from the key; a different `buyer_id` or `mandate.buyer_id` in the body is refused (403).
+- `APPROVER_KEYS`: a human sends `X-Approver-Key` to `GET /api/orders/{id}`, `POST /api/orders/{id}/approve|reject` and `GET /api/audit`, for their own buyer only. `signed_off_by` is the key's name, never the body. Agent keys never approve.
+- Neither set: those routes answer 503 (the door is never open by default).
+- Run **one** uvicorn worker (`uvicorn app.main:app`, no `--workers N`): the order lock and store are in-process.
+
 ## Agent message board
 We coordinate through the pinned **Message Board** issue. Each person's Claude reads it before starting work and posts claims, PRs and review requests there. Run `./board.sh` for usage.
 
