@@ -13,6 +13,7 @@ import { ValioView } from './Valio'
 import { useVoice, voiceSupported } from './useVoice'
 import { usePhaseLine } from './usePhaseLine'
 import { DictationMic, MicButton, VoiceStatus } from './Voice'
+import { HeaderMenu } from './HeaderMenu'
 import { PhotoButton } from './PhotoButton'
 import { Composer } from './Composer'
 import { Onboarding } from './Onboarding'
@@ -407,31 +408,35 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   return (
     <>
       <header className="top">
-        <span className="brand">
-          <DoorGlyph /> Front Door
-        </span>
-        <span className="brand-for">{view === 'valio' ? 'Valio Aimo' : buyer ? buyerLabel(buyer) : ''}</span>
-        <nav aria-label={u.nav.main}>
-          {!needsSetup &&
-            (['order', 'history', 'rules'] as const).map((v) => (
-              <button key={v} type="button" className="link" aria-current={view === v ? 'page' : undefined} onClick={() => setView(v)}>
-                {u.nav[v]}
+        <div className="top-bar">
+          <div className="top-bar-in">
+            <span className="brand">
+              <DoorGlyph /> Front Door
+            </span>
+            <span className="brand-for">{view === 'valio' ? 'Valio Aimo' : buyer ? buyerLabel(buyer) : ''}</span>
+            <HeaderMenu onSwitchLang={onSwitchLang} />
+          </div>
+        </div>
+        <div className="top-nav">
+          <nav aria-label={u.nav.main}>
+            {!needsSetup &&
+              (['order', 'history', 'rules'] as const).map((v) => (
+                <button key={v} type="button" className="link" aria-current={view === v ? 'page' : undefined} onClick={() => setView(v)}>
+                  {u.nav[v]}
+                </button>
+              ))}
+            {!needsSetup && (
+              <button type="button" className="link" onClick={() => keysDialog.current?.showModal()}>
+                {u.nav.keys}
               </button>
-            ))}
-          {!needsSetup && (
-            <button type="button" className="link" onClick={() => keysDialog.current?.showModal()}>
-              {u.nav.keys}
-            </button>
-          )}
-          {adminKey && (
-            <button type="button" className="link" aria-current={view === 'valio' ? 'page' : undefined} onClick={() => setView('valio')}>
-              {u.valio.nav}
-            </button>
-          )}
-          <button type="button" className="link lang" onClick={onSwitchLang} aria-label={u.lang.label} title={u.lang.switchTo}>
-            {u.lang.short}
-          </button>
-        </nav>
+            )}
+            {adminKey && (
+              <button type="button" className="link" aria-current={view === 'valio' ? 'page' : undefined} onClick={() => setView('valio')}>
+                {u.valio.nav}
+              </button>
+            )}
+          </nav>
+        </div>
       </header>
 
       <dialog ref={keysDialog} className="sheet" aria-labelledby="keys-dialog-title">

@@ -525,9 +525,9 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
 .photo-error { color: var(--bad); }
 .photo-unreadable { color: var(--warn); }
 
-/* Dark mode: follows the phone or computer setting. Same tokens, darker values. */
-@media (prefers-color-scheme: dark) {
-  :root {
+/* Dark mode: set by the menu (data-theme on <html>); a first visit follows the phone or computer setting. */
+@media all {
+  :root[data-theme='dark'] {
     color-scheme: dark;
     --ink: #ecedef; --ink-2: #b4bac2; --ink-3: #9aa1aa;
     --paper: #121416; --paper-clear: rgb(18 20 22 / 0); --surface: #1b1e22; --wash: #24282d; --disabled: #2c3036;
@@ -536,6 +536,6 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
     --good: #5fcf80; --warn: #f0b44c; --warn-wash: #2e2410; --bad: #ff8a80;
   }
   /* Filled controls keep white text, so they use the deep teal, not the light text teal. */
-  .composer .composer-voice, .mic.on { background: var(--bubble-mine); border-color: var(--bubble-mine); }
-  .btn.done { color: var(--lime-ink); }
+  :root[data-theme='dark'] .composer .composer-voice, :root[data-theme='dark'] .mic.on { background: var(--bubble-mine); border-color: var(--bubble-mine); }
+  :root[data-theme='dark'] .btn.done { color: var(--lime-ink); }
 }
