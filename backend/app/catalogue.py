@@ -8,6 +8,7 @@ json.load of the raw file peaks ~680 MB; the Starter instance has 512 MB, so the
 """
 import csv
 import json
+import logging
 import re
 import tempfile
 import threading
@@ -138,8 +139,10 @@ def load() -> None:
             _products = {p["id"]: p for p in json.loads(SLIM.read_text())}
             _error = None
             _ready.set()
-        except Exception as e:  # surfaced by status(); the API answers 503 until fixed
-            _error = f"{type(e).__name__}: {e}"
+        except Exception:
+            # Full details (may include signed download URLs or paths) stay in the server log only.
+            logging.getLogger(__name__).exception("catalogue build/load failed")
+            _error = "catalogue_unavailable"
 
 
 def status() -> dict:
