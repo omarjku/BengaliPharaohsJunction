@@ -1,0 +1,40 @@
+{
+  "helsinki-bistro": {
+    "seats": 60,
+    "covers": {
+      "mon": [70, 95],
+      "tue": [75, 100],
+      "wed": [80, 105],
+      "thu": [90, 115],
+      "fri": [115, 140],
+      "sat": [120, 140],
+      "sun": [70, 95]
+    },
+    "busiest_days": ["fri", "sat"],
+    "revenue_per_cover_eur": 38,
+    "leftovers": [
+      {"item": "salmon", "amount": [1, 3], "unit": "kg", "whole": false},
+      {"item": "bread", "amount": [2, 8], "unit": "loaves", "whole": true},
+      {"item": "cream", "amount": [1, 5], "unit": "L", "whole": false}
+    ]
+  },
+  "lapland-kitchen": {
+    "seats": 40,
+    "covers": {
+      "mon": [25, 32],
+      "tue": [27, 34],
+      "wed": [28, 36],
+      "thu": [30, 38],
+      "fri": [35, 41],
+      "sat": [40, 45],
+      "sun": [38, 44]
+    },
+    "busiest_days": ["sat", "sun"],
+    "revenue_per_cover_eur": 95,
+    "leftovers": [
+      {"item": "salmon", "amount": [1, 3], "unit": "kg", "whole": false},
+      {"item": "bread", "amount": [1, 5], "unit": "loaves", "whole": true},
+      {"item": "cream", "amount": [1, 4], "unit": "L", "whole": false}
+    ]
+  }
+}

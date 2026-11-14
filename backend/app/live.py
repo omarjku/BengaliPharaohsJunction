@@ -6,7 +6,7 @@ search_catalogue is read-only. There is NO approve tool: sign-off stays with the
 The browser never sees the Gemini key; it authenticates with its agent key in the first message.
 
 Protocol (fixed with Room 4; change it only together):
-  client → server: {"type":"auth","agent_key"} first, then {"type":"audio","data":<b64 PCM16 mono 16 kHz>},
+  client → server: {"type":"auth","agent_key","warm":true?} first, then {"type":"audio","data":<b64 PCM16 mono 16 kHz>},
                    {"type":"text","text"}, {"type":"stop"}
   server → client: {"type":"ready"}, {"type":"audio","data":<b64 PCM16 mono 24 kHz>},
                    {"type":"transcript","role":"user"|"agent","text","final"}, {"type":"tool","name","status","label"},
@@ -18,6 +18,7 @@ import base64
 import hashlib
 import json
 import logging
+from dataclasses import dataclass
 from datetime import date, timedelta
 
 import websockets
@@ -29,14 +30,28 @@ from .voice import LIVE_URL
 
 connect = websockets.connect  # tests replace this with a fake Live socket
 SESSION_S = 300  # one conversation at most 5 minutes
+WARM_IDLE_S = 60  # an authenticated pre-warm that never receives chef input is disposable
 AUTH_S = 10
 MAX_MSG = 64_000  # one client message (100 ms of 16 kHz PCM16 is ~4.3 KB in base64)
 MAX_TEXT = 500
 MAX_TOOL_CALLS = 20  # per session: each ask_agent runs the whole pipeline
 MAX_PER_BUYER = 2  # concurrent Talk sessions per buyer
+MAX_WARM_PER_BUYER = 3
 _open: dict[str, int] = {}
+_warm: dict[str, list["_WarmSlot"]] = {}
 _TOOL_TASKS: set = set()  # in-flight tool calls: a disconnect never cancels an order half-way (strong refs)
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class _WarmSlot:
+    buyer_id: str
+    ws: WebSocket
+    loop: asyncio.AbstractEventLoop
+    dropped: asyncio.Event
+    real: bool = False
+    closed: bool = False
+    close_code: int | None = None
 
 SYSTEM = """You are the voice of a purchasing assistant for a restaurant kitchen that buys from Valio Aimo, a Finnish
 food wholesaler. Speak like a friendly, brief colleague, in the same language the chef uses (English or Finnish).
@@ -103,23 +118,80 @@ def _setup() -> dict:
                       "inputAudioTranscription": {}, "outputAudioTranscription": {}}}
 
 
-async def _client_to_live(ws: WebSocket, live) -> None:
-    while True:
-        raw = await ws.receive_text()
-        if len(raw) > MAX_MSG:
-            raise ValueError("message too large")
-        msg = json.loads(raw)
-        kind = msg.get("type")
-        if kind == "stop":
-            return
-        if kind == "audio":
-            data = str(msg.get("data") or "")
-            base64.b64decode(data, validate=True)  # garbage never reaches Gemini
-            await live.send(json.dumps({"realtimeInput": {"audio": {"data": data, "mimeType": "audio/pcm;rate=16000"}}}))
-        elif kind == "text":
-            text = str(msg.get("text") or "")[:MAX_TEXT]
-            await live.send(json.dumps({"clientContent": {"turns": [{"role": "user", "parts": [{"text": text}]}],
-                                                          "turnComplete": True}}))
+async def _client_to_live(ws: WebSocket, live, on_first=None) -> None:
+    started = False
+    try:
+        while True:
+            raw = await ws.receive_text()
+            if len(raw) > MAX_MSG:
+                raise ValueError("message too large")
+            msg = json.loads(raw)
+            kind = msg.get("type")
+            if kind == "stop":
+                return
+            if kind == "audio":
+                data = str(msg.get("data") or "")
+                base64.b64decode(data, validate=True)  # garbage never reaches Gemini
+                if on_first is not None and not started:
+                    if not await on_first():
+                        return
+                    started = True
+                await live.send(json.dumps({"realtimeInput": {"audio": {"data": data, "mimeType": "audio/pcm;rate=16000"}}}))
+            elif kind == "text":
+                text = str(msg.get("text") or "")[:MAX_TEXT]
+                if on_first is not None and not started:
+                    if not await on_first():
+                        return
+                    started = True
+                await live.send(json.dumps({"clientContent": {"turns": [{"role": "user", "parts": [{"text": text}]}],
+                                                              "turnComplete": True}}))
+    except WebSocketDisconnect:
+        return
+
+
+def _remove_warm(slot: _WarmSlot) -> None:
+    slots = _warm.get(slot.buyer_id)
+    if slots is None:
+        return
+    remaining = [candidate for candidate in slots if candidate is not slot]
+    if remaining:
+        _warm[slot.buyer_id] = remaining
+    else:
+        _warm.pop(slot.buyer_id, None)
+
+
+def _register_warm(slot: _WarmSlot) -> None:
+    slots = _warm.setdefault(slot.buyer_id, [])
+    slots.append(slot)
+    while len(slots) > MAX_WARM_PER_BUYER:
+        oldest = slots.pop(0)
+        oldest.closed = True
+        oldest.close_code = 1000
+        oldest.loop.call_soon_threadsafe(oldest.dropped.set)
+    if not slots:
+        _warm.pop(slot.buyer_id, None)
+
+
+async def _promote_warm(slot: _WarmSlot) -> bool:
+    if slot.closed:
+        return False
+    if _open.get(slot.buyer_id, 0) >= MAX_PER_BUYER:
+        slot.closed = True
+        slot.close_code = 4429
+        _remove_warm(slot)
+        await _close(slot.ws, 4429, "Too many conversations at once; try again in a minute.")
+        return False
+    slot.real = True
+    _remove_warm(slot)
+    _open[slot.buyer_id] = _open.get(slot.buyer_id, 0) + 1
+    return True
+
+
+async def _cancel_tasks(tasks) -> None:
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.sleep(0)
 
 
 async def _live_to_client(ws: WebSocket, live, buyer_id: str, bucket: str) -> None:
@@ -202,10 +274,23 @@ async def session(ws: WebSocket) -> None:
     if not config.TALK_ENABLED or not config.GEMINI_API_KEY:
         await _close(ws, 4503, "Talk is switched off on this server; type or hold the mic instead.")
         return
-    if ratelimit.wait_s("agent", bucket) > 0 or _open.get(who.buyer_id, 0) >= MAX_PER_BUYER:
+    if ratelimit.wait_s("agent", bucket) > 0:
         await _close(ws, 4429, "Too many conversations at once; try again in a minute.")
         return
-    _open[who.buyer_id] = _open.get(who.buyer_id, 0) + 1
+    warm = first.get("warm") is True
+    slot = (_WarmSlot(who.buyer_id, ws, asyncio.get_running_loop(), asyncio.Event())
+            if warm else None)
+    counted = False
+    if warm:
+        _register_warm(slot)
+        if slot.closed:
+            return
+    elif _open.get(who.buyer_id, 0) >= MAX_PER_BUYER:
+        await _close(ws, 4429, "Too many conversations at once; try again in a minute.")
+        return
+    else:
+        _open[who.buyer_id] = _open.get(who.buyer_id, 0) + 1
+        counted = True
     try:
         async with connect(LIVE_URL, additional_headers={"x-goog-api-key": config.GEMINI_API_KEY},
                            max_size=2**22) as live:
@@ -213,22 +298,81 @@ async def session(ws: WebSocket) -> None:
             if "setupComplete" not in json.loads(await asyncio.wait_for(live.recv(), 15)):
                 raise RuntimeError("Live setup failed")
             await ws.send_json({"type": "ready"})
-            tasks = [asyncio.create_task(_client_to_live(ws, live)),
-                     asyncio.create_task(_live_to_client(ws, live, who.buyer_id, bucket))]
-            done, pending = await asyncio.wait(tasks, timeout=SESSION_S, return_when=asyncio.FIRST_COMPLETED)
-            for t in pending:
-                t.cancel()
-            for t in done:
-                if (e := t.exception()) and not isinstance(e, (WebSocketDisconnect, websockets.ConnectionClosed)):
-                    raise e
-            await _close(ws, 1000, None if done else "The conversation reached its 5-minute limit.")
+            if slot is not None and slot.closed:
+                await _close(ws, slot.close_code or 1000, None)
+                return
+
+            started = asyncio.Event() if warm else None
+
+            async def on_first() -> bool:
+                nonlocal counted
+                ok = await _promote_warm(slot)
+                if ok:
+                    counted = True
+                    started.set()
+                return ok
+
+            client = asyncio.create_task(_client_to_live(ws, live, on_first if warm else None))
+            server = asyncio.create_task(_live_to_client(ws, live, who.buyer_id, bucket))
+            tasks = [client, server]
+
+            if warm:
+                idle = asyncio.create_task(asyncio.sleep(WARM_IDLE_S))
+                first_message = asyncio.create_task(started.wait())
+                dropped = asyncio.create_task(slot.dropped.wait())
+                done, pending = await asyncio.wait(tasks + [idle, first_message, dropped],
+                                                   return_when=asyncio.FIRST_COMPLETED)
+                if dropped in done:
+                    await _cancel_tasks([task for task in pending if task is not dropped])
+                    await _close(ws, slot.close_code or 1000, None)
+                elif first_message in done and slot.real:
+                    await _cancel_tasks([idle, first_message, dropped])
+                    done, pending = await asyncio.wait(tasks, timeout=SESSION_S,
+                                                       return_when=asyncio.FIRST_COMPLETED)
+                    await _cancel_tasks(pending)
+                    for task in done:
+                        if not task.cancelled() and (error := task.exception()) and not isinstance(
+                                error, (WebSocketDisconnect, websockets.ConnectionClosed)):
+                            raise error
+                    if slot.close_code is None:
+                        await _close(ws, 1000, None if done else "The conversation reached its 5-minute limit.")
+                elif idle in done or not done:
+                    slot.closed = True
+                    slot.close_code = 1000
+                    slot.dropped.set()
+                    await _cancel_tasks([task for task in pending if task is not idle])
+                    await _close(ws, 1000, "Idle: tap the mic to start again.")
+                else:
+                    await _cancel_tasks(pending)
+                    for task in done:
+                        if not task.cancelled() and (error := task.exception()) and not isinstance(
+                                error, (WebSocketDisconnect, websockets.ConnectionClosed)):
+                            raise error
+                    if slot.close_code is None:
+                        await _close(ws, 1000, None)
+            else:
+                done, pending = await asyncio.wait(tasks, timeout=SESSION_S, return_when=asyncio.FIRST_COMPLETED)
+                await _cancel_tasks(pending)
+                for task in done:
+                    if not task.cancelled() and (error := task.exception()) and not isinstance(
+                            error, (WebSocketDisconnect, websockets.ConnectionClosed)):
+                        raise error
+                await _close(ws, 1000, None if done else "The conversation reached its 5-minute limit.")
     except (WebSocketDisconnect, websockets.ConnectionClosed):
         pass
     except Exception as e:  # noqa: BLE001 - details stay in the log; the client gets a plain sentence
         log.warning("Talk session failed (%s)", type(e).__name__)
-        await _close(ws, 1011, "Talk is unavailable right now; type or hold the mic instead.")
+        if slot is None or slot.close_code is None:
+            await _close(ws, 1011, "Talk is unavailable right now; type or hold the mic instead.")
     finally:
-        _open[who.buyer_id] -= 1
+        if slot is not None:
+            slot.dropped.set()
+            _remove_warm(slot)
+        if counted:
+            if _open.get(who.buyer_id, 0) > 1:
+                _open[who.buyer_id] -= 1
+            else:
+                _open.pop(who.buyer_id, None)
 
 
 async def _close(ws: WebSocket, code: int, message: str | None) -> None:

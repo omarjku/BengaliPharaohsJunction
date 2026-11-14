@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 from trade_contracts import ReasonCode as C
 
-from . import agent, catalogue, conversation, gate, menu, progress, urgent
+from . import agent, catalogue, conversation, gate, kitchen, menu, progress, urgent
 
 TZ = ZoneInfo("Europe/Helsinki")
 log = logging.getLogger(__name__)
@@ -41,6 +41,11 @@ _WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday":
              "sunnuntai": 6}
 _COVERS = re.compile(r"\b(\d{1,4})\s*(guests?|people|persons?|covers?|portions?|pax|diners?|hengelle|hengen|henkeä|"
                      r"annosta|vierasta|vieraalle)\b", re.I)
+_CONTEXT_DAY = re.compile(r"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|maanantai\w*|"
+                          r"tiistai\w*|keskiviikko\w*|torstai\w*|perjantai\w*|lauantai\w*|sunnuntai\w*)\b", re.I)
+_CONTEXT_WEEK = re.compile(r"\b(?:next week|this week|for the week|weekly|ensi viikolla|ensi viikon|viikoksi|viikolle)\b", re.I)
+_CONTEXT_PLAN = re.compile(r"\b(?:food|meal|meals|menu|catering|what\s+(?:do|would)\s+we\s+need|"
+                           r"order\s+for)\b", re.I)
 
 
 def date_from_text(text: str, today: date) -> date | None:
@@ -70,6 +75,54 @@ def date_from_text(text: str, today: date) -> date | None:
         if re.search(rf"\b{word}\w*", low):  # Finnish inflections: maanantaiksi, perjantaina
             return today + timedelta(days=(wd - today.weekday() - 1) % 7 + 1)
     return None
+
+
+def _is_context_request(text: str) -> bool:
+    return bool(_CONTEXT_PLAN.search(text) and (_CONTEXT_DAY.search(text) or _CONTEXT_WEEK.search(text)))
+
+
+def kitchen_context(buyer_id: str) -> dict:
+    """Read buyer-scoped kitchen facts; kept as a seam for the planning flow and its tests."""
+    return kitchen.kitchen_context(buyer_id)
+
+
+def _context_plan(context: dict | None, text: str, today: date, stated: date | None) -> dict | None:
+    averages = ((context or {}).get("covers") or {}).get("avg_per_weekday") or {}
+    if not isinstance(averages, dict):
+        return None
+    if _CONTEXT_WEEK.search(text):
+        values = [value for value in averages.values()
+                  if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < value <= 2000]
+        covers = round(sum(values))
+        if not 1 <= covers <= 2000:
+            return None
+        # A week request needs a deliverable date for the existing menu pipeline; next Monday is the stable anchor.
+        when = today + timedelta(days=7 - today.weekday())
+        label = "your usual week"
+    else:
+        if stated is None:
+            return None
+        key = kitchen.DAY_KEYS[stated.weekday()]
+        value = averages.get(key)
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 < value <= 2000:
+            return None
+        covers = round(value)
+        if not 1 <= covers <= 2000:
+            return None
+        when = stated
+        label = f"your usual {stated:%A}"
+    leftovers = (context or {}).get("leftovers_recent") or []
+    if not isinstance(leftovers, list):
+        leftovers = []
+    return {"covers": covers, "when": when, "assumption": f"Using {covers} covers: {label}.",
+            "leftovers": leftovers}
+
+
+def _leftovers_note(leftovers: list[dict]) -> str:
+    if not leftovers:
+        return "No recent leftovers were recorded; nothing was subtracted automatically."
+    names = ", ".join(dict.fromkeys(str(item.get("item")) for item in leftovers if item.get("item")))
+    return f"Recent leftovers ({names}) are shown; they were not subtracted automatically."
 
 
 def _clean_topic(value) -> str | None:
@@ -180,6 +233,8 @@ def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict
         if not out.get("question") and out["next_steps"]:  # a multi-line order: the first held line's question leads
             out["question"], out["conversation_id"] = out["next_steps"][0]["question"], out["next_steps"][0]["conversation_id"]
     out["speak"] = conversation.speak(out, conversation.language(text))
+    if out.get("covers_source") == "kitchen":
+        out["speak"] = " ".join(filter(None, [out["speak"], out.get("covers_assumption"), out.get("kitchen_note")]))
     return out
 
 
@@ -337,16 +392,20 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
     given_covers, given_parse = covers, parsed
     # Menu markers always route to the menu path (classify), so its parse starts now and the order parse is skipped
     # (room3-menu-speed: the unused order parse used to block the menu parse for ~8 s).
-    menu_first = given_parse is None and bool(given_covers is not None or _COVERS.search(text) or _MENU_WORD.search(text))
+    context_request = given_parse is None and given_covers is None and _is_context_request(text)
+    menu_first = given_parse is None and bool(given_covers is not None or _COVERS.search(text) or _MENU_WORD.search(text)
+                                              or context_request)
     dishes = asyncio.create_task(menu.parse_menu(text, buyer_id)) if menu_first else None
     try:
-        return await _route(text, requested, buyer_id, today, stated, guess, t0, given_covers, given_parse, dishes)
+        return await _route(text, requested, buyer_id, today, stated, guess, t0, given_covers, given_parse, dishes,
+                            context_request)
     finally:
         if dishes is not None and not dishes.done():
             dishes.cancel()  # the request stopped at a question
 
 
-async def _route(text, requested, buyer_id, today, stated, guess, t0, given_covers, given_parse, dishes) -> dict:
+async def _route(text, requested, buyer_id, today, stated, guess, t0, given_covers, given_parse, dishes,
+                 context_request=False) -> dict:
     (intent, covers, _, topic), parsed, steer, meant = await asyncio.gather(
         classify(text), agent.none() if dishes else agent._given(given_parse, lambda: agent.parse(text)),
         agent.steering(text), agent.date_intent(text, guess, today) if guess else agent.none())
@@ -363,6 +422,12 @@ async def _route(text, requested, buyer_id, today, stated, guess, t0, given_cove
                     "This request seems to try to steer the agent (instructions, approvals, billing or authority "
                     "claims). Nothing was ordered.", C.LOW_CONFIDENCE,
                     "Send just the products, amounts and date; rules change only through the Rules screen.")
+    context_plan = None
+    if context_request:
+        intent = "menu"  # planning language is a menu request even when Gemini is unsure about the topic
+        context_plan = _context_plan(kitchen_context(buyer_id), text, today, stated)
+        if context_plan is not None:
+            covers = context_plan["covers"]
     if intent == "unclear":  # off-topic first: "what's the weather like?" isn't a date question (QA round 2)
         question = (f"I order food and kitchen supplies from Valio, so I can't help with {topic}. What do you need for "
                     "the kitchen?" if topic else "I can only help with ordering from Valio. What do you need?")
@@ -374,6 +439,10 @@ async def _route(text, requested, buyer_id, today, stated, guess, t0, given_cove
         return _ask(intent, covers, requested, "request", f"Which delivery day: {stated:%A %d %B} (as written) or "
                     f"{requested:%A %d %B} (as selected)?", C.LOW_CONFIDENCE, "Pick one delivery date.")
     when, source = (requested, "request") if requested else (stated, "text") if stated else (None, None)
+    if context_plan is not None and requested is None:
+        when, source = context_plan["when"], "text"
+    elif context_request and _CONTEXT_WEEK.search(text) and requested is None and stated is None:
+        when, source = today + timedelta(days=7 - today.weekday()), "text"
     if when is None and urgent.URGENT.search(text):  # "ASAP" / "now": the earliest day is today
         when, source = today, "text"
     if when is None:
@@ -392,6 +461,11 @@ async def _route(text, requested, buyer_id, today, stated, guess, t0, given_cove
             return _ask(intent, None, when, source, "For how many guests?", C.QTY_AMBIGUOUS,
                         "Add the number of guests, e.g. 'for 80 guests'.", kind="guests")
         body = await menu.propose(text, covers, when, buyer_id, dishes, steer_score=steer)
+        if context_plan is not None:
+            body["covers_source"] = "kitchen"
+            body["covers_assumption"] = context_plan["assumption"]
+            body["kitchen_leftovers"] = context_plan["leftovers"]
+            body["kitchen_note"] = _leftovers_note(context_plan["leftovers"])
     else:
         body = await agent.run(text, when, buyer_id, pre={"parsed": parsed, "steer": steer,
                                                          "meant": meant if when == guess else None})

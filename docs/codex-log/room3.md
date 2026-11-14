@@ -149,3 +149,7 @@
 ## 12. room3-assume (Codex builds, Claude supervises) — Sat 14 Nov
 - **Ask:** assume sensible amounts instead of asking (proposed carts, amounts in the product's natural unit with tappable options), standing diets per relevant ingredient, spare memory notes, grouped Decisions calls, specific off-topic replies (also in Talk).
 - **Run:** `codex exec -s workspace-write -m gpt-reserve -c model_reasoning_effort=max`, ~43 min. **Result:** 486 tests pass; added direct-order `assumptions`, amount `options`, profile-aware menu ingredients, off-topic `topic`. **Kept:** all of it. Its latency benchmark hit a Gemini ConnectError (sandbox network), so no valid number from Codex.
+
+## 13. room3-assume part 2: kitchen_context wiring + warm Talk sessions (Codex) — Sat 14 Nov
+- **Ask:** "food for next week" uses kitchen_context covers instead of asking guests (`covers_source: "kitchen"`); Talk `{"warm": true}` auth: 60 s idle limit, 5-minute clock from first audio/text, warm sockets don't count toward the 2-session cap (max 3 warm, oldest dropped).
+- **Result:** 496 tests pass; reviewed (auth, origin, rate limits, shielded tool tasks unchanged). **Kept:** all.

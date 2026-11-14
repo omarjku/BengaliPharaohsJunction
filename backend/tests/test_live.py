@@ -1,6 +1,7 @@
 """Talk (WebSocket /api/live) with a fake Gemini Live socket: no network, no Gemini key needed."""
 import asyncio
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +11,17 @@ from app import config, live, orders
 from app.main import app
 
 c = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def clear_live_state():
+    live._open.clear()
+    if hasattr(live, "_warm"):
+        live._warm.clear()
+    yield
+    live._open.clear()
+    if hasattr(live, "_warm"):
+        live._warm.clear()
 
 
 class FakeLive:
@@ -65,6 +77,21 @@ def until(ws, kind):
         seen.append(m)
         if m["type"] == kind:
             return seen
+
+
+def many_talk(monkeypatch):
+    monkeypatch.setattr(config, "AGENT_KEYS", "agent-chef=chef")
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(config, "TALK_ENABLED", True)
+    fakes = []
+
+    def connect(*_args, **_kwargs):
+        fake = FakeLive([])
+        fakes.append(fake)
+        return fake
+
+    monkeypatch.setattr(live, "connect", connect)
+    return fakes
 
 
 def test_bad_key_is_refused_with_4401(talk):
@@ -170,3 +197,91 @@ def test_signed_buyers_refused_and_every_tool_call_costs_a_token(talk, monkeypat
     assert "result" not in [m["type"] for m in seen]
     resp = next(m["toolResponse"] for m in fake.sent if "toolResponse" in m)["functionResponses"][0]
     assert "Too many requests" in resp["response"]["error"]
+
+
+def test_warm_session_idles_out_with_plain_error(talk, monkeypatch):
+    monkeypatch.setattr(live, "WARM_IDLE_S", 0.02, raising=False)
+    monkeypatch.setattr(live, "SESSION_S", 0.08)
+    fake = talk([])
+
+    with c.websocket_connect("/api/live") as ws:
+        ws.send_json({"type": "auth", "agent_key": "agent-chef", "warm": True})
+        assert ws.receive_json() == {"type": "ready"}
+        assert ws.receive_json() == {"type": "error", "message": "Idle: tap the mic to start again."}
+        with pytest.raises(WebSocketDisconnect) as e:
+            ws.receive_json()
+    assert e.value.code == 1000 and fake.sent[0].get("setup")
+
+
+def test_warm_session_clock_starts_at_first_text(talk, monkeypatch):
+    monkeypatch.setattr(live, "WARM_IDLE_S", 0.5, raising=False)
+    monkeypatch.setattr(live, "SESSION_S", 0.12)
+    talk([])
+
+    with c.websocket_connect("/api/live") as ws:
+        ws.send_json({"type": "auth", "agent_key": "agent-chef", "warm": True})
+        assert ws.receive_json() == {"type": "ready"}
+        time.sleep(0.2)  # longer than SESSION_S, but still inside the warm idle window
+        ws.send_json({"type": "text", "text": "milk"})
+        sent_at = time.monotonic()
+        assert ws.receive_json() == {"type": "error", "message": "The conversation reached its 5-minute limit."}
+        assert time.monotonic() - sent_at >= 0.08
+        with pytest.raises(WebSocketDisconnect) as e:
+            ws.receive_json()
+    assert e.value.code == 1000
+
+
+def test_warm_socket_does_not_consume_real_session_capacity(monkeypatch):
+    many_talk(monkeypatch)
+    with c.websocket_connect("/api/live") as warm:
+        warm.send_json({"type": "auth", "agent_key": "agent-chef", "warm": True})
+        assert warm.receive_json() == {"type": "ready"}
+        with c.websocket_connect("/api/live") as real_one:
+            real_one.send_json({"type": "auth", "agent_key": "agent-chef"})
+            assert real_one.receive_json() == {"type": "ready"}
+            with c.websocket_connect("/api/live") as real_two:
+                real_two.send_json({"type": "auth", "agent_key": "agent-chef"})
+                assert real_two.receive_json() == {"type": "ready"}
+                with c.websocket_connect("/api/live") as refused:
+                    refused.send_json({"type": "auth", "agent_key": "agent-chef"})
+                    assert refused.receive_json()["type"] == "error"
+                    with pytest.raises(WebSocketDisconnect) as e:
+                        refused.receive_json()
+                assert e.value.code == 4429
+
+
+def test_warm_promotion_is_refused_when_real_capacity_is_full(monkeypatch):
+    many_talk(monkeypatch)
+    with c.websocket_connect("/api/live") as real_one:
+        real_one.send_json({"type": "auth", "agent_key": "agent-chef"})
+        assert real_one.receive_json() == {"type": "ready"}
+        with c.websocket_connect("/api/live") as real_two:
+            real_two.send_json({"type": "auth", "agent_key": "agent-chef"})
+            assert real_two.receive_json() == {"type": "ready"}
+            with c.websocket_connect("/api/live") as warm:
+                warm.send_json({"type": "auth", "agent_key": "agent-chef", "warm": True})
+                assert warm.receive_json() == {"type": "ready"}
+                warm.send_json({"type": "text", "text": "milk"})
+                assert warm.receive_json()["type"] == "error"
+                with pytest.raises(WebSocketDisconnect) as e:
+                    warm.receive_json()
+            assert e.value.code == 4429
+
+
+def test_fourth_warm_socket_drops_the_oldest(monkeypatch):
+    many_talk(monkeypatch)
+    with c.websocket_connect("/api/live") as first:
+        first.send_json({"type": "auth", "agent_key": "agent-chef", "warm": True})
+        assert first.receive_json() == {"type": "ready"}
+        with c.websocket_connect("/api/live") as second:
+            second.send_json({"type": "auth", "agent_key": "agent-chef", "warm": True})
+            assert second.receive_json() == {"type": "ready"}
+            with c.websocket_connect("/api/live") as third:
+                third.send_json({"type": "auth", "agent_key": "agent-chef", "warm": True})
+                assert third.receive_json() == {"type": "ready"}
+                with c.websocket_connect("/api/live") as fourth:
+                    fourth.send_json({"type": "auth", "agent_key": "agent-chef", "warm": True})
+                    assert fourth.receive_json() == {"type": "ready"}
+                    with pytest.raises(WebSocketDisconnect) as e:
+                        first.receive_json()
+                    assert e.value.code == 1000
