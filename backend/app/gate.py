@@ -352,6 +352,13 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
         if lost:
             rs.append(_r(C.DATA_MISSING, ASK, f"{cat.get('name_en') or c} lacks {', '.join(lost)}.", c,
                          "Not offered as a substitute.", missing_claims=", ".join(lost)))
+        differs = _differs(old, cat)
+        added_allergens = [d.removeprefix("also contains ") for d in differs if d.startswith("also contains ")]
+        if added_allergens:
+            rs.append(_r(C.ALLERGEN_CONTAINS, ASK,
+                         f"{cat.get('name_en') or c} adds allergens ({'; '.join(added_allergens)}) compared with "
+                         f"{old.get('name_en') or replaces}.", c, "Not offered as a substitute.",
+                         added_allergens=", ".join(added_allergens)))
         if not _same_kind_for_alternative(old, cat):
             rs.append(_r(C.DATA_MISSING, ASK, f"{cat.get('name_en') or c} is not a similar kind of product.", c,
                          "Not offered as a substitute."))

@@ -46,9 +46,10 @@ def test_horseradish_for_onion_is_only_an_alternative_and_says_so(shop):
     res = run([("461339", 10)])
     subs = {s["product_id"]: s for s in res.substitutes}
     assert subs["465097"]["tier"] == "best"  # dearer, but an onion
-    assert subs["461229"]["tier"] == gate.OTHER_KIND and "different kind of product" in subs["461229"]["why_safe"]
-    assert [a.product_id for a in res.decision.alternatives] == ["465097", "461229"]
-    assert res.decision.alternatives[1].summary.startswith("ALTERNATIVE instead of 461339")
+    assert "461229" not in subs
+    rejected = next(ro for ro in res.rejected_options if ro.product_id == "461229")
+    assert any("not a similar kind of product" in reason.message for reason in rejected.reasons)
+    assert [a.product_id for a in res.decision.alternatives] == ["465097"]
 
 
 def test_a_different_kind_never_fills_a_split(shop):
@@ -56,7 +57,9 @@ def test_a_different_kind_never_fills_a_split(shop):
     add(shop, "501", "Jasmine noodles 5 kg", "777", amount=5000.0)            # same category, not rice
     res = run([("500", 30)])
     assert res.alternative_order is None
-    assert {s["product_id"]: s["tier"] for s in res.substitutes} == {"501": gate.OTHER_KIND}
+    assert res.substitutes == []
+    rejected = next(ro for ro in res.rejected_options if ro.product_id == "501")
+    assert any("not a similar kind of product" in reason.message for reason in rejected.reasons)
 
 
 def test_undeliverable_pick_gets_a_deliverable_same_kind_alternative_and_why(shop):

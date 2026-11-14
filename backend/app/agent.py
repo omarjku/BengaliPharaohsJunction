@@ -810,8 +810,12 @@ def unparsed_clauses(text: str, items: list[dict]) -> list[str]:
         if i in covered or not clean:
             continue
         words = set(re.findall(r"[\wäöå]+", clean.lower()))
-        catalogue_words = " ".join(sorted(words - stop))
-        if _QTY_LIKE.search(clean) or (catalogue_words and catalogue.search(catalogue_words)):
+        product_words = words - stop
+        catalogue_words = " ".join(sorted(product_words))
+        catalogue_match = bool(catalogue_words and (
+            catalogue.search(catalogue_words) or any(catalogue.search(word) for word in product_words)))
+        everyday_match = bool(product_words & set(EVERYDAY))
+        if _QTY_LIKE.search(clean) or catalogue_match or everyday_match:
             out.append(clean)
     return out
 
@@ -843,7 +847,17 @@ async def parse(text: str) -> tuple[dict, bool]:
             kw = {"source": i.get("source") or "", "purpose": purpose}
             it = _item(*args, i.get("dietary") or [], **kw)
             extra = keyword_tags(text, it)
-            items.append(_item(*args, (i.get("dietary") or []) + extra, **kw) if extra else it)
+            if extra:
+                it = _item(*args, (i.get("dietary") or []) + extra, **kw)
+            if isinstance(i.get("approval_required"), dict):
+                it["approval_required"] = dict(i["approval_required"])
+            for key in ("product_assumed", "amount_assumed"):
+                if isinstance(i.get(key), bool):
+                    it[key] = i[key]
+            for key in ("product_assumption", "amount_assumption"):
+                if isinstance(i.get(key), str):
+                    it[key] = i[key]
+            items.append(it)
         if items := [i for i in items if i["query"]]:
             return {"summary": out.get("summary") or text, "items": items}, True
     return {"summary": f"[fallback parser, Gemini unavailable] {text}", "items": fallback_parse(text)}, False

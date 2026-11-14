@@ -83,7 +83,7 @@ def test_peanut_free_mandate_skips_the_may_contain_substitute(shop):
     subs = {s["product_id"]: s for s in res.substitutes}
     assert "101" not in subs and "100" not in subs  # contains / may contain peanuts: never offered
     skipped = {ro.product_id: [r.code.value for r in ro.reasons] for ro in res.rejected_options}
-    assert skipped["101"] == ["ALLERGEN_MAY_CONTAIN"]
+    assert skipped["101"] == ["ALLERGEN_MAY_CONTAIN", "DATA_MISSING"]
     assert all("neither containing nor 'may contain' peanuts" in s["why_safe"] for s in res.substitutes)
 
 

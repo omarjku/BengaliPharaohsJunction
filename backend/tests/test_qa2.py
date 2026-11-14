@@ -56,12 +56,12 @@ def test_approve_that_the_recheck_refuses_is_409_too(shop):
 
 
 # --- N4: substitutes that add allergens say so and are never "best"
-def test_substitute_adding_allergens_is_demoted_and_says_which(shop):
+def test_substitute_adding_allergens_is_excluded_and_says_which(shop):
     shop.products["464315"] = product("464315", "PCD 500G PEANUT BUTTER", category="21453", claims=(), contains=(),
                                       subs=("468793", "470000"))
     shop.products["468793"] = product("468793", "Nugatti hazelnut-cocoa spread 500g", category="21453", claims=(),
                                       contains=("AM", "AN", "AY", "ML", "SH"))
-    shop.products["470000"] = product("470000", "Sunflower seed spread", category="21453", claims=(), contains=())
+    shop.products["470000"] = product("470000", "Sunflower seed butter", category="21453", claims=(), contains=())
     shop.products["470000"]["allergens"]["free_from"] = ["AP"]
     shop.quotes.update({"464315": quote("464315"), "468793": quote("468793", price=3.0),
                         "470000": quote("470000", price=4.0)})
@@ -69,9 +69,10 @@ def test_substitute_adding_allergens_is_demoted_and_says_which(shop):
     res = asyncio.run(gate.check([L(product_id="464315", quantity=1)], REQ, m, "r", now=NOW))
     assert res.status == "refused"  # the name says peanut
     subs = {s["product_id"]: s for s in res.substitutes}
-    assert subs["468793"]["differs"] == ["also contains milk, tree nuts, soy"] or \
-        subs["468793"]["differs"] == ["also contains milk, soy, tree nuts"]
-    assert subs["468793"]["tier"] == "good" and "also contains" in subs["468793"]["why_safe"]
+    assert "468793" not in subs
+    rejected = next(ro for ro in res.rejected_options if ro.product_id == "468793")
+    assert any("adds allergens" in reason.message and "milk" in reason.message and "tree nuts" in reason.message
+               for reason in rejected.reasons)
     assert subs["470000"]["tier"] == "best"  # dearer, but adds nothing
 
 
