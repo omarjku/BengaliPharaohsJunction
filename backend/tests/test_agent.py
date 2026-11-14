@@ -717,3 +717,30 @@ def test_budget_starts_order_sized_and_only_a_menu_raises_it():
         agent.start_budget()  # run() under /ask never lowers or resets it
         assert b[1] == agent.DECISIONS_PER_MENU
     asyncio.run(go())
+
+
+def test_same_gemini_reading_is_cached(monkeypatch):
+    """Demo soak: a repeated menu gave a different cart each time; the same input now reads the same for 10 min,
+    a failed call is never cached, and callers can't change the cached copy."""
+    import asyncio
+    from app import config
+    calls = []
+
+    class R:
+        def __init__(self, ok): self.ok = ok
+        def raise_for_status(self):
+            if not self.ok: raise RuntimeError("down")
+        def json(self): return {"candidates": [{"content": {"parts": [{"text": '{"items": [1]}'}]}}]}
+
+    class C:
+        async def post(self, *a, **k):
+            calls.append(1)
+            return R(len(calls) > 1)  # the first call fails
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "k")
+    monkeypatch.setattr(agent, "_http", lambda: C())
+    agent._GEMINI_CACHE.clear()
+    run = lambda: asyncio.run(agent._gemini("sys", "same text", {"type": "object"}))
+    assert run() is None and run() == {"items": [1]}
+    out = run()
+    out["items"].append(2)
+    assert run() == {"items": [1]} and len(calls) == 2  # failure not cached; 3rd and 4th served from the cache

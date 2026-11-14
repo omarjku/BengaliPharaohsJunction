@@ -429,3 +429,12 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
 .valio-link { margin-block-start: var(--s5); }
 .verify { min-height: 44px; padding-inline: 0; }
 .flush-link { padding-inline: 0; }
+/* One-tap answers: the next delivery days. */
+.chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.chip {
+  min-height: var(--tap); padding: 0 var(--s4); border: 1px solid var(--field-line); border-radius: 999px; background: var(--surface);
+  color: var(--ink); font: var(--t-body); cursor: pointer; font-variant-numeric: tabular-nums;
+  transition: transform 140ms var(--ease-out), background-color 160ms ease;
+}
+.chip:active { transform: scale(0.97); background: var(--wash); }
+.chip:disabled { opacity: 0.5; cursor: default; }
