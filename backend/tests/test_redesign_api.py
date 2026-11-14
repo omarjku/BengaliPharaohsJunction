@@ -95,4 +95,8 @@ def test_an_agent_can_not_claim_a_portion_is_the_chefs(shop1, monkeypatch):  # n
     r = c.post("/api/agent/menu", json={"menu_text": "Porridge with milk", "covers": 80, "requested_date":
                REQ.isoformat(), "overrides": [{"ingredient": "milk", "per_cover": 3, "unit": "dl"}]},
                headers={"X-Agent-Key": "agent-lk", "X-Approver-Key": "appr-hb"})  # another buyer's approver
-    assert r.json()["assumptions"][0]["set_by"] == "agent"
+    assert r.status_code == 403  # refused (and audited), never quietly downgraded
+    r = c.post("/api/agent/menu", json={"menu_text": "Porridge with milk", "covers": 80, "requested_date":
+               REQ.isoformat(), "overrides": [{"ingredient": "milk", "per_cover": 3, "unit": "dl"}]},
+               headers={"X-Agent-Key": "agent-lk", "X-Approver-Key": "wrong"})
+    assert r.status_code == 401

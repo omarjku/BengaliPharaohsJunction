@@ -419,7 +419,7 @@ class MenuRequest(BaseModel):
 
 
 @app.post("/api/agent/menu")
-async def agent_menu(req: MenuRequest, who: Agent,
+async def agent_menu(req: MenuRequest, who: Agent, request: Request,
                      x_approver_key: Annotated[str | None, Header()] = None) -> dict:
     """Menu + covers → a proposed cart. Needs X-Agent-Key (the buyer comes from the key; mandate server-side).
     Returns {menu, assumptions, ingredients, lines, cart_total_cents, order_lines, decision, audit_id}; the decision is
@@ -428,11 +428,14 @@ async def agent_menu(req: MenuRequest, who: Agent,
     # Portions count as "set by the chef" (not doubted) only with the same buyer's approver key too; an agent-only
     # request's overrides are marked "agent" and still checked by Gemini Decisions (security review).
     chef = False
-    if req.overrides and x_approver_key:
-        try:
-            chef = auth._approver(x_approver_key).buyer_id == who.buyer_id
-        except HTTPException:
-            raise HTTPException(401, detail="Invalid X-Approver-Key") from None
+    if req.overrides and x_approver_key:  # the guarded check audits a refused key and keeps its 401/403
+        chef_key = auth._guarded(request, "X-Approver-Key", x_approver_key, auth._approver)
+        if chef_key.buyer_id != who.buyer_id:  # another kitchen's approver: refused and audited, never downgraded
+            orders.security_event("key_used_outside_its_role", f"{request.method} {request.url.path}",
+                                  ratelimit.client_ip(request), buyer_id=chef_key.buyer_id, header="X-Approver-Key",
+                                  key_role="approver", http_status=403)
+            raise HTTPException(403, detail="That approver key belongs to another kitchen.")
+        chef = True
     return await menu.propose(req.menu_text, req.covers, req.requested_date, who.buyer_id,
                               overrides=[o.model_dump() for o in req.overrides], by_chef=chef)
 
