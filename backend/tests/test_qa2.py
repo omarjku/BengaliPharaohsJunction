@@ -82,3 +82,51 @@ def test_doubted_substitute_is_at_most_good(shop1, monkeypatch, decisions):  # n
     alts = run()["decision"]["alternatives"]
     assert alts and all(not a["summary"].startswith(("BEST", "BETTER")) for a in alts)
     assert all("Gemini doubts this substitute" in a["summary"] for a in alts)
+
+
+def test_a_not_approved_409_is_replayed_for_the_same_idempotency_key(shop):
+    """Automated security review: the 409 must not be dropped, or a retry with the same key re-runs approve
+    against the NEW decision and confirms terms nobody looked at."""
+    held = held_order()
+    store_mandate(dict(MANDATE, id="m2", hard_rules=[{"kind": "auto_approve_limit_cents", "value": 50000}]))
+    h = {**AP, "Idempotency-Key": "approve-once"}
+    first = c.post(f"/api/orders/{held['order_id']}/approve", headers=h)
+    again = c.post(f"/api/orders/{held['order_id']}/approve", headers=h)
+    assert first.status_code == again.status_code == 409 and again.headers.get("Idempotent-Replayed") == "true"
+    assert again.json() == first.json() and orders._store()[held["order_id"]]["status"] == "pending_approval"
+    orders._idem = None  # survives a restart too
+    assert c.post(f"/api/orders/{held['order_id']}/approve", headers=h).status_code == 409
+    assert orders._store()[held["order_id"]]["status"] == "pending_approval"
+
+
+def test_rules_saved_without_if_match_get_a_warning(shop1, monkeypatch):  # noqa: F811
+    from app import config, mandates
+    monkeypatch.setattr(config, "APPROVER_KEYS", config.APPROVER_KEYS + ",appr-lk=lapland-kitchen:Chef Aino")
+    h = {"X-Approver-Key": "appr-lk"}
+    m = mandates.get("lapland-kitchen").model_dump(mode="json")
+    r = c.put("/api/mandate", headers=h, json={"mandate": {**m, "weekly_budget_cents": 500000}})
+    assert r.status_code == 200 and r.headers["Warning"].startswith("299 -") and "If-Match" in r.json()["warning"]
+    etag = r.headers["ETag"]
+    ok = c.put("/api/mandate", headers={**h, "If-Match": etag}, json={"mandate": {**m, "weekly_budget_cents": 400000}})
+    assert ok.status_code == 200 and "Warning" not in ok.headers and "warning" not in ok.json()
+
+
+def test_cross_buyer_attempts_are_audited_for_valio_only(shop):
+    held = held_order()
+    store_mandate(dict(MANDATE, buyer_id="other"))
+    b_appr, b_agent = {"X-Approver-Key": "appr-other"}, {"X-Agent-Key": "agent-other"}
+    assert c.get(f"/api/orders/{held['order_id']}", headers=b_appr).status_code == 404
+    assert c.post(f"/api/orders/{held['order_id']}/approve", headers=b_appr).status_code == 404
+    assert c.post(f"/api/orders/{held['order_id']}/reject", headers=b_appr).status_code == 404
+    unknown = "00000000-0000-4000-8000-000000000000"
+    assert c.get(f"/api/orders/{unknown}", headers=b_appr).status_code == 404  # same answer, nothing logged
+    assert c.get("/api/audit", params={"buyer_id": "chef"}, headers=b_appr).status_code == 403
+    assert c.post("/api/orders", headers=b_agent, json={"buyer_id": "chef", "requested_date": REQ.isoformat(),
+                                                        "lines": [{"product_id": "463335", "quantity": 1}]}).status_code == 403
+    ev = [e for e in c.get("/api/admin/audit", headers={"X-Valio-Admin-Key": "valio-ops"}).json()
+          if e.get("event") == "cross_buyer_attempt"]
+    assert [(e["route"], e["caller_buyer_id"], e["target_buyer_id"]) for e in ev] == [
+        ("read order", "other", "chef"), ("approve order", "other", "chef"), ("reject order", "other", "chef"),
+        ("GET /api/audit", "other", "chef"), ("POST /api/orders", "other", "chef")]
+    assert c.get("/api/audit", headers=b_appr).json() == []  # the caller's own trail reveals nothing
+    assert orders._store()[held["order_id"]]["status"] == "pending_approval"

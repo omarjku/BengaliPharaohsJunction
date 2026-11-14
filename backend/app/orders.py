@@ -77,7 +77,9 @@ async def idempotent(caller: str, scope: str, fingerprint: str, run) -> tuple[di
     """Stripe-style Idempotency-Key. `scope` = caller + route + key; `fingerprint` = hash of the request.
     First call runs and stores its response; a retry with the same request gets that response back (→ True) without
     placing anything again; the same key with a different request → 422; while the first is still running → 409.
-    Errors are not stored, so a failed call can be retried with the same key. Check-and-set has no await in between,
+    Errors are not stored, so a failed call can be retried with the same key, except an outcome raised as
+    `final_error(...)` (e.g. "not approved, the decision changed"): that IS the answer, and is replayed, so a retry
+    never re-runs an approval against terms nobody saw. Check-and-set has no await in between,
     so the single event loop makes it atomic (ponytail: one worker, see main.py)."""
     store, now = _idem_store(), datetime.now(timezone.utc)
     for k in [k for k, r in store.items() if datetime.fromisoformat(r["at"]) < now - IDEM_TTL]:
@@ -91,17 +93,35 @@ async def idempotent(caller: str, scope: str, fingerprint: str, run) -> tuple[di
             raise HTTPException(422, detail="This Idempotency-Key was already used with a different request")
         if rec["response"] is None:
             raise HTTPException(409, detail="A request with this Idempotency-Key is still running; retry shortly")
+        if err := rec["response"].get("__final_error__"):
+            raise HTTPException(err["status"], detail=err["detail"], headers={"Idempotent-Replayed": "true"})
         return rec["response"], True
     store[scope] = {"caller": caller, "fingerprint": fingerprint, "response": None, "at": now.isoformat()}
     try:
         resp = await run()
+    except HTTPException as e:
+        if not getattr(e, "final", False):
+            store.pop(scope, None)
+            raise
+        resp, final = {"__final_error__": {"status": e.status_code, "detail": e.detail}}, e
     except BaseException:
         store.pop(scope, None)
         raise
+    else:
+        final = None
     store[scope]["response"] = resp
     async with _idem_save:
         await asyncio.to_thread(_write, IDEM_FILE, _idem_snapshot())
+    if final:
+        raise final
     return resp, False
+
+
+def final_error(status: int, detail) -> HTTPException:
+    """An error that is the request's real outcome: stored for Idempotency-Key replays like a success."""
+    e = HTTPException(status, detail=detail)
+    e.final = True
+    return e
 
 
 def _annotation(actor: str) -> dict:
@@ -230,15 +250,21 @@ async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | N
     raise _busy()
 
 
-def get(order_id: str, buyer_id: str) -> dict:
-    """Another buyer's order is reported as unknown, not forbidden: ids don't leak."""
-    if not (o := _store().get(order_id)) or o["buyer_id"] != buyer_id:
+def get(order_id: str, buyer_id: str, action: str = "read") -> dict:
+    """Another buyer's order is reported as unknown, not forbidden: ids don't leak. The attempt itself is audited
+    as a security event (QA round 2 N14), visible to Valio; the caller sees the same 404 either way."""
+    if not (o := _store().get(order_id)):
+        raise HTTPException(404, detail="Unknown order id")
+    if o["buyer_id"] != buyer_id:
+        # Valio-only (buyer_id None): the caller's own audit view must not reveal that the order exists.
+        security_event("cross_buyer_attempt", f"{action} order", None, buyer_id=None, caller_buyer_id=buyer_id,
+                       target_buyer_id=o["buyer_id"], order_id=order_id)
         raise HTTPException(404, detail="Unknown order id")
     return o
 
 
-def _pending(order_id: str, buyer_id: str) -> dict:
-    o = get(order_id, buyer_id)
+def _pending(order_id: str, buyer_id: str, action: str = "change") -> dict:
+    o = get(order_id, buyer_id, action)
     if o["status"] != "pending_approval":
         raise HTTPException(409, detail=f"Order is {o['status']}, not pending approval")
     return o
@@ -270,7 +296,7 @@ async def approve(order_id: str, who: Principal, seen_decided_at: datetime | Non
     seen_decided_at (the decision.decided_at the human was shown) binds the click to that decision: if the order was
     re-decided since (another approver, a re-check), 409. Without it, a change DURING this call is still a 409, never
     a silent retry that would sign off on terms nobody saw."""
-    o = _pending(order_id, who.buyer_id)
+    o = _pending(order_id, who.buyer_id, "approve")
     if err := _stale(o, seen_decided_at):
         raise err
     seen, now = o["updated_at"], datetime.now(timezone.utc)
@@ -298,7 +324,7 @@ async def approve(order_id: str, who: Principal, seen_decided_at: datetime | Non
                                 action="approved" if status == "confirmed" else "approval_blocked")
     out = _response(order_id, status, {**_view(res), "signed_off_by": o["signed_off_by"]}, audit_id)
     if status != "confirmed":  # QA round 2 N3: an approve that didn't approve is never a 200
-        raise HTTPException(409, detail={
+        raise final_error(409, {
             "error": "Not approved: the re-check changed the decision (new price, stock, rules or budget). Review the "
                      "new decision below; approve again with its decided_at if it is still right." if status ==
                      "pending_approval" else "Not approved: the re-check refused the order (see the decision below).",
@@ -310,7 +336,7 @@ async def reject(order_id: str, who: Principal) -> dict:
     """Human says no. Audited with the decision they were shown (AuditEntry has no action field, so the
     action is in the actor: human:<name>:reject)."""
     async with _order_lock:
-        o = _pending(order_id, who.buyer_id)
+        o = _pending(order_id, who.buyer_id, "reject")
         now = datetime.now(timezone.utc)
         o.update(status="rejected", signed_off_by=who.name, updated_at=now.isoformat())
         await asyncio.to_thread(_save)
