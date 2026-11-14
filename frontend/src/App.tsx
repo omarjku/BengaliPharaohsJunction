@@ -289,6 +289,11 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
       </p>
 
       <main className={view === 'order' && empty ? 'roomy' : undefined}>
+        {MOCK && (
+          <p className="mock" role="note">
+            <strong>{u.mock.title}</strong> {u.mock.body}
+          </p>
+        )}
         {offline && (
           <div className="problem banner" role="status">
             <strong>{u.offline.title}</strong>

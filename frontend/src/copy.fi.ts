@@ -244,6 +244,10 @@ export const UI = {
     title: 'Tilauspalveluun ei saada yhteyttä.',
     body: 'Pyyntösi epäonnistuu, kunnes yhteys palaa. Jos ajat palvelua itse, käynnistä taustapalvelu porttiin 8000.',
   },
+  mock: {
+    title: 'Esimerkkidataa, ei oikea palvelu.',
+    body: 'Vastaukset tulevat muutamasta valmiista esimerkistä, eikä mitään tilata oikeasti. Oikeita vastauksia varten käynnistä taustapalvelu ja avaa sovellus ilman ?mock=1.',
+  },
   failed: 'Se ei mennyt läpi.',
   ask: {
     label: 'Mitä tarvitset?',

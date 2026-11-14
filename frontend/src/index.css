@@ -91,7 +91,9 @@ main {
 }
 .title { font: var(--t-title); letter-spacing: -0.01em; }
 .note { font: var(--t-small); color: var(--ink-2); }
-.mock { font: var(--t-tiny); color: var(--ink-3); margin-block-end: var(--s5); }
+/* Mock mode notice: plainly visible, because a canned answer must never pass for a real one. */
+.mock { font: var(--t-small); color: var(--ink); background: var(--warn-wash); border-radius: var(--radius); padding: var(--s3) var(--s4); margin-block-end: var(--s5); }
+.mock strong { color: var(--warn); font-weight: 600; }
 
 /* --- Buttons: one primary per screen. Press feedback is a small scale. */
 .btn {
@@ -134,7 +136,10 @@ main {
 @keyframes working { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
 
 /* --- The answer: the one bold thing on the page. */
+/* The answer is a card with the same rim and soft lift as the order box, so the two read as one system. */
 .answer {
+  padding: var(--s5); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 1px 2px rgba(28, 31, 35, 0.04), 0 6px 18px rgba(28, 31, 35, 0.05);
   display: grid; gap: var(--s4); margin-block-start: var(--s7);
   transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
   @starting-style { opacity: 0; transform: translateY(6px); }
@@ -146,6 +151,10 @@ main {
 .status.warn { color: var(--warn); }
 .status.bad { color: var(--bad); }
 .status.neutral { color: var(--ink-2); }
+/* No label above the headline: the answer comes first, the outcome label sits under it (visual order only). */
+.answer > .answer-text { order: -3; }
+.answer > .signoff { order: -2; }
+.answer > .status { order: -1; margin-block-start: calc(-1 * var(--s2)); }
 .answer-text { font: var(--t-answer); letter-spacing: -0.02em; text-wrap: balance; font-variant-numeric: tabular-nums; }
 .signoff { font: var(--t-small); color: var(--ink-2); margin-block-start: calc(-1 * var(--s2)); }
 .answer-text:focus { outline: none; }
@@ -301,7 +310,24 @@ main.roomy { padding-block-start: 96px; }
 .urgent-row a { text-decoration: underline; text-underline-offset: 2px; }
 
 /* --- Voice: a mic in the box's corner (right above the main action on a phone, in the thumb zone). */
+/* The order box as a halo input: a 1px rim shell holding a borderless field, a soft lift shadow, and on focus a
+   single-colour glow around the shell. One hue, no gradient, no blur, nothing animated except the shadow easing. */
 .ask-box { position: relative; }
+.ask-box:has(> .ask-field) {
+  border: 1px solid var(--field-line); border-radius: var(--radius); background: var(--surface);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 1px 2px rgba(28, 31, 35, 0.04), 0 6px 18px rgba(28, 31, 35, 0.05);
+  transition: border-color 200ms ease-out, box-shadow 200ms ease-out;
+}
+.ask-box:has(> .ask-field):focus-within {
+  border-color: var(--accent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 0 0 3px rgba(11, 92, 173, 0.16),
+    0 10px 28px rgba(11, 92, 173, 0.14);
+}
+/* The shell shows focus, so the field inside drops its own border and ring (the ring is still clearly there). */
+.ask-box > .ask-field { border: 0; border-radius: calc(var(--radius) - 1px); background: transparent; outline: none; }
+.ask-box > .ask-field:focus { outline: none; }
 .ask-field.with-mic { padding-inline-end: 64px; }
 .mic {
   position: absolute; inset-inline-end: 10px; inset-block-end: 12px; width: 44px; height: 44px; border-radius: 50%;
@@ -429,6 +455,23 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
 .valio-link { margin-block-start: var(--s5); }
 .verify { min-height: 44px; padding-inline: 0; }
 .flush-link { padding-inline: 0; }
+
+/* One field style everywhere: the same rim, lift and focus halo as the order box (single hue, no gradient). */
+.field-row input, .secret input, .covers input, .guests-input, .rules-field {
+  background: var(--surface);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 1px 2px rgba(28, 31, 35, 0.04);
+  transition: border-color 200ms ease-out, box-shadow 200ms ease-out;
+}
+.field-row input:focus, .secret input:focus, .covers input:focus, .guests-input:focus, .rules-field:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 0 0 3px rgba(11, 92, 173, 0.16), 0 10px 28px rgba(11, 92, 173, 0.14);
+}
+/* Buttons: hover darkens, it never fades. Only on devices that really hover. */
+@media (hover: hover) {
+  .btn:hover:not(:disabled) { background: var(--accent-press); }
+  .btn.plain:hover:not(:disabled) { background: var(--wash); }
+}
+
 /* One-tap answers: the next delivery days. */
 .chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .chip {
