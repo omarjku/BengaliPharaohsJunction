@@ -43,6 +43,50 @@
    "ok": true
   }
  ],
+ "rules faithfulness (open question below 0.50)": [
+  {
+   "case": "Never order anything containing peanut.",
+   "label": true,
+   "p_yes": 0.9561629933016079,
+   "ok": true
+  },
+  {
+   "case": "Auto-approve up to EUR 1,500.00 per order.",
+   "label": true,
+   "p_yes": 0.9592115470135306,
+   "ok": true
+  },
+  {
+   "case": "Spend at most EUR 6,000.00 in any 7 days.",
+   "label": true,
+   "p_yes": 0.9573897148692876,
+   "ok": true
+  },
+  {
+   "case": "Auto-approve up to EUR 15,000.00 per order.",
+   "label": false,
+   "p_yes": 0.02706486479983155,
+   "ok": true
+  },
+  {
+   "case": "Never order anything containing milk.",
+   "label": false,
+   "p_yes": 0.039728325078468275,
+   "ok": true
+  },
+  {
+   "case": "Only products delivered on time at least 90% of the time.",
+   "label": true,
+   "p_yes": 0.9681741877942124,
+   "ok": true
+  },
+  {
+   "case": "Auto-approve up to EUR 6,000.00 per order.",
+   "label": false,
+   "p_yes": 0.0470748502559781,
+   "ok": true
+  }
+ ],
  "menu assumptions (flag below 0.50)": [
   {
    "case": "Lingonberry cheesecake: 80 g cream cheese",

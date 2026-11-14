@@ -137,7 +137,7 @@ async def _decisions(input_text: str, questions: dict) -> dict | None:
         return hit[1]
     body = {"model": config.GEMINI_DECISION_MODEL, "input": input_text, "questions": questions}
     try:
-        async with httpx.AsyncClient(timeout=GEMINI_TIMEOUT_S) as http:
+        async with _DECISION_SLOTS, httpx.AsyncClient(timeout=GEMINI_TIMEOUT_S) as http:
             r = await http.post(DECISIONS_URL, headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)
             r.raise_for_status()
             answers = r.json()["answers"]
