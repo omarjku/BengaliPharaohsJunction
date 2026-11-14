@@ -117,6 +117,8 @@ def _wrap(text: str) -> str:
 
 
 _HTTP: list = [None, None, None]  # [event loop, client, Decisions semaphore]: per loop (asyncio objects bind to one)
+_GEMINI_INFLIGHT: dict[str, asyncio.Task] = {}
+_DECISIONS_INFLIGHT: dict[str, asyncio.Task] = {}
 
 
 def _bind() -> None:
@@ -147,26 +149,37 @@ async def _gemini(system: str, prompt: str, schema: dict, thinking: dict | None 
     now = time.monotonic()
     if (hit := _GEMINI_CACHE.get(key)) and now - hit[0] < DECISION_CACHE_TTL_S:
         return copy.deepcopy(hit[1])
+    pending = _GEMINI_INFLIGHT.get(key)
+    if pending is not None:
+        return copy.deepcopy(await asyncio.shield(pending))
     body = {"systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"responseMimeType": "application/json", "responseSchema": _api_schema(schema),
                                  "temperature": 0}
             | ({"thinkingConfig": thinking} if thinking else {})}
+    async def request() -> dict | None:
+        try:
+            r = await _http().post(f"{GEMINI_URL}/{config.GEMINI_MODEL}:generateContent",
+                                   headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)
+            r.raise_for_status()
+            parts = r.json()["candidates"][0]["content"]["parts"]
+            out = json.loads("".join(p.get("text", "") for p in parts if not p.get("thought")))
+            if not isinstance(out, dict):
+                return None  # a list or scalar is as unusable as no answer (Codex #16)
+            if len(_GEMINI_CACHE) >= DECISION_CACHE_MAX:
+                _GEMINI_CACHE.clear()  # ponytail: crude bound, like the Decisions cache
+            _GEMINI_CACHE[key] = (now, copy.deepcopy(out))
+            return out
+        except Exception as e:  # noqa: BLE001 - any failure means "use the fallback"
+            log.warning("Gemini call failed (%s); using fallback", type(e).__name__)
+            return None
+
+    pending = _GEMINI_INFLIGHT[key] = asyncio.create_task(request())
     try:
-        r = await _http().post(f"{GEMINI_URL}/{config.GEMINI_MODEL}:generateContent",
-                               headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)
-        r.raise_for_status()
-        parts = r.json()["candidates"][0]["content"]["parts"]
-        out = json.loads("".join(p.get("text", "") for p in parts if not p.get("thought")))
-        if not isinstance(out, dict):
-            return None  # a list or scalar is as unusable as no answer (Codex #16)
-        if len(_GEMINI_CACHE) >= DECISION_CACHE_MAX:
-            _GEMINI_CACHE.clear()  # ponytail: crude bound, like the Decisions cache
-        _GEMINI_CACHE[key] = (now, copy.deepcopy(out))
-        return out
-    except Exception as e:  # noqa: BLE001 - any failure means "use the fallback"
-        log.warning("Gemini call failed (%s); using fallback", type(e).__name__)
-        return None
+        return copy.deepcopy(await asyncio.shield(pending))
+    finally:
+        if _GEMINI_INFLIGHT.get(key) is pending:
+            _GEMINI_INFLIGHT.pop(key, None)
 
 
 _DECISION_CACHE: dict[str, tuple[float, dict]] = {}
@@ -203,26 +216,37 @@ async def _decisions(input_text: str, questions: dict) -> dict | None:
     now = time.monotonic()
     if (hit := _DECISION_CACHE.get(key)) and now - hit[0] < DECISION_CACHE_TTL_S:
         return hit[1]
+    pending = _DECISIONS_INFLIGHT.get(key)
+    if pending is not None:
+        return await asyncio.shield(pending)
     if (left := _BUDGET.get()) is not None:  # per-run cap on paid calls; past it = "unverified" (the mandate's
         if left[0] <= 0:                     # uncertainty policy then asks), never a silent pass
             return None
         left[0] -= 1
     body = {"model": config.GEMINI_DECISION_MODEL, "input": input_text, "questions": questions}
+    async def request() -> dict | None:
+        try:
+            async with _slots():
+                r = await _http().post(DECISIONS_URL, headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)
+                r.raise_for_status()
+                answers = r.json()["answers"]
+                if not all(k in answers for k in questions):
+                    return None
+                out = {k: answers[k] for k in questions}
+                if len(_DECISION_CACHE) >= DECISION_CACHE_MAX:
+                    _DECISION_CACHE.clear()  # ponytail: crude bound; fine at hackathon volumes
+                _DECISION_CACHE[key] = (now, out)
+                return out
+        except Exception as e:  # noqa: BLE001 - no answer means "unverified", handled by the mandate's policy
+            log.warning("Gemini Decisions call failed (%s)", type(e).__name__)
+            return None
+
+    pending = _DECISIONS_INFLIGHT[key] = asyncio.create_task(request())
     try:
-        async with _slots():
-            r = await _http().post(DECISIONS_URL, headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)
-            r.raise_for_status()
-            answers = r.json()["answers"]
-            if not all(k in answers for k in questions):
-                return None
-            out = {k: answers[k] for k in questions}
-            if len(_DECISION_CACHE) >= DECISION_CACHE_MAX:
-                _DECISION_CACHE.clear()  # ponytail: crude bound; fine at hackathon volumes
-            _DECISION_CACHE[key] = (now, out)
-            return out
-    except Exception as e:  # noqa: BLE001 - no answer means "unverified", handled by the mandate's policy
-        log.warning("Gemini Decisions call failed (%s)", type(e).__name__)
-        return None
+        return await asyncio.shield(pending)
+    finally:
+        if _DECISIONS_INFLIGHT.get(key) is pending:
+            _DECISIONS_INFLIGHT.pop(key, None)
 
 
 async def _decisions_grouped(requests: list[tuple[str, str, dict]]) -> dict[str, dict]:
@@ -1168,8 +1192,11 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
         item_diets[id(it)] = tags
         item_profile_diets[id(it)] = profile_tags
     all_diets = sorted({tag for tags in item_diets.values() for tag in tags})
-    risk = await diet.at_risk([it["query"] for it in items],
-                              all_diets)
+    # Risk classification and per-item catalogue expansion are independent Gemini reads. Start both before the
+    # catalogue search; candidates() hits expand's existing cache, so this changes only the critical path.
+    risk_task = asyncio.create_task(diet.at_risk([it["query"] for it in items], all_diets))
+    expansions_task = asyncio.gather(*(expand.queries(it["query"]) for it in items))
+    risk, _ = await asyncio.gather(risk_task, expansions_task)
     risk_details = diet.risk_details([it["query"] for it in items],
                                      all_diets)
     usual = profile.usual(buyer_id)
