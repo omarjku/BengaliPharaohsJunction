@@ -10,8 +10,8 @@ from datetime import date, timedelta
 
 from . import agent, catalogue, kitchen, profile
 
-INTENTS = ("order_items", "plan_meal", "plan_period", "urgent", "change_cart", "ask_about_cart", "ask_kitchen",
-           "tell_kitchen", "greeting", "unclear", "out_of_scope", "unrealistic", "confirm", "answer", "reject", "cancel")
+INTENTS = ("order_items", "product_info", "plan_meal", "plan_period", "urgent", "change_cart", "ask_about_cart", "ask_kitchen",
+           "tell_kitchen", "greeting", "unclear", "out_of_scope", "unrealistic", "confirm", "approve_request", "answer", "reject", "cancel")
 _UNITS = {"l": "L", "litre": "L", "litres": "L", "liter": "L", "liters": "L", "dl": "dl", "cl": "cl",
           "ml": "ml", "kg": "kg", "kilo": "kg", "kilos": "kg", "kilogram": "kg", "kilograms": "kg",
           "g": "g", "gram": "g", "grams": "g", "st": "pcs", "pcs": "pcs", "pc": "pcs", "piece": "pcs",
@@ -71,6 +71,11 @@ _STANDING_TRIGGER = re.compile(r"\b(?:usual|regular|normal|same\s+as|tavallinen|
                                r"\b(?:every|joka)\b", re.I)
 _NON_FOOD = re.compile(r"\b(?:lego|legos|flight|flights|airplane|weather|poem|poems|football|vacation|holiday)\b",
                        re.I)
+_IMPOSSIBLE = re.compile(r"\b(?:unicorns?|dragons?|phoenix(?:es)?|mermaids?|wizards?)\b", re.I)
+_APPROVE_ALL = re.compile(r"\b(?:approve|confirm)\s+(?:everything|all|it all)\b", re.I)
+_PRODUCT_INFO = re.compile(r"\b(?:price|prices|cost|costs|how much|per\s+(?:kilo|kg|litre|liter|l)|"
+                           r"availability|available|in stock|allergen\w*|contains|safe for|allergy|allergies|"
+                           r"don't order|do not order|not order)\b", re.I)
 _VAGUE_EVENT = re.compile(r"\b(?:party|event|celebration|gathering|occasion|wedding|birthday)\b", re.I)
 _VAGUE_EVENT_WORDS = {"a", "an", "and", "for", "of", "on", "the", "party", "event", "celebration",
                       "gathering", "occasion", "wedding", "birthday", "stuff", "things", "food", "meal",
@@ -131,6 +136,11 @@ the chef accepts the proposal, including sentences that begin with "no" but then
 good"). Return answer with one of date, amount, product, or choice and the final value when the chef supplies it, or
 reject when the chef declines/cancels. If the message is an unrelated food request, return its normal order/change
 action instead and leave the pending question available.
+Questions about a catalogue product's price, allergens, or availability are product_info and never order anything.
+An explicit quantity with an event remains order_items even when the message also mentions a party or dinner; it is
+not a menu request. Impossible requests such as unicorns or dragons are out_of_scope. A confirmation or approval
+phrase for a pending proposal is confirm. "Approve everything" is approve_request, which is refused politely by the
+caller rather than treated as approval.
 """
 
 
@@ -234,7 +244,7 @@ def resolve_date_from_text(message: str, today: date) -> date | None:
             return date(int(match[1]), int(match[2]), int(match[3]))
         except ValueError:
             return None
-    if match := re.search(r"(?<!\d)(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?(?!\d)", text):
+    if match := re.search(r"(?<!\d)(\d{1,2})\.(\d{1,2})\.(\d{4})?(?!\d|\s*(?:kg|g|l|dl|ml|kpl|pcs))", text):
         try:
             when = date(int(match[3] or today.year), int(match[2]), int(match[1]))
             return when if match[3] or when >= today else when.replace(year=today.year + 1)
@@ -561,7 +571,11 @@ def _sanitize_action(raw, message: str, today: date) -> dict | None:
 
     intent = raw["intent"]
     event = bool(_EVENT.search(message))
-    if event and intent in {"out_of_scope", "unclear"}:
+    if _IMPOSSIBLE.search(message) or (_NON_FOOD.search(message) and not event):
+        intent = "out_of_scope"
+    elif event and any(item.get("amount") is not None for item in clean["items"]):
+        intent = "order_items"
+    elif event and intent in {"out_of_scope", "unclear"}:
         intent = "plan_meal"
     if clean["guests"] is not None and clean["guests"] > 2_000:
         intent = "unrealistic"
@@ -592,10 +606,10 @@ def _sanitize_action(raw, message: str, today: date) -> dict | None:
         action["answer"] = {"slot": answer["slot"], "value": value}
     if isinstance(raw.get("proposed_fact"), dict):
         action["proposed_fact"] = raw["proposed_fact"]
-    if event and clean["guests"] is None and not (2 <= len(action["choices"]) <= 4):
+    if intent in ("plan_meal", "plan_period") and event and clean["guests"] is None and not (2 <= len(action["choices"]) <= 4):
         action["question"] = "How many guests should I plan for?"
         action["choices"] = _guest_choices()
-    if intent == "out_of_scope" and not _NON_FOOD.search(message) and not clean["items"]:
+    if intent == "out_of_scope" and not (_NON_FOOD.search(message) or _IMPOSSIBLE.search(message)):
         intent = "unclear"
         action["intent"] = intent
         action["reply"] = "Sorry, I didn't catch that, could you say it again?"
@@ -833,12 +847,23 @@ def _fallback_action(message: str, today: date, last_card: dict | None) -> dict:
     cover_match = _COVERS.search(message) or _EVENT_COVERS.search(message)
     covers = int(cover_match.group(1)) if cover_match and int(cover_match.group(1)) <= 2_000 else None
     items = _fallback_items(message)
-    if _KITCHEN_QUESTION.search(message):
+    if any(item.get("amount") is not None for item in items):
+        items = [item for item in items if item.get("amount") is not None or not _EVENT.search(item.get("name", ""))]
+    if _APPROVE_ALL.search(message):
+        intent = "approve_request"
+    elif _IMPOSSIBLE.search(message):
+        intent = "out_of_scope"
+    elif _PRODUCT_INFO.search(message) and not (_looks_like_cart_question(message) and
+                                                re.search(r"\b(?:cart|basket|my order|the order)\b", low)):
+        intent = "product_info"
+    elif _KITCHEN_QUESTION.search(message):
         intent = "ask_kitchen"
     elif _CART_CHANGE.search(message):
         intent = "change_cart"
     elif _looks_like_cart_question(message) and not _CART_CHANGE.search(message):
         intent = "ask_about_cart"
+    elif items and any(item.get("amount") is not None for item in items) and _EVENT.search(message):
+        intent = "order_items"
     elif covers is not None or _MENU_WORD.search(message):
         intent = "plan_meal"
     elif _EVENT.search(message):
