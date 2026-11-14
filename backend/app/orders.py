@@ -495,6 +495,61 @@ async def demo_reset(admin: str, restore_mandate: bool) -> dict:
     return {"archived_to": rel, "archived_files": [p.name for p in moved], "restore_mandate": restore_mandate}
 
 
+async def demo_reset_buyer(admin: str, buyer_id: str, restore_mandate: bool) -> dict:
+    """Reset ONE buyer (e.g. the judge sandbox) without touching the others: that buyer's orders, audit lines and
+    idempotency keys move to DATA_DIR/archive/<UTC timestamp>-<buyer>/ (nothing is deleted); its saved mandate too
+    if restore_mandate (then it is back on its seeded one). Its fresh trail starts with who reset it."""
+    async with _order_lock:
+        now = datetime.now(timezone.utc)
+        folder = config.DATA_DIR / "archive" / f"{now.strftime('%Y%m%dT%H%M%S%fZ')}-{buyer_id}"
+        store, idem = _store(), _idem_store()
+
+        def archive() -> list[str]:
+            folder.mkdir(parents=True, exist_ok=False)
+            moved = []
+            mine = {k: o for k, o in store.items() if o["buyer_id"] == buyer_id}
+            (folder / ORDERS_FILE.name).write_text(json.dumps(mine, ensure_ascii=False))
+            for k in mine:
+                del store[k]
+            _save()
+            moved.append(ORDERS_FILE.name)
+            keep, gone = [], []
+            with _file_lock:
+                for line in (AUDIT_FILE.read_text(encoding="utf-8").splitlines() if AUDIT_FILE.exists() else []):
+                    try:
+                        (gone if _buyer(json.loads(line)) == buyer_id else keep).append(line)
+                    except (ValueError, KeyError, TypeError, AttributeError):
+                        keep.append(line)  # unreadable lines stay where they are
+                (folder / AUDIT_FILE.name).write_text("".join(x + "\n" for x in gone), encoding="utf-8")
+                tmp = AUDIT_FILE.with_suffix(".tmp")
+                tmp.write_text("".join(x + "\n" for x in keep), encoding="utf-8")
+                AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(tmp, AUDIT_FILE)
+            moved.append(AUDIT_FILE.name)
+            mine_idem = {k: r for k, r in idem.items() if r.get("caller") == buyer_id}
+            (folder / IDEM_FILE.name).write_text(json.dumps(mine_idem, ensure_ascii=False))
+            for k in mine_idem:
+                del idem[k]
+            _write(IDEM_FILE, _idem_snapshot())
+            moved.append(IDEM_FILE.name)
+            if restore_mandate:
+                with mandates._lock:
+                    data = mandates._read()
+                    if buyer_id in data:
+                        (folder / mandates.STORE.name).write_text(json.dumps({buyer_id: data.pop(buyer_id)},
+                                                                             ensure_ascii=False))
+                        mandates._write(data)
+                        moved.append(mandates.STORE.name)
+            return moved
+        moved = await asyncio.to_thread(archive)
+        rel = str(folder.relative_to(config.DATA_DIR))
+        await asyncio.to_thread(_write_line, {
+            "kind": "admin_event", "id": str(uuid4()), "timestamp": now.isoformat(), "actor": f"valio_admin:{admin}",
+            "event": "demo_reset", "message": f"demo reset of {buyer_id} by {admin}", "archived_to": rel,
+            "archived_files": moved, "restore_mandate": restore_mandate, "buyer_id": buyer_id})
+    return {"archived_to": rel, "archived_files": moved, "restore_mandate": restore_mandate, "buyer_id": buyer_id}
+
+
 def audit_log(buyer_id: str | None, limit: int, outcome: str | None = None, status: str | None = None) -> list[dict]:
     """Newest last. buyer_id=None = every buyer (Valio's admin view only); outcome filters on decision.outcome,
     status on the order's status after the event (front_door.status: e.g. every refusal, whatever its outcome).
