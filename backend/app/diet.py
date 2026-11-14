@@ -81,49 +81,76 @@ def contradicts(product: dict, diet: str) -> bool:
 
 def _verified_basis(product: dict, diet: str) -> str | None:
     claims = _claims(product)
+    targets = _allergen_targets(diet)
+    if targets & _allergen_codes(product, "may_contain"):
+        return None
     for claim in _diet_claims(diet):
         if claim in claims:
             return f"labelled {_claim_word(claim)}"
 
-    targets = _allergen_targets(diet)
     free_from = _allergen_codes(product, "free_from")
-    if targets & free_from and not targets & _allergen_codes(product, "may_contain"):
+    if targets and targets <= free_from:
         return f"allergen data shows no {_allergen_word(diet)}"
 
     return None
 
 
 _PROCESSED_WORDS = re.compile(
-    r"\b(?:sauces?|stocks?|broths?|sausages?|breads?|pasta|flavou?red|seasoned|marinated|mix|ready|soups?|bakery|"
+    r"\b(?:sauces?|stocks?|broths?|sausages?|breads?|pasta|flavou?red|seasoned|marinated|blends?|mix(?:es|ed)?|"
+    r"mixtures?|prepared|infused|spiced|smoked|cured|pickled|ready|soups?|bakery|"
     r"baked|cakes?|pastr(?:y|ies)|dressings?|grav(?:y|ies)|cubes?|concentrate|instant|processed|filled|spreads?|"
     r"nuggets?|burgers?|meals?)\b",
     re.I,
 )
-_NATURAL_VEGAN = re.compile(r"\b(?:plain|wheat|wholemeal|whole[- ]grain)?\s*flour\b|\bolive oil\b", re.I)
-
-
 def _certain(value) -> bool:
     if value is True:
         return True
     return isinstance(value, str) and value.strip().lower() in {"certain", "true", "yes"}
 
 
-def _safe_by_nature(product: dict, diet: str, model: dict | None) -> str | None:
-    name = " ".join(str(product.get(k) or "") for k in ("name_en", "name_fi"))
+_RAW_BY_DIET = {
+    "gluten_free": {"carrot", "potato", "potato starch", "rice", "corn", "maize", "olive oil",
+                    "rapeseed oil", "canola oil", "salmon", "tomato", "onion", "leek", "dill", "sugar", "salt"},
+    "vegan": {"carrot", "potato", "potato starch", "rice", "corn", "maize", "olive oil", "rapeseed oil",
+              "canola oil", "tomato", "onion", "leek", "dill", "sugar", "salt", "flour", "wheat flour"},
+    "vegetarian": {"carrot", "potato", "potato starch", "rice", "corn", "maize", "olive oil", "rapeseed oil",
+                   "canola oil", "tomato", "onion", "leek", "dill", "sugar", "salt", "flour", "wheat flour"},
+    "lactose_free": {"carrot", "potato", "potato starch", "rice", "corn", "maize", "olive oil",
+                     "rapeseed oil", "canola oil", "salmon", "tomato", "onion", "leek", "dill", "sugar", "salt",
+                     "flour", "wheat flour"},
+}
+_RAW_DESCRIPTORS = {"fresh", "plain", "raw", "whole", "organic", "extra", "virgin", "frozen"}
+
+
+def _word_set(value: str) -> set[str]:
+    words = set(re.findall(r"[a-zA-ZäöåÄÖÅ]+", value.lower()))
+    return {word[:-1] if word.endswith("s") and len(word) > 3 else word for word in words}
+
+
+def _selected_raw_name(product: dict, diet: str) -> str | None:
+    if not isinstance(product, dict):
+        return None
+    name = " ".join(str(product.get(key) or "") for key in ("name_en", "name_fi"))
     if _PROCESSED_WORDS.search(name):
+        return None
+    words = _word_set(name)
+    for allowed in _RAW_BY_DIET.get(diet, set()):
+        target = _word_set(allowed)
+        if target and target <= words and words - target <= _RAW_DESCRIPTORS:
+            return allowed
+    return None
+
+
+def _safe_by_nature(product: dict, diet: str, model: dict | None) -> str | None:
+    selected = _selected_raw_name(product, diet)
+    if not selected:
         return None
     targets = _allergen_targets(diet)
     if targets & (_contains(product) | _allergen_codes(product, "may_contain")):
         return None
-    if isinstance(model, dict) and model.get("safe_by_nature") is True:
-        if model.get("single_ingredient_unprocessed") is True and _certain(model.get("certain")):
-            reason = model.get("reason")
-            if isinstance(reason, str) and reason.strip():
-                return reason
-    if (diet == "vegan" and isinstance(model, dict) and model.get("_risk_available")
-            and _NATURAL_VEGAN.search(name)):
-        return "plain flour or olive oil is a single plant ingredient"
-    return None
+    reason = model.get("reason") if isinstance(model, dict) else None
+    return (reason.strip() if isinstance(reason, str) and reason.strip()
+            else f"selected product name matches the raw single ingredient {selected}")
 
 
 def _unverifiable_basis(product: dict, diet: str) -> str:
@@ -142,6 +169,8 @@ def check(product: dict, diet: str, risky: bool, model: dict | None = None) -> d
     """
     if contradicts(product, diet):
         return {"level": "contradicts", "basis": f"allergen data contains {_allergen_word(diet)}"}
+    if _allergen_targets(diet) & _allergen_codes(product, "may_contain"):
+        return {"level": "unverifiable", "basis": _unverifiable_basis(product, diet)}
     if not risky:
         return {"level": "verified", "basis": "not identified as at risk"}
     if basis := _verified_basis(product, diet):
@@ -208,12 +237,19 @@ def _parse_risk(raw, names: list[str], tags: list[str]) -> tuple[dict[str, set[s
             values = [dict(value, ingredient=ingredient) if isinstance(value, dict) else value
                       for ingredient, value in values.items()]
         if not isinstance(values, list):
-            return {tag: set(names) for tag in tags}, details
+            parsed[diet] = set(names)
+            continue
+        # An empty or omitted model list is not proof that the pair is safe. Keep every pair in the
+        # conservative check path; deterministic product evidence can still establish safety later.
+        if not values:
+            parsed[diet] = set(names)
+            continue
         parsed[diet] = set()
         for value in values:
             got = _entry(value)
             if got is None or got[0] not in names:
-                return {tag: set(names) for tag in tags}, details
+                parsed[diet] = set(names)
+                break
             ingredient, evidence = got
             parsed[diet].add(ingredient)
             details[diet][ingredient] = evidence

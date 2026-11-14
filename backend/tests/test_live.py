@@ -144,6 +144,8 @@ def test_tool_call_runs_the_agent_and_sends_the_result_card(talk, monkeypatch):
     setup = fake.sent[0]["setup"]
     names = [f["name"] for f in setup["tools"][0]["functionDeclarations"]]
     assert names == ["ask_agent", "search_catalogue"]  # no approve tool, ever
+    assert any(f["name"] == "current_order"
+               for group in setup["tools"] for f in group["functionDeclarations"])
     assert fake.headers == {"x-goog-api-key": "test-key"}
 
 
@@ -180,6 +182,71 @@ def test_interview_mode_records_answers_and_sends_an_unstored_preview(talk, monk
     names = [f["name"] for group in setup["tools"] for f in group["functionDeclarations"]]
     assert names == ["record_answer", "finish_interview"]
     assert "one question at a time" in setup["systemInstruction"]["parts"][0]["text"]
+
+
+def test_transcripts_strip_tags_accumulate_and_drop_short_user_turns(talk):
+    fake = talk([
+        {"serverContent": {"inputTranscription": {"text": "as"}}},
+        {"serverContent": {"turnComplete": True}},
+        {"serverContent": {"inputTranscription": {"text": "<no speech>"}}},
+        {"serverContent": {"inputTranscription": {"text": "speech>15 kg"}}},
+        {"serverContent": {"inputTranscription": {"text": "{pause} reindeer roast"}}},
+        {"serverContent": {"turnComplete": True}},
+    ])
+    with c.websocket_connect("/api/live") as ws:
+        ws.send_json({"type": "auth", "agent_key": "agent-chef"})
+        assert ws.receive_json() == {"type": "ready"}
+        first = until(ws, "turn_complete")
+        second = until(ws, "turn_complete")
+        ws.send_json({"type": "stop"})
+
+    assert not [m for m in first if m["type"] == "transcript"]
+    user = [m for m in second if m["type"] == "transcript" and m["role"] == "user"]
+    assert [m["text"] for m in user if not m["final"]] == ["15 kg", "15 kg reindeer roast"]
+    assert [m["text"] for m in user if m["final"]] == ["15 kg reindeer roast"]
+    assert all("<" not in m["text"] and "{" not in m["text"] for m in user)
+
+
+def test_current_order_tool_uses_the_shared_bounded_snapshot(monkeypatch):
+    snapshot = {"orders": [{"requested_date": "2026-11-16", "status": "pending_approval",
+                            "lines": [{"name": "Milk", "amount": 10, "unit": "L"}],
+                            "total_cents": 3120}], "total_cents": 3120}
+    monkeypatch.setattr(live.conversation, "current_order", lambda buyer_id: snapshot)
+    assert asyncio.run(live.current_order("chef")) == snapshot
+
+
+def test_current_order_tool_call_returns_the_snapshot(talk, monkeypatch):
+    snapshot = {"orders": [{"requested_date": "2026-11-16", "status": "confirmed",
+                            "lines": [{"name": "Milk", "amount": 10, "unit": "L"}],
+                            "total_cents": 3120}], "total_cents": 3120}
+    monkeypatch.setattr(live.conversation, "current_order", lambda buyer_id: snapshot)
+    fake = talk([{"toolCall": {"functionCalls": [{"id": "current", "name": "current_order", "args": {}}]}},
+                 {"serverContent": {"turnComplete": True}}])
+    with c.websocket_connect("/api/live") as ws:
+        ws.send_json({"type": "auth", "agent_key": "agent-chef"})
+        assert ws.receive_json() == {"type": "ready"}
+        until(ws, "turn_complete")
+        ws.send_json({"type": "stop"})
+    response = next(m["toolResponse"] for m in fake.sent if "toolResponse" in m)["functionResponses"][0]
+    assert response["response"] == snapshot
+
+
+@pytest.mark.parametrize("query, alias", [("oat milk", "oat drink"), ("almond milk", "almond drink")])
+def test_search_catalogue_uses_bilingual_kitchen_aliases(monkeypatch, query, alias):
+    product = {"id": query, "name_en": f"Valio {alias}", "name_fi": None}
+    monkeypatch.setattr(live.expand, "queries", lambda _query: asyncio.sleep(0, result=[query]))
+    monkeypatch.setattr(live.catalogue, "search",
+                        lambda text, *_args: [product] if text == alias else [])
+    monkeypatch.setattr(live.valio, "get_quotes", lambda *_args, **_kwargs: asyncio.sleep(0, result=[]))
+    result = asyncio.run(live.search_catalogue({"query": query}))
+    assert result["products"] and result["products"][0]["name"] == product["name_en"]
+
+
+def test_search_catalogue_is_honest_when_no_plant_drink_exists(monkeypatch):
+    monkeypatch.setattr(live.expand, "queries", lambda _query: asyncio.sleep(0, result=["oat milk"]))
+    monkeypatch.setattr(live.catalogue, "search", lambda *_args: [])
+    result = asyncio.run(live.search_catalogue({"query": "oat milk"}))
+    assert not result["products"] and "oat milk" in result["message"] and "oat drink" in result["message"]
 
 
 def test_barge_in_and_audio_pass_through(talk):

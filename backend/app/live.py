@@ -18,6 +18,7 @@ import base64
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -26,7 +27,8 @@ from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from trade_contracts import ReasonCode as C
 
-from . import ask, auth, catalogue, config, httpsig, interview, kitchen, orders, profile, ratelimit, valio
+from . import ask, auth, catalogue, config, conversation, expand, httpsig, kitchen, orders, profile, ratelimit, valio
+from . import interview
 from .voice import LIVE_URL
 
 connect = websockets.connect  # tests replace this with a fake Live socket
@@ -64,8 +66,8 @@ Finnish as a restriction.
   first, e.g. "One second, I'll check Valio's prices." / "Hetki, tarkistan Valiolta."
 - Never invent products, prices, stock or delivery days: say only what a tool returned. Speak money naturally
   ("about fifteen euros sixty"), never read out ids or codes.
-- For questions about the current cart, answer only from the ask_agent tool result; never invent a cart line,
-  availability, price, or reason.
+- For questions about the current cart or order, call current_order (or use ask_agent for a text follow-up) and answer
+  only from that tool result; never invent a cart line, availability, price, or reason.
 - If the chef asks about something outside food or kitchen supplies (for example LEGO, flights, poems or weather),
   politely decline in one sentence, say you order food and kitchen supplies from Valio, steer back to the kitchen, and
   do not call tools.
@@ -87,6 +89,10 @@ TOOLS = [{"functionDeclarations": [
     {"name": "search_catalogue", "description": "Read-only: the top Valio products for a query, with live price "
      "and whether they can be delivered tomorrow. Orders nothing.",
          "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}}, "required": ["query"]}}]},
+    {"functionDeclarations": [
+    {"name": "current_order", "description": "Read-only: the kitchen's open, pending and confirmed orders for coming "
+     "delivery days, with lines, amounts, totals and status. Orders nothing.",
+     "parameters": {"type": "OBJECT", "properties": {}}}]},
          {"functionDeclarations": [
     {"name": "kitchen_context", "description": "Read the kitchen's covers, revenue, leftovers, spend and usual products."
      " Say when the returned history is simulated.", "parameters": {"type": "OBJECT", "properties": {}}},
@@ -97,6 +103,7 @@ TOOLS[1]["functionDeclarations"].append(
      "allergens, usual products, delivery days and notes with source labels.",
      "parameters": {"type": "OBJECT", "properties": {}}})
 LABELS = {"ask_agent": "Checking Valio prices and stock…", "search_catalogue": "Searching Valio's catalogue…",
+          "current_order": "Reading the current order…",
           "kitchen_context": "Reading kitchen history…", "kitchen_log": "Logging kitchen report…",
           "profile_context": "Reading the kitchen profile…", "record_answer": "Remembering your kitchen answer…",
           "finish_interview": "Preparing your kitchen preview…"}
@@ -108,7 +115,9 @@ def _eur(cents) -> str | None:
 
 async def ask_agent(buyer_id: str, args: dict) -> tuple[dict, dict | None]:
     """→ (short answer for the model, full /api/agent/ask body for the client's result card)."""
-    text = str(args.get("text") or "")[:MAX_TEXT]
+    text = _clean_transcript(str(args.get("text") or ""))[:MAX_TEXT]
+    if not _usable_transcript(text):
+        return {"error": "Sorry, I didn't catch that, could you say it again?"}, None
     cid = args.get("conversation_id")
     try:
         body = await ask.ask(text, None, buyer_id, {"to": str(cid), "answer": text} if cid else None)
@@ -126,15 +135,47 @@ async def ask_agent(buyer_id: str, args: dict) -> tuple[dict, dict | None]:
     return {k: v for k, v in short.items() if v is not None}, body
 
 
+async def current_order(buyer_id: str) -> dict:
+    return conversation.current_order(buyer_id)
+
+
+def _clean_transcript(value: str) -> str:
+    value = re.sub(r"<[^>]{0,120}>", " ", str(value or ""))
+    value = re.sub(r"\{[^}]{0,120}\}", " ", value)
+    value = re.sub(r"(?i)\b(?:speech|user|agent)\s*>\s*", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _usable_transcript(value: str) -> bool:
+    return bool(value and len(value) > 2 and re.search(r"[\w]", value, re.UNICODE)
+                and not re.fullmatch(r"[\W_]+", value, re.UNICODE))
+
+
 async def search_catalogue(args: dict) -> dict:
-    hits = catalogue.search(str(args.get("query") or "")[:100], [], [], False, None, 5)
+    original = " ".join(str(args.get("query") or "")[:100].split())
+    if not original:
+        return {"query": "", "searched": [], "products": [], "message": "Tell me the product to search for."}
+    try:
+        expanded = await expand.queries(original)
+    except Exception:
+        expanded = [original]
+    queries = list(dict.fromkeys([original, *(expanded or []), *catalogue.synonym_queries(original)]))
+    found = {}
+    for query in queries[:8]:
+        for product in catalogue.search(query, [], [], False, None, 5):
+            found[product["id"]] = product
+    hits = list(found.values())[:5]
     day = date.today() + timedelta(days=1)
     try:
         quotes = {q["product_id"]: q for q in await valio.get_quotes([p["id"] for p in hits], day.isoformat())} if hits else {}
     except Exception:  # noqa: BLE001 - names without prices are still an answer
         quotes = {}
-    return {"products": [{"name": p.get("name_en") or p.get("name_fi"), "price": (quotes.get(p["id"]) or {}).get("price"),
-                          "deliverable_tomorrow": (quotes.get(p["id"]) or {}).get("orderable")} for p in hits]}
+    result = {"query": original, "searched": queries[:8],
+              "products": [{"name": p.get("name_en") or p.get("name_fi"), "price": (quotes.get(p["id"]) or {}).get("price"),
+                            "deliverable_tomorrow": (quotes.get(p["id"]) or {}).get("orderable")} for p in hits]}
+    if not hits:
+        result["message"] = f"I couldn't find a product for {original or 'that query'} (searched: {', '.join(queries[:8])})."
+    return result
 
 
 async def kitchen_context(buyer_id: str) -> dict:
@@ -269,10 +310,12 @@ async def _live_to_client(ws: WebSocket, live, buyer_id: str, bucket: str, mode:
                         out = {"say": "Here's what I'll remember. Check it on screen and confirm.", "done": True}
                     else:
                         out = res
-                elif mode != "interview" and name in ("ask_agent", "search_catalogue", "kitchen_context", "kitchen_log", "profile_context"):
+                elif mode != "interview" and name in ("ask_agent", "search_catalogue", "current_order", "kitchen_context", "kitchen_log",
+                              "profile_context"):
                     job = asyncio.create_task(
                         ask_agent(buyer_id, args) if name == "ask_agent" else
                         search_catalogue(args) if name == "search_catalogue" else
+                        current_order(buyer_id) if name == "current_order" else
                         kitchen_context(buyer_id) if name == "kitchen_context" else
                         kitchen_log(buyer_id, args) if name == "kitchen_log" else
                         profile_context(buyer_id))
@@ -294,14 +337,20 @@ async def _live_to_client(ws: WebSocket, live, buyer_id: str, bucket: str, mode:
                 await ws.send_json({"type": "audio", "data": blob["data"]})
         for role, key in (("user", "inputTranscription"), ("agent", "outputTranscription")):
             if text := (content.get(key) or {}).get("text"):
-                said[role] += text
-                await ws.send_json({"type": "transcript", "role": role, "text": text, "final": False})
+                fragment = _clean_transcript(text)
+                if role == "user" and not _usable_transcript(fragment):
+                    continue
+                if not fragment:
+                    continue
+                said[role] = f"{said[role]} {fragment}".strip()
+                await ws.send_json({"type": "transcript", "role": role, "text": said[role], "final": False})
         if content.get("interrupted"):
             await ws.send_json({"type": "interrupted"})
         if content.get("turnComplete"):
             for role in ("user", "agent"):
-                if said[role].strip():
-                    await ws.send_json({"type": "transcript", "role": role, "text": " ".join(said[role].split()),
+                final = _clean_transcript(said[role])
+                if final and (role != "user" or _usable_transcript(final)):
+                    await ws.send_json({"type": "transcript", "role": role, "text": final,
                                         "final": True})
                 said[role] = ""
             await ws.send_json({"type": "turn_complete"})

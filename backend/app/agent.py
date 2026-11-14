@@ -865,7 +865,8 @@ async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str,
     excl = sorted(set(item["exclude_allergens"]) | excluded)
     words = item["query"].split()
     singular = " ".join(map(_singular, words))
-    tries = list(dict.fromkeys([item["query"], singular] + SYNONYMS.get(singular.lower(), [])))
+    tries = list(dict.fromkeys([item["query"], singular] + SYNONYMS.get(singular.lower(), [])
+                               + catalogue.synonym_queries(item["query"])))
     _ensure_allergen_shape()
 
     def safe_search(query: str, claims: list[str], limit: int) -> list[dict]:

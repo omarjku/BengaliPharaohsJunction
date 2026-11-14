@@ -525,8 +525,18 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
     check_lines += [{"status": "not_found", "ingredient": name, "product_id": None, "quantity": None,
                      "name": name, "reason": "No product was found in the catalogue."} for name in missing]
     check_count = len(checked_items)
+    needs_look = check_count + len(missing)
     coverage = {"ingredients": len(ingredients), "in_cart": len(in_cart), "to_check": check_count,
-                "check_total_cents": check_total, "not_found": missing, "have": len(left)}
+                "check_total_cents": check_total, "not_found": missing,
+                "have": len(left), "needs_look": needs_look}
+    if ingredients and len(in_cart) / len(ingredients) < 0.6:
+        coverage_note = (f"I found {len(in_cart)} of {len(ingredients)} ingredients; {needs_look} need your look."
+                         if needs_look else
+                         f"I found {len(in_cart)} of {len(ingredients)} ingredients; the rest are already in your kitchen.")
+        reasons.append(gate._r(
+            C.COVERAGE_LOW, ASK, coverage_note + (f" Not found: {', '.join(missing)}." if missing else ""),
+            None, "Check the missing and held ingredients before ordering.",
+            in_cart=len(in_cart), ingredients=len(ingredients), needs_look=needs_look, not_found=", ".join(missing)))
     if check_count or missing:  # the headline total must never look like the whole menu when it isn't
         reasons.append(gate._r(C.MENU_ASSUMPTIONS, gate.INFO, f"EUR {cart_total / 100:,.2f} covers {len(in_cart)} of "
                 f"{len(ingredients)} ingredients" + (f"; {check_count} need your look (about EUR "
@@ -553,7 +563,7 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
                  "assumption": i.get("assumption")} for i in d["ingredients"]]} for d in kept]},
             "assumptions": assumptions, "ingredients": ingredients, "lines": lines,
             # computed like the front door will (unit price x summed quantity), so the chef sees what they'll pay
-            "cart_total_cents": cart_total, "cart_coverage": coverage,
+            "cart_total_cents": cart_total, "cart_coverage": coverage, "not_found": missing,
             "order_lines": [{"product_id": p, "quantity": q} for p, q in qty.items()],
             "check_lines": check_lines,
             "decision": decision.model_dump(mode="json"), "audit_id": entry.id}

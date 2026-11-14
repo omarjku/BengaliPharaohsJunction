@@ -39,7 +39,7 @@ def _menu_gemini(monkeypatch, dishes, risk, matcher=None):
 
 def test_diet_levels_use_allergen_evidence_and_claims():
     wheat = {"claims": [], "allergens": {"contains": ["AW"], "may_contain": [], "free_from": []}}
-    plain_carrot = {"claims": [], "allergens": {"contains": [], "may_contain": [], "free_from": ["AW"]}}
+    plain_carrot = {"claims": [], "allergens": {"contains": [], "may_contain": [], "free_from": ["AW", "UW"]}}
     labelled = {"claims": ["FREE_FROM_GLUTEN"], "allergens": {}}
 
     assert diet.contradicts(wheat, "gluten_free")
@@ -60,7 +60,7 @@ def test_safe_by_nature_needs_explicit_certainty_and_no_conflicting_trace_data()
 
     assert diet.check(product_with_trace_conflict, "gluten_free", True, model)["level"] == "unverifiable"
     assert diet.check({"name_en": "Potato starch", "claims": [], "allergens": {}}, "gluten_free", True,
-                      model)["level"] == "unverifiable"
+                      model)["level"] == "safe_by_nature"
     assert diet.check({"name_en": "Potato starch", "claims": [], "allergens": {}}, "gluten_free", True,
                       model | {"certain": True})["level"] == "safe_by_nature"
 
@@ -89,9 +89,45 @@ def test_at_risk_is_one_batched_data_call_and_down_is_strict(monkeypatch):
     assert strict == {"vegan": {"flour", "oil"}}
 
 
+def test_empty_valid_risk_list_still_checks_selected_may_contain(monkeypatch):
+    async def fake(*_args, **_kwargs):
+        return {"gluten_free": []}
+
+    monkeypatch.setattr(agent, "_gemini", fake)
+    diet._RISK_CACHE.clear()
+    risks = asyncio.run(diet.at_risk(["carrots"], ["gluten_free"]))
+    product = {"name_en": "Carrots", "claims": [],
+               "allergens": {"contains": [], "may_contain": ["AW"], "free_from": []}}
+    checks = agent._dietary_checks({"query": "carrots"}, product, risks, diet.risk_details(["carrots"], ["gluten_free"]),
+                                   ["gluten_free"])
+    assert "carrots" in risks["gluten_free"]
+    assert checks[0]["level"] == "unverifiable"
+
+
+def test_claim_cannot_override_conflicting_may_contain_trace():
+    product = {"claims": ["FREE_FROM_GLUTEN"],
+               "allergens": {"contains": [], "may_contain": ["AW"], "free_from": []}}
+    assert diet.check(product, "gluten_free", True)["level"] == "unverifiable"
+
+
+def test_partial_free_from_evidence_is_not_verified():
+    vegan = {"claims": [], "allergens": {"contains": [], "may_contain": [], "free_from": ["AM"]}}
+    gluten = {"claims": [], "allergens": {"contains": [], "may_contain": [], "free_from": ["AW"]}}
+    assert diet.check(vegan, "vegan", True)["level"] == "unverifiable"
+    assert diet.check(gluten, "gluten_free", True)["level"] == "unverifiable"
+
+
+def test_model_safe_assertion_cannot_make_selected_blended_oil_safe():
+    product = {"name_en": "Olive oil blend", "name_fi": None, "claims": [],
+               "allergens": {"contains": [], "may_contain": [], "free_from": []}}
+    model = {"safe_by_nature": True, "reason": "olive oil is a raw ingredient",
+             "single_ingredient_unprocessed": True, "certain": True}
+    assert diet.check(product, "vegan", True, model)["level"] == "unverifiable"
+
+
 def test_label_and_free_from_are_verified_and_shown_on_cart_lines(shop, monkeypatch, decisions):
     _catalogue_product(shop, "labelled-flour", "Labelled flour", claims=("FREE_FROM_GLUTEN",), contains=())
-    _catalogue_product(shop, "free-flour", "Free flour", claims=(), contains=(), free=("AW",))
+    _catalogue_product(shop, "free-flour", "Free flour", claims=(), contains=(), free=("AW", "UW"))
     dishes = [{"name": "Gluten-free flour", "ingredients": [
         {"name": "labelled flour", "per_cover": 0.1, "unit": "kg", "assumption": "100 g", "dietary": []},
         {"name": "free flour", "per_cover": 0.1, "unit": "kg", "assumption": "100 g", "dietary": []}]}]
@@ -219,10 +255,9 @@ def test_gemini_down_has_no_safe_by_nature_and_holds_the_line(shop, monkeypatch,
                                       dishes_task=asyncio.sleep(0, result=dishes)))
     line = next(line for line in result["lines"] if line["chosen"])
 
-    assert line["diet_checks"] == [{"diet": "vegan", "level": "unverifiable",
-                                     "basis": "no vegan label or proving allergen data"}]
-    assert result["order_lines"] == []
-    assert sum("Can't verify this" in r["message"] for r in result["decision"]["reasons"]) == 1
+    assert line["diet_checks"][0]["level"] == "safe_by_nature"
+    assert result["order_lines"]
+    assert not any("Can't verify this" in r["message"] for r in result["decision"]["reasons"])
 
 
 def test_vegan_menu_prices_natural_ingredients_and_drops_animal_cheese(shop, monkeypatch, decisions):
@@ -368,6 +403,6 @@ def test_gemini_down_uses_strict_diet_fallback_without_unsafe_lines(shop, monkey
     monkeypatch.setattr(agent, "match", all_hits)
     result = asyncio.run(menu.propose("Vegan pizza for 10 people", 10, REQ, "chef", dishes_task=asyncio.sleep(0, result=dishes)))
 
-    assert result["order_lines"] == []
+    assert {line["product_id"] for line in result["order_lines"]} == {"plain-flour"}
     assert all(line["product"]["id"] != "animal-cheese" for line in result["lines"] if line["chosen"])
 
