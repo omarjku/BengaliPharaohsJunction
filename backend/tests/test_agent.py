@@ -408,3 +408,14 @@ def test_dietary_word_on_the_wrong_item_is_not_counted(shop1, monkeypatch):
     body = run("20 L milk, lactose-free, and 2 kg butter")
     assert body["order"] is None
     assert any("isn't clear which product" in r["message"] for r in body["decision"]["reasons"])
+
+
+def test_one_clause_grounds_at_most_one_item(shop1, monkeypatch):
+    """Security review: 'milk' and 'lactose-free milk' parsed from ONE line could become two products."""
+    two = [dict(ITEM[0], query="milk", amount=1), dict(ITEM[0], query="lactose-free milk", amount=1)]
+    assert len(agent.overgrounded("1 L lactose-free milk", two)) == 1  # one line can't feed two items
+    assert agent.overgrounded("1 L lactose-free milk and 1 L milk", two) == []  # two lines, two items: fine
+    gemini(monkeypatch, two, ranked=["463335", "476240"])
+    body = run("1 L lactose-free milk")
+    assert body["order"] is None and any("same part of the request" in r["message"]
+                                         for r in body["decision"]["reasons"])

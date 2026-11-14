@@ -261,23 +261,45 @@ def _unit_in(unit: str, clause: str) -> bool:
     return bool(tokens & _UNIT_WORDS.get(unit, set()))
 
 
-def ungrounded(text: str, item: dict) -> str | None:
-    """Deterministic injection / hallucination guard: what in a Gemini-parsed item is NOT in the chef's own text.
-    Product, amount and unit must all be in the SAME clause, so '12 kg butter and 1 L milk' can't become 12 L milk."""
+def grounding(text: str, item: dict) -> tuple[str | None, set[int]]:
+    """Deterministic injection / hallucination guard → (what in a Gemini-parsed item is NOT in the chef's own text,
+    indices of the clauses that ground it). Product, amount and unit must all be in the SAME clause, so
+    '12 kg butter and 1 L milk' can't become 12 L milk."""
     words = re.findall(r"[\wäöå]+", item["query"].lower())
     unit = (item["unit"] or "").lower()
     if unit and unit not in quantity.MEASURES:
-        return f"the unit {item['unit']}"  # catalogue codes like KI multiply quantities; only plain units are parsed
-    clauses = [c for c in re.split(_SPLIT, text) if _words_in(words, c)]
+        return f"the unit {item['unit']}", set()  # catalogue codes like KI multiply quantities; plain units only
+    clauses = {i: c for i, c in enumerate(re.split(_SPLIT, text)) if _words_in(words, c)}
     if not clauses:
-        return f"the product '{item['query']}'"
+        return f"the product '{item['query']}'", set()
     if item["amount"] is not None:
-        clauses = [c for c in clauses if item["amount"] in _numbers(c)]
+        clauses = {i: c for i, c in clauses.items() if item["amount"] in _numbers(c)}
         if not clauses:
-            return f"the amount {gate._qty(item['amount'])} for {item['query']}"
-    if unit and not any(_unit_in(unit, c) for c in clauses):
-        return f"the unit {item['unit']} for {item['query']}"
-    return None
+            return f"the amount {gate._qty(item['amount'])} for {item['query']}", set()
+    if unit:
+        clauses = {i: c for i, c in clauses.items() if _unit_in(unit, c)}
+        if not clauses:
+            return f"the unit {item['unit']} for {item['query']}", set()
+    return None, set(clauses)
+
+
+def ungrounded(text: str, item: dict) -> str | None:
+    return grounding(text, item)[0]
+
+
+def overgrounded(text: str, items: list[dict]) -> list[dict]:
+    """Items left without a clause of their own once each clause grounds at most ONE item: '1 L lactose-free milk'
+    parsed as both 'milk' and 'lactose-free milk' would otherwise order two products from one line.
+    ponytail: greedy, fewest options first; exact matching (Hopcroft-Karp) is overkill for <= MAX_ITEMS items."""
+    options = [(grounding(text, it)[1], n) for n, it in enumerate(items)]
+    used, left = set(), []
+    for opts, n in sorted((o for o in options if o[0]), key=lambda o: len(o[0])):
+        free = sorted(opts - used)
+        if free:
+            used.add(free[0])
+        else:
+            left.append(items[n])
+    return left
 
 
 def unassigned_tags(text: str, items: list[dict]) -> list[str]:
@@ -411,6 +433,14 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
             reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The parsed item '{it['query']}' doesn't match the request: "
                                    f"{what} isn't in the buyer's text. Nothing was ordered.", None,
                                    "Check the request and the parsed items, then retry with the exact wording."))
+    for it in overgrounded(text, request["items"]) if parsed_by_gemini else []:
+        reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, f"The parsed item '{it['query']}' comes from the same part of the "
+                               "request as another item, so it would be ordered twice. Nothing was ordered.", None,
+                               "Send each product once, with the total amount."))
+    keys = [(i["query"].lower(), i["amount"], (i["unit"] or "").lower()) for i in request["items"]]
+    if len(set(keys)) < len(keys):  # exact duplicates, even where they'd resolve to different products
+        reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, "The same item appears more than once in the request. Nothing "
+                               "was ordered.", None, "Send each product once, with the total amount."))
     if lost := unassigned_tags(text, request["items"]):  # a stated dietary need no parsed item carries
         if len(request["items"]) == 1:
             it = request["items"][0]

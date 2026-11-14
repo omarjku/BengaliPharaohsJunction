@@ -83,3 +83,10 @@
 - Dietary check was fail-open for multi-item requests: a tag counted as assigned if ANY item carried it, so a parse
   hanging "lactose-free" on the butter left the milk unconstrained. Now a tag counts only on the item whose own
   clause states it (or the only item); otherwise ASK.
+
+## 6. Automated security review of 7893939: 1 MEDIUM, kept
+- Removing the exact-duplicate check was a regression: identical items are judged in separate Decisions calls, so
+  they can land on different products and both be ordered. The exact-duplicate check is back (alongside the
+  chosen-product check).
+- One clause could ground several parsed items ("1 L lactose-free milk" → "milk" + "lactose-free milk", two products).
+  Each clause now grounds at most one item (`overgrounded`); any item left over → ASK, nothing ordered.
