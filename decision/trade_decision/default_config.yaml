@@ -1,0 +1,13 @@
+# Default thresholds for the decision step (D19). Money is integer cents, net of VAT.
+# Rule logic stays in code; only numbers live here.
+default_order_limit_cents: 50000        # EUR 500 per order when the mandate has no limit (D1, D15)
+price_change_tolerance_pct: 5.0         # D11: price moved more than this vs the expected price -> ASK
+qty_unknown_threshold: 100000           # D7: available qty >= this (or null) means "unknown", not "plenty"
+suspicious_quantity: 100000             # cases 3, 15: a requested quantity this large looks like a typo
+min_reliability: 0.8                    # D13: score below this -> ASK
+reliability_missing_ask_above_cents: 20000  # D13: no reliability record only matters above EUR 200
+quote_max_age_seconds: 900              # case 22: older quotes are stale -> re-quote
+partial_preselect_coverage: 0.95        # D8: only pre-selects "accept partial", never auto-accepts
+max_alternatives: 3                     # D21
+timezone: Europe/Helsinki               # cut-offs and dates are compared in this zone
+low_confidence_threshold: 0.8           # D26 (T10): confidence below this downgrades AUTO to ASK
