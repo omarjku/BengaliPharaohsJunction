@@ -266,3 +266,20 @@ def test_each_held_line_of_a_list_gets_its_own_next_step(shop1, monkeypatch, tmp
                headers={"X-Agent-Key": "agent-lk"}).json()
     assert [it["query"] for it in r["request"]["items"]] == ["Mozzarella block"]  # only the held line ran again
     assert r["order"] and r["order"]["status"] == "confirmed" and r["held_items"] == [], (r.get("question"), [(x["code"], x["message"][:120]) for x in r["decision"]["reasons"]])
+
+
+def test_a_held_line_follow_up_can_not_skip_request_level_guards(shop1, monkeypatch, tmp_path):  # noqa: F811
+    """Security review: a request held for request-level reasons (here an item that isn't in the chef's words) gets
+    no per-line next step, and a stored line is re-grounded against the ORIGINAL text before it runs again."""
+    from app import ask as ask_mod, conversation
+    monkeypatch.setattr(conversation, "STORE", tmp_path / "conv.json")
+    pizza_shop(shop1)
+    fake(monkeypatch, [{"query": "milk", "amount": 10, "unit": "L", "dietary": []},
+                       {"query": "mozzarella", "amount": 2, "unit": "L", "dietary": []}])
+    body = post("10 L milk for Monday")  # 'mozzarella' was never said: request-level grounding holds everything
+    assert body["held_items"] == [] and body["next_steps"] == []
+    entry = {"text": "10 L milk for Monday", "requested": REQ.isoformat(), "item": 1, "line_only": True,
+             "request": {"summary": "x", "items": [{"query": "milk", "amount": 10, "unit": "L"},
+                                                   {"query": "mozzarella", "amount": 2, "unit": "L"}]}}
+    assert not ask_mod._line_grounded(entry)
+    assert ask_mod._line_grounded(dict(entry, item=0))

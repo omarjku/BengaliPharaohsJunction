@@ -186,6 +186,22 @@ def _options(lines: list[dict]) -> list[str]:
     return list(dict.fromkeys(n for n in names if n))[:3]
 
 
+def _line_grounded(entry: dict) -> bool:
+    """A single-line re-run rebuilds its text, so first re-check that the stored line came from the chef's ORIGINAL
+    words (product, amount, unit in one clause; Finnish by its source words) and that text had no steering wording."""
+    original = entry["text"]
+    item = entry["request"]["items"][entry["item"]]
+    if agent._INSTRUCTION.search(original) or agent._BILLING.search(original):
+        return False
+    return agent.ungrounded(original, item) is None or agent.ungrounded(original, agent.anchored(original, item)) is None
+
+
+def _line_refused(entry: dict) -> dict:
+    return _ask("order", None, date.fromisoformat(entry["requested"]) if entry.get("requested") else None, None,
+                "That line can't be continued on its own. Please say the whole order again.", C.LOW_CONFIDENCE,
+                "Say the whole order again.")
+
+
 async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, date | None]:
     """Fill only the asked field from the answer, then re-run every check. → (response, original text, date)."""
     text, kind = entry["text"], entry["kind"]
@@ -231,6 +247,8 @@ async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, d
         if not choice:
             return again("Which one did you mean?", "Say the number of the option, or the product."), text, requested
         if entry.get("line_only"):  # one held line of a list: only that line runs again, as the chosen product
+            if not _line_grounded(entry):
+                return _line_refused(entry), text, requested
             item = dict(entry["request"]["items"][entry["item"]], query=choice[:120], source="")
             amount = f"{item['amount']:g} {item['unit']} " if item.get("amount") is not None and item.get("unit") else ""
             merged = f"{amount}{choice}"  # only this line: the other lines' text would read as unparsed (guard)
@@ -248,6 +266,8 @@ async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, d
     item["amount"], item["unit"] = got
     merged = f"{text}. {got[0]:g} {got[1]} {item['query']}"  # grounding finds amount + unit + product in one clause
     if entry.get("line_only"):  # one held line of a list: the lines already ordered are not sent again
+        if not _line_grounded(entry):
+            return _line_refused(entry), text, requested
         request, merged = {**request, "items": [item]}, f"{got[0]:g} {got[1]} {item['query']}"
     return await _flow(merged, requested, buyer_id, parsed=(request, True)), merged, requested
 
