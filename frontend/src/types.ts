@@ -166,6 +166,39 @@ export type MenuRun = {
 }
 export type MenuInput = { menu_text: string; covers: number; requested_date: string }
 
+// Rules (mandate). Money values are net-of-VAT cents; allergen values are GS1 codes ('AP') or plain words ('gluten').
+export type HardRule = { kind: string; value: string | number; scope: string; source_text: string | null }
+export type Mandate = {
+  contract_version: string
+  id: string
+  buyer_id: string
+  hard_rules: HardRule[]
+  uncertainty_policy: 'ask' | 'decline' | 'approve'
+  guidance: { text: string; scope: string }[]
+  open_questions: { question: string; why: string | null }[]
+  blocklist: string[]
+  per_line_cap_cents: number
+  weekly_budget_cents: number | null
+  expires_at: string | null
+}
+export type RuleChange = {
+  field: string
+  before: unknown
+  after: unknown
+  change: 'tighter' | 'looser' | 'changed'
+  text: string
+  needs_confirmation: boolean
+}
+export type CompileResult = {
+  proposed_mandate: Mandate
+  diff_from_current: RuleChange[]
+  open_questions: { question: string; why: string | null }[]
+  assumptions: string[]
+  used_fallback: boolean
+  injection_flagged: boolean
+}
+export type SaveResult = { mandate: Mandate; changes: RuleChange[]; audit_id: string }
+
 export type RunInput = { text: string; requested_date: string; buyer_id?: string }
 export type OrderInput = { requested_date: string; lines: { product_id: string; quantity: number }[] }
 

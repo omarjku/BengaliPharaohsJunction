@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
 import { getAudit, getKeys, MOCK } from './api'
-import { confidenceSentence } from './copy'
-import { errorText, formatConfidence, type Tone } from './format'
+import { HISTORY_INTRO, humanize, matched } from './copy'
+import { errorText } from './format'
+import { groupHistory, type Group } from './history'
 import type { AuditEntry } from './types'
 
 const HELSINKI = 'Europe/Helsinki'
 const clock = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: HELSINKI })
 const dayKey = new Intl.DateTimeFormat('en-CA', { timeZone: HELSINKI }) // YYYY-MM-DD in Helsinki
 const dayName = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: HELSINKI })
+const time = (iso: string) => clock.format(new Date(iso))
 
 function dayLabel(iso: string, now = new Date()): string {
   const d = dayKey.format(new Date(iso))
@@ -16,24 +18,7 @@ function dayLabel(iso: string, now = new Date()): string {
   return dayName.format(new Date(iso))
 }
 
-// One line in plain words: who did what. Status colour comes only with these words.
-function describe(e: AuditEntry): { tone: Tone; what: string } {
-  const human = /^human:(.+?)(?::(approve|reject))?$/.exec(e.actor)
-  if (human?.[2] === 'approve') return { tone: 'good', what: `${human[1]} approved the order` }
-  if (human?.[2] === 'reject') return { tone: 'bad', what: `${human[1]} rejected the order` }
-  const o = e.decision.outcome
-  const tone: Tone = o === 'AUTO' ? 'good' : o === 'DECLINE' ? 'bad' : 'warn'
-  if (e.actor === 'buyer_agent')
-    return { tone, what: o === 'AUTO' ? 'The agent sent the order to Valio' : o === 'DECLINE' ? 'The agent didn’t order' : 'The agent asked for your OK' }
-  if (e.actor === 'valio_front_door')
-    return { tone, what: o === 'AUTO' ? 'Valio confirmed the order' : o === 'DECLINE' ? 'Valio refused the order' : 'Valio held the order for your OK' }
-  return { tone, what: human?.[1] ?? e.actor }
-}
-
-// What was asked, without the system prefix the front door adds.
-const said = (e: AuditEntry) => e.input.request.text.replace(/^Order via Valio front door:\s*/, '')
-
-export function AuditLog({ refreshKey, onBuyer }: { refreshKey: number; onBuyer: (buyer: string | null) => void }) {
+export function AuditLog({ refreshKey, onEntries }: { refreshKey: number; onEntries: (entries: AuditEntry[]) => void }) {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -43,9 +28,9 @@ export function AuditLog({ refreshKey, onBuyer }: { refreshKey: number; onBuyer:
 
   useEffect(() => {
     let cancelled = false
-    setEntries(null)
     setError(null)
     if (!canRead) {
+      setEntries(null)
       setLoading(false)
       return
     }
@@ -53,22 +38,22 @@ export function AuditLog({ refreshKey, onBuyer }: { refreshKey: number; onBuyer:
     getAudit()
       .then((e) => {
         if (cancelled) return
-        setEntries([...e].reverse()) // API is oldest first
-        onBuyer(e[0]?.input.request.buyer_id ?? null)
+        setEntries(e) // oldest first, as the API sends it
+        onEntries(e)
       })
       .catch((e) => !cancelled && setError(errorText(e)))
       .finally(() => !cancelled && setLoading(false))
     return () => {
       cancelled = true
     }
-  }, [approverKey, canRead, refreshKey, manual, onBuyer])
+  }, [approverKey, canRead, refreshKey, manual, onEntries])
 
-  const days: [string, AuditEntry[]][] = []
-  for (const e of entries ?? []) {
-    const label = dayLabel(e.timestamp)
+  const days: [string, Group[]][] = []
+  for (const g of entries ? groupHistory(entries) : []) {
+    const label = dayLabel(g.at)
     const last = days[days.length - 1]
-    if (last?.[0] === label) last[1].push(e)
-    else days.push([label, [e]])
+    if (last?.[0] === label) last[1].push(g)
+    else days.push([label, [g]])
   }
 
   return (
@@ -79,7 +64,7 @@ export function AuditLog({ refreshKey, onBuyer }: { refreshKey: number; onBuyer:
           {loading ? 'Loading…' : 'Refresh'}
         </button>
       </div>
-      <p className="note">Everything the agent, Valio and you decided, newest first.</p>
+      <p className="note">{HISTORY_INTRO}</p>
 
       {!canRead && <p className="problem">Add your approver key under Keys to see the history.</p>}
       {error && (
@@ -90,47 +75,84 @@ export function AuditLog({ refreshKey, onBuyer }: { refreshKey: number; onBuyer:
       )}
       {entries && entries.length === 0 && <p className="note empty">Nothing yet. Your first order will show up here.</p>}
 
-      {days.map(([label, list]) => (
+      {days.map(([label, groups]) => (
         <section key={label} aria-label={label}>
           <h2 className="feed-day">{label}</h2>
           <ol className="feed">
-            {list.map((e) => {
-              const { tone, what } = describe(e)
-              return (
-                <li key={e.id}>
-                  <details className="event">
-                    <summary>
-                      <span className="event-line">
-                        <time className="event-time" dateTime={e.timestamp}>
-                          {clock.format(new Date(e.timestamp))}
-                        </time>
-                        <span className="event-what">
-                          <span className={`dot ${tone}`} aria-hidden="true" />
+            {groups.map((g) => (
+              <li key={g.key}>
+                <details className="event">
+                  <summary>
+                    <GroupLine g={g} />
+                  </summary>
+                  <ol className="event-body">
+                    {g.steps.map(({ e, what }) => (
+                      <li key={e.id} className="step">
+                        <p>
+                          <time className="event-time" dateTime={e.timestamp}>
+                            {time(e.timestamp)}
+                          </time>{' '}
                           {what}
-                          <span className="event-said">{said(e)}</span>
-                        </span>
-                      </span>
-                    </summary>
-                    <div className="event-body">
-                      {e.decision.reasons.map((r, i) => (
-                        <p key={i}>
-                          {r.message}
-                          {r.suggested_fix && <> {r.suggested_fix}</>}
                         </p>
-                      ))}
-                      {e.decision.confidence != null && (
-                        <p className="num">
-                          Gemini: {confidenceSentence(e.decision.confidence).toLowerCase()} · {formatConfidence(e.decision.confidence)}
-                        </p>
-                      )}
-                    </div>
-                  </details>
-                </li>
-              )
-            })}
+                        {e.decision.reasons
+                          // a sign-off repeats the order's reasons; a rules change lists what changed
+                          .filter((r) => (e.actor.endsWith(':mandate') ? true : !e.actor.startsWith('human:') && r.severity !== 'INFO'))
+                          .map((r, i) => (
+                            <p key={i} className="quiet">
+                              {humanize(r.message)}
+                            </p>
+                          ))}
+                        {e.decision.confidence != null && <p className="quiet num">{matched(e.decision.confidence)}</p>}
+                      </li>
+                    ))}
+                  </ol>
+                </details>
+              </li>
+            ))}
           </ol>
         </section>
       ))}
     </div>
+  )
+}
+
+function GroupLine({ g }: { g: Group }) {
+  return (
+    <span className="event-line">
+      <time className="event-time" dateTime={g.at}>
+        {time(g.at)}
+      </time>
+      <span className="event-what">
+        {g.title}
+        <span className={`event-said status-word ${g.tone}`}>
+          <span className={`dot ${g.tone}`} aria-hidden="true" />
+          {g.outcome}
+        </span>
+      </span>
+    </span>
+  )
+}
+
+// The last few requests, for the empty order screen: does anything need me?
+export function Recent({ groups, onOpen }: { groups: Group[]; onOpen: () => void }) {
+  if (!groups.length) return null
+  return (
+    <section className="recent" aria-labelledby="recent-title">
+      <div className="ask-row">
+        <h2 className="feed-day" id="recent-title">
+          Recently
+        </h2>
+        <button type="button" className="link" onClick={onOpen}>
+          All history
+        </button>
+      </div>
+      <ol className="feed">
+        {groups.map((g) => (
+          <li key={g.key} className="recent-row">
+            <GroupLine g={g} />
+          </li>
+        ))}
+      </ol>
+    </section>
   )
 }
