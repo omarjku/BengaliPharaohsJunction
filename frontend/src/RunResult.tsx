@@ -1,9 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { decideOrder } from './api'
-import { errorText, flagLabel, formatCents, formatDateTime, formatDay, formatEuro } from './format'
-import type { AgentRun, ApprovalResult, Decision, Line } from './types'
+import { errorText, flagLabel, formatCents, formatDateTime, formatDay, formatEuro, outcomeView, resultView } from './format'
+import type { AgentRun, Line, OrderResponse } from './types'
 
-export function RunResult({ run, onAction }: { run: AgentRun; onAction: () => void }) {
+type Props = {
+  run: AgentRun
+  onAction: () => void // an approve/reject finished (refresh the audit log)
+  onBusy: (busy: boolean) => void
+  onAnnounce: (headline: string) => void
+}
+
+export function RunResult({ run, ...rest }: Props) {
   const chosen = run.lines.filter((l) => l.chosen)
   const others = run.lines.filter((l) => !l.chosen)
   const totals = chosen.map((l) => l.line_total_cents)
@@ -25,7 +32,7 @@ export function RunResult({ run, onAction }: { run: AgentRun; onAction: () => vo
         </ul>
       </div>
 
-      <DecisionCard run={run} onAction={onAction} />
+      <DecisionCard run={run} {...rest} />
 
       {chosen.length > 0 && (
         <div className="card">
@@ -61,6 +68,7 @@ const humanize = (code: string) => code.toLowerCase().replace(/_/g, ' ')
 
 function LineItem({ line }: { line: Line }) {
   const { product: p, quote: q, quantity } = line
+  const unit = quantity.sales_unit || p.sales_unit || 'units'
   return (
     <li className="line">
       <p className="line-name">
@@ -70,12 +78,13 @@ function LineItem({ line }: { line: Line }) {
       <dl>
         <dt>Quantity</dt>
         <dd>
-          {quantity.sales_units} × {p.sales_unit} <span className="muted">({quantity.explanation})</span>
+          {quantity.quantity !== null ? `${quantity.quantity.toLocaleString('en-US')} × ${unit}` : 'Not worked out'}{' '}
+          <span className="muted">({quantity.explanation})</span>
         </dd>
         <dt>Price</dt>
         <dd>
-          {q.price !== null ? `${formatEuro(q.price)} / ${p.sales_unit}` : 'unknown'}
-          {q.comparison_price !== null && q.comparison_unit && (
+          {q?.price != null ? `${formatEuro(q.price)} / ${unit}` : 'unknown'}
+          {q?.comparison_price != null && q.comparison_unit && (
             <span className="muted">
               {' '}
               ({formatEuro(q.comparison_price)} / {q.comparison_unit})
@@ -83,26 +92,26 @@ function LineItem({ line }: { line: Line }) {
           )}
           {line.line_total_cents !== null && <> · line total {formatCents(line.line_total_cents)}</>}
         </dd>
-        {(q.available_date || q.order_cutoff) && (
+        {(q?.available_date || q?.order_cutoff) && (
           <>
             <dt>Delivery</dt>
             <dd>
-              {q.available_date && <>arrives {formatDay(q.available_date)}</>}
+              {q.available_date && <>arrives {formatDay(q.available_date.slice(0, 10))}</>}
               {q.available_date && q.order_cutoff && ' · '}
               {q.order_cutoff && <>order by {formatDateTime(q.order_cutoff)}</>}
             </dd>
           </>
         )}
-        {q.quantity_known && q.available_amount !== null && (
+        {q?.quantity_known && q.available_amount !== null && (
           <>
             <dt>In stock</dt>
             <dd>{q.available_amount.toLocaleString('en-US')}</dd>
           </>
         )}
       </dl>
-      {(q.flags.length > 0 || quantity.needs_confirmation) && (
+      {((q?.flags.length ?? 0) > 0 || quantity.needs_confirmation) && (
         <ul className="warnings">
-          {q.flags.map((f) => (
+          {q?.flags.map((f) => (
             <li key={f}>{flagLabel(f)}</li>
           ))}
           {quantity.needs_confirmation && <li>Quantity needs your confirmation</li>}
@@ -112,48 +121,53 @@ function LineItem({ line }: { line: Line }) {
   )
 }
 
-type Tone = 'good' | 'warn' | 'bad' | 'neutral'
-const OUTCOME_VIEW: Record<Decision['outcome'], [Tone, string]> = {
-  ORDERED: ['good', 'Ordered by the agent'],
-  NEEDS_APPROVAL: ['warn', 'Needs your approval'],
-  REFUSED: ['bad', 'Not ordered'],
-}
-const RESULT_VIEW: Record<ApprovalResult['status'], [Tone, string]> = {
-  ORDERED: ['good', 'Approved and ordered'],
-  REJECTED: ['neutral', 'Rejected: nothing was ordered'],
-  REFUSED: ['bad', 'Refused at Valio’s front door'],
-}
+const NAME_OK = /^[\p{L}\p{N}_ .'-]{1,64}$/u // same rule as the backend's SignOff.approver
 
-function DecisionCard({ run, onAction }: { run: AgentRun; onAction: () => void }) {
+function DecisionCard({ run, onAction, onBusy, onAnnounce }: Omit<Props, 'run'> & { run: AgentRun }) {
   const [busy, setBusy] = useState<'approve' | 'reject' | null>(null)
-  const [result, setResult] = useState<ApprovalResult | null>(null)
+  const [result, setResult] = useState<OrderResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [approver, setApprover] = useState('')
+  const heading = useRef<HTMLHeadingElement>(null)
+
+  // The front door's verdict wins over the agent's own: it re-checks with fresh quotes.
+  const order = result ?? run.order
+  const decision = order?.decision ?? run.decision
+  const [tone, title] = order ? resultView(order.status) : outcomeView(run.decision.outcome)
+  const awaitingApproval = order?.status === 'pending_approval' && order.order_id !== null
+
+  useEffect(() => {
+    onAnnounce(title)
+    heading.current?.focus()
+  }, [title, result, onAnnounce])
 
   async function act(action: 'approve' | 'reject') {
-    if (!run.order) return
+    if (!order?.order_id) return
     setBusy(action)
+    onBusy(true)
     setError(null)
     try {
-      setResult(await decideOrder(run.order.order_id, action))
+      setResult(await decideOrder(order.order_id, action, approver.trim()))
       onAction()
     } catch (err) {
       setError(errorText(err))
     } finally {
       setBusy(null)
+      onBusy(false)
     }
   }
 
-  const decision: Decision = result?.decision ?? run.decision
-  const orderId = result?.order_id ?? run.order?.order_id
-  const [tone, title] = result ? RESULT_VIEW[result.status] : OUTCOME_VIEW[run.decision.outcome]
-  const awaitingApproval = !result && run.decision.outcome === 'NEEDS_APPROVAL' && run.order !== null
+  const nameOk = NAME_OK.test(approver.trim())
 
   return (
-    <div className={`card decision ${tone}`} aria-live="polite">
-      <h2>{title}</h2>
-      {orderId && (tone === 'good' || awaitingApproval) && (
+    <div className={`card decision ${tone}`}>
+      <h2 ref={heading} tabIndex={-1}>
+        {title}
+      </h2>
+      {order?.order_id && (tone === 'good' || awaitingApproval) && (
         <p>
-          Order <code>{orderId}</code>
+          Order <code>{order.order_id}</code>
+          {order.total_cents > 0 && <> · {formatCents(order.total_cents)} <span className="muted">(net of VAT)</span></>}
         </p>
       )}
       {decision.reasons.length > 0 && (
@@ -161,7 +175,10 @@ function DecisionCard({ run, onAction }: { run: AgentRun; onAction: () => void }
           <h3>Why</h3>
           <ul>
             {decision.reasons.map((r, i) => (
-              <li key={i}>{r.text}</li>
+              <li key={i}>
+                {r.message}
+                {r.suggested_fix && <span className="muted"> {r.suggested_fix}</span>}
+              </li>
             ))}
           </ul>
         </>
@@ -172,21 +189,32 @@ function DecisionCard({ run, onAction }: { run: AgentRun; onAction: () => void }
           <ul>
             {decision.alternatives.map((a, i) => (
               <li key={i}>
-                {a.text} <span className="muted">#{a.product_id}</span>
+                {a.summary} <span className="muted">#{a.product_id}</span>
               </li>
             ))}
           </ul>
         </>
       )}
       {awaitingApproval && (
-        <div className="actions">
-          <button type="button" onClick={() => act('approve')} disabled={busy !== null}>
-            {busy === 'approve' ? 'Approving…' : 'Approve order'}
-          </button>
-          <button type="button" className="secondary" onClick={() => act('reject')} disabled={busy !== null}>
-            {busy === 'reject' ? 'Rejecting…' : 'Reject'}
-          </button>
-        </div>
+        <>
+          <label htmlFor="approver">Your name (recorded in the audit log)</label>
+          <input
+            id="approver"
+            value={approver}
+            onChange={(e) => setApprover(e.target.value)}
+            placeholder="e.g. Chef Aino"
+            maxLength={64}
+            autoComplete="name"
+          />
+          <div className="actions">
+            <button type="button" onClick={() => act('approve')} disabled={busy !== null || !nameOk}>
+              {busy === 'approve' ? 'Approving…' : 'Approve order'}
+            </button>
+            <button type="button" className="secondary" onClick={() => act('reject')} disabled={busy !== null || !nameOk}>
+              {busy === 'reject' ? 'Rejecting…' : 'Reject'}
+            </button>
+          </div>
+        </>
       )}
       {error && (
         <p className="error" role="alert">
