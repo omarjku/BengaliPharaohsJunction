@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { getHealth, getKeys, getOrder, MOCK, runAgent, setKeys, type ApiKeys } from './api'
+import { askAgent, getHealth, getKeys, getOrder, MOCK, setKeys, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
-import { EXAMPLE, RUNNING, TRY } from './copy'
+import { EXAMPLES, RUNNING, TRY } from './copy'
 import { errorText, formatDay, nextMonday } from './format'
 import { groupHistory } from './history'
-import { MenuPlanner } from './Menu'
+import { MenuResult } from './Menu'
 import { Rules } from './Rules'
 import { RunResult } from './RunResult'
-import type { AgentRun, AuditEntry } from './types'
+import type { AskResponse, AuditEntry } from './types'
 
-type View = 'order' | 'menu' | 'rules' | 'history'
+type View = 'order' | 'rules' | 'history'
 
 // "lapland-kitchen" -> "Lapland kitchen": the buyer id is all the API tells us about the buyer.
 const buyerLabel = (id: string) => id.replace(/[-_.]+/g, ' ').replace(/^./, (c) => c.toUpperCase())
@@ -34,8 +34,13 @@ export default function App() {
   const [waiting, setWaiting] = useState<number | null>(null) // orders still pending your OK (checked, not guessed)
   const [text, setText] = useState('')
   const [date, setDate] = useState(nextMonday)
-  const [runDate, setRunDate] = useState(date) // the date the shown run was for (follow-up orders reuse it)
-  const [run, setRun] = useState<AgentRun | null>(null)
+  const [dateSet, setDateSet] = useState(false) // the chef picked a date; otherwise the backend reads it from the words
+  const [runDate, setRunDate] = useState(date) // the date the shown result was for (follow-up orders reuse it)
+  const [result, setResult] = useState<AskResponse | null>(null)
+  const run = result?.intent === 'order' ? result : null
+  const menu = result?.intent === 'menu' && 'lines' in result ? result : null // a cart, not the guests question
+  const question = result && 'question' in result && result.question ? result.question : null
+  const example = useCyclingExample(text === '')
   const [editing, setEditing] = useState(false) // phone: the composer is collapsed to a summary row after a result
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -79,16 +84,18 @@ export default function App() {
     refreshAudit()
   }
 
-  async function submit(e: FormEvent) {
-    e.preventDefault()
+  async function ask(words: string) {
     setRunning(true)
     setAnnounce('Asking the agent…')
     setError(null)
-    setRun(null)
+    setResult(null)
     setEditing(false)
-    setRunDate(date)
     try {
-      setRun(await runAgent({ text: text.trim(), requested_date: date }))
+      const res = await askAgent({ text: words.trim(), ...(dateSet ? { requested_date: date } : {}) })
+      setRunDate(res.requested_date ?? date)
+      if (!dateSet && res.requested_date) setDate(res.requested_date) // show the date that was used
+      setResult(res)
+      if (res.intent === 'unclear') setEditing(true)
     } catch (err) {
       setError(errorText(err))
       setAnnounce('')
@@ -96,6 +103,18 @@ export default function App() {
       setRunning(false)
       refreshAudit()
     }
+  }
+
+  function submit(e: FormEvent) {
+    e.preventDefault()
+    void ask(text)
+  }
+
+  // "For how many guests?" answered inline: the words go into the box and the agent reads it again.
+  function answerGuests(n: number) {
+    const next = `${text.trim().replace(/[.\s]*$/, '')}. For ${n} guests.`
+    setText(next)
+    void ask(next)
   }
 
   // "Not this one": back to the request, cursor at the end, ready for more detail.
@@ -110,8 +129,8 @@ export default function App() {
     })
   }
 
-  const empty = !run && !running && !error
-  const collapsed = !!run && !editing
+  const empty = !result && !running && !error
+  const collapsed = !!(run || menu) && !editing
 
   return (
     <>
@@ -122,9 +141,9 @@ export default function App() {
         <span className="brand-for">{buyer ? buyerLabel(buyer) : ''}</span>
         {!needsSetup && (
           <nav aria-label="Main">
-            {(['order', 'menu', 'rules', 'history'] as const).map((v) => (
+            {(['order', 'history', 'rules'] as const).map((v) => (
               <button key={v} type="button" className="link" aria-current={view === v ? 'page' : undefined} onClick={() => setView(v)}>
-                {{ order: 'Order', menu: 'Menu', rules: 'Rules', history: 'History' }[v]}
+                {{ order: 'Order', rules: 'Rules', history: 'History' }[v]}
               </button>
             ))}
             <button type="button" className="link" onClick={() => keysDialog.current?.showModal()}>
@@ -186,24 +205,33 @@ export default function App() {
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   onKeyDown={submitOnCmdEnter}
-                  placeholder={EXAMPLE}
+                  placeholder={example}
+                  aria-describedby="text-help"
                   required
                 />
+                <p className="sr-only" id="text-help">
+                  An order, or a whole menu with the number of guests. For example: {EXAMPLES.join('; ')}.
+                </p>
                 <div className="ask-row">
                   <label className="date-pick">
                     Delivery <strong className="num">{formatDay(date)}</strong>
+                    {!dateSet && <span className="faint small">or the day you write</span>}
                     <input
                       type="date"
-                      aria-label="Delivery date"
+                      aria-label="Delivery date (optional: otherwise the day in your words, or next Monday)"
                       value={date}
-                      onChange={(e) => e.target.value && setDate(e.target.value)}
+                      onChange={(e) => {
+                        if (!e.target.value) return
+                        setDate(e.target.value)
+                        setDateSet(true)
+                      }}
                       onClick={(e) => e.currentTarget.showPicker?.()}
                       required
                     />
                   </label>
                   {/* One primary per screen: once there's an answer, asking again is the quiet option. */}
-                  <button type="submit" className={`btn${run ? ' plain accent-text' : ''}`} disabled={running || deciding || !text.trim()}>
-                    {running ? 'Asking…' : run ? 'Ask again' : 'Ask the agent'}
+                  <button type="submit" className={`btn${result ? ' plain accent-text' : ''}`} disabled={running || deciding || !text.trim()}>
+                    {running ? 'Asking…' : result ? 'Ask again' : 'Ask the agent'}
                   </button>
                 </div>
                 {empty && (
@@ -233,6 +261,24 @@ export default function App() {
                   {error}
                 </div>
               )}
+              {question && result?.intent === 'menu' && <GuestsQuestion key={result.audit_id ?? question} question={question} onAnswer={answerGuests} busy={running} />}
+              {question && result?.intent === 'unclear' && (
+                <section className="answer" aria-label="The agent needs more">
+                  <p className="status neutral">Tell me a bit more</p>
+                  <h2 className="answer-text">{question}</h2>
+                </section>
+              )}
+              {menu && (
+                <MenuResult
+                  key={menu.audit_id}
+                  plan={menu}
+                  covers={menu.covers ?? null}
+                  requestedDate={runDate}
+                  onAction={refreshAudit}
+                  onBusy={setDeciding}
+                  onAnnounce={setAnnounce}
+                />
+              )}
               {run && (
                 <RunResult
                   key={run.audit_id}
@@ -247,10 +293,6 @@ export default function App() {
               {empty && <Recent groups={groups.slice(0, 3)} onOpen={() => setView('history')} />}
             </section>
 
-            <section hidden={view !== 'menu'} aria-label="Menu">
-              <MenuPlanner onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} />
-            </section>
-
             <section hidden={view !== 'rules'} aria-label="Rules">
               <Rules refreshKey={auditKey} onAction={refreshAudit} onAnnounce={setAnnounce} />
             </section>
@@ -262,6 +304,49 @@ export default function App() {
         )}
       </main>
     </>
+  )
+}
+
+// The box's grey example cycles slowly while it's empty, so a milk order, a kebab shop and a menu all see themselves.
+// It's only a placeholder: it disappears as soon as anyone types, and it stays still under reduced motion.
+function useCyclingExample(active: boolean): string {
+  const [i, setI] = useState(0)
+  useEffect(() => {
+    if (!active || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const t = setInterval(() => setI((n) => (n + 1) % EXAMPLES.length), 3500)
+    return () => clearInterval(t)
+  }, [active])
+  return EXAMPLES[i]
+}
+
+// "For how many guests?" with the answer right there.
+function GuestsQuestion({ question, onAnswer, busy }: { question: string; onAnswer: (n: number) => void; busy: boolean }) {
+  const [guests, setGuests] = useState('')
+  const n = Number(guests)
+  const ok = Number.isInteger(n) && n >= 1 && n <= 2000
+  const field = useRef<HTMLInputElement>(null)
+  useEffect(() => field.current?.focus(), [])
+  return (
+    <section className="answer" aria-label="The agent needs one thing">
+      <p className="status neutral">One thing first</p>
+      <form
+        className="guests"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (ok) onAnswer(n)
+        }}
+      >
+        <label className="answer-text" htmlFor="guests">
+          {question}
+        </label>
+        <div className="ask-inputs">
+          <input ref={field} id="guests" className="guests-input num" type="number" inputMode="numeric" min={1} max={2000} value={guests} onChange={(e) => setGuests(e.target.value)} />
+          <button type="submit" className="btn" disabled={!ok || busy}>
+            {busy ? 'Planning…' : 'Plan the cart'}
+          </button>
+        </div>
+      </form>
+    </section>
   )
 }
 

@@ -1,5 +1,5 @@
 import type {
-  AgentRun, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
+  AgentRun, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
 } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
@@ -91,6 +91,10 @@ const mock = () => import('./mock').then((m) => m.mockApi)
 const keyHeader = (name: string, value: string): HeadersInit => (value ? { [name]: value } : {})
 
 export const getHealth = () => (MOCK ? mock().then((m) => m.health()) : api<Health>('/api/health'))
+
+// One box: the backend works out whether it's an order or a menu. requested_date only when the chef overrode it.
+export const askAgent = (input: AskInput) =>
+  MOCK ? mock().then((m) => m.ask(input)) : api<AskResponse>('/api/agent/ask', { ...post(input), headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')
 
 export const runAgent = (input: RunInput) =>
   MOCK

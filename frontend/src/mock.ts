@@ -7,7 +7,7 @@
 //   anything else                        -> AUTO, order confirmed (small butter order)
 import type {
   AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
-  CompileResult, Mandate, MenuInput, MenuRun, Product, RuleChange, SaveResult, Quote, QuantityResolution, Reason, RunInput, Substitute,
+  AskInput, AskResponse, CompileResult, Mandate, MenuInput, MenuRun, Product, RuleChange, SaveResult, Quote, QuantityResolution, Reason, RunInput, Substitute,
 } from './types'
 
 const NOW = '2026-11-14T10:00:00+00:00'
@@ -171,6 +171,29 @@ const DRINK: Fixture = {
     0.72,
   ),
   status: null,
+}
+
+// A kebab shop's order: no guests, no menu, just meat for the rotisserie. (Product invented for the demo.)
+const DONER: Fixture = {
+  request: {
+    summary: '20 kg döner kebab meat, delivered Friday',
+    items: [{ query: 'döner kebab meat', amount: 20, unit: 'kg', claims: [], exclude_allergens: [] }],
+  },
+  lines: [
+    {
+      product: product({ id: '480001', name_en: 'Döner kebab meat cone beef & chicken 10 kg frozen', brand: 'Valio Aimo', sales_unit: 'ST', claims: [], allergens: { contains: ['AW', 'AY'], may_contain: [], free_from: [] }, delivery_reliability: 0.97 }),
+      quote: quote({ product_id: '480001', price: 64.9, comparison_price: 6.49, comparison_unit: 'KG', available_amount: 120, sales_unit: 'ST' }),
+      quantity: qty('480001', 20, 'kg', 'ST', 2, 10, '20 kg ÷ 10 kg per ST = 2 ST.'),
+      line_total_cents: 12980,
+      why: 'A 10 kg cone for the rotisserie, frozen, in stock for Friday.',
+      chosen: true,
+      confidence: 0.94,
+      confidence_reason: 'A döner meat cone for a rotisserie: exactly what the request asks for.',
+      facts: { delivery_reliability: 0.97, carbon_kg_per_kg: 14.2, origin: 'de' },
+    },
+  ],
+  decision: decision('AUTO', [], [], 0.94),
+  status: 'confirmed',
 }
 
 const BUTTER: Fixture = {
@@ -489,7 +512,51 @@ function diffRules(a: Mandate, b: Mandate): RuleChange[] {
   return out
 }
 
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+// The date the backend would read from the words ("Friday", "tomorrow"), else the override, else next Monday.
+function dateFrom(text: string, override?: string): string {
+  if (override) return override
+  const today = new Date(`${new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Helsinki' }).format(new Date())}T00:00:00Z`)
+  const plus = (n: number) => new Date(today.getTime() + n * 86_400_000).toISOString().slice(0, 10)
+  if (/tomorrow/i.test(text)) return plus(1)
+  const day = WEEKDAYS.findIndex((d) => new RegExp(`\\b${d}\\b`, 'i').test(text))
+  const target = day >= 0 ? day : 1
+  return plus(((target - today.getUTCDay() + 7) % 7) || 7)
+}
+
 export const mockApi = {
+  async ask(input: AskInput): Promise<AskResponse> {
+    const text = input.text.trim()
+    const requested_date = dateFrom(text, input.requested_date)
+    if (text.length < 8 || /^(hi|hello|help|test)\b/i.test(text)) {
+      await wait()
+      return { intent: 'unclear', requested_date, question: 'What should the agent order? Say what, how much and when, like “20 kg döner kebab meat for Friday”.' }
+    }
+    if (/\bmenu\b|guests|covers|portions|people/i.test(text)) {
+      const n = /(\d+)\s*(guests|covers|people|portions)/i.exec(text)
+      if (!n) {
+        await wait()
+        return { intent: 'menu', requested_date, question: 'For how many guests?' }
+      }
+      const covers = Number(n[1])
+      return { intent: 'menu', requested_date, covers, ...(await mockApi.menu({ menu_text: text, covers, requested_date })) }
+    }
+    if (/d[öo]ner|kebab/i.test(text)) {
+      await wait()
+      const f = structuredClone(DONER)
+      const audit_id = log('buyer_agent', 'lapland-kitchen', text, f.decision)
+      const order: OrderResponse = {
+        order_id: `00000000-0000-4000-8000-${String(seq + 1).padStart(12, '0')}`, status: 'confirmed',
+        audit_id: log('valio_front_door', 'lapland-kitchen', `Order via Valio front door: ${f.request.summary}`, f.decision),
+        total_cents: 12980, lines: [{ product_id: '480001', name: f.lines[0].product.name_en!, quantity: 2, unit: 'ST', unit_price_cents: 6490, line_total_cents: 12980 }],
+        decision: f.decision, rejected_options: [], substitutes: [], alternative_order: null,
+      }
+      return { intent: 'order', requested_date, request: f.request, lines: f.lines, decision: f.decision, order, audit_id }
+    }
+    return { intent: 'order', requested_date, ...(await mockApi.run({ text, requested_date })) }
+  },
+
+
   async getMandate(): Promise<Mandate> {
     await wait()
     return structuredClone(mandate)
