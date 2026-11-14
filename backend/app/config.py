@@ -24,6 +24,9 @@ VALIO_ADMIN_KEYS = os.getenv("VALIO_ADMIN_KEYS", "")
 # Base64 of a 32-byte Ed25519 private key; signs every order response (signing.py). Unset → ephemeral dev key.
 FRONT_DOOR_SIGNING_KEY = os.getenv("FRONT_DOOR_SIGNING_KEY", "")
 # 1 enables POST /api/admin/demo/reset (archives orders / audit / idempotency keys, starts fresh). Off by default.
+# Optional RFC 9421 request signing: comma list of `buyer:kid:base64pub` (raw 32-byte Ed25519 public keys). A buyer
+# listed here must sign POST /api/orders and /api/agent/* (backend/app/httpsig.py); others work as before.
+AGENT_SIGNING_KEYS = os.getenv("AGENT_SIGNING_KEYS", "")
 DEMO_RESET_ENABLED = os.getenv("DEMO_RESET_ENABLED", "").lower() in ("1", "true", "yes")
 # Where the front door keeps its state (orders, audit trail, idempotency keys; stored mandates once they leave the
 # code). Default: the repo's data/. Point it at a mounted persistent disk (e.g. Render's /var/data) to keep state.

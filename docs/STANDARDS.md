@@ -20,7 +20,7 @@ owner's own page.
 | [UCP](https://developers.google.com/universal-commerce-protocol) (Universal Commerce Protocol, Google) | Discovery-to-checkout commerce capabilities, over REST, A2A or MCP, with AP2 for authorisation | **Not used, watch** | Consumer-retail first, like ACP; its "capabilities" idea would fit a Valio catalogue later |
 | [Peppol BIS Order 3.0 / UBL 2.1](https://docs.peppol.eu/poacc/upgrade-3/syntax/Order/) | The EU's e-procurement order and order-response documents | **Mapped, not implemented** (see the mapping below) | This is how Finnish public kitchens and many businesses already send orders; a confirmed order should be exportable as a Peppol Order |
 | [GS1](https://www.gs1.org/) (AllergenTypeCode, GTIN) | Shared product codes and identifiers | **Implemented** for allergens; **next step** for GTIN | We filter and refuse on GS1 allergen codes today; the slim catalogue doesn't carry GTINs yet (below) |
-| [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421) HTTP Message Signatures (and the IETF [Web Bot Auth](https://datatracker.ietf.org/wg/webbotauth/about/) drafts built on it) | Signs an HTTP request, so the receiver can verify who sent it and that it wasn't changed | **Next step** | It would replace our static `X-Agent-Key` shared secrets with a per-agent key pair and a signature on every order |
+| [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421) HTTP Message Signatures (and the IETF [Web Bot Auth](https://datatracker.ietf.org/wg/webbotauth/about/) drafts built on it) | Signs an HTTP request, so the receiver can verify who sent it and that it wasn't changed | **Implemented, optional per buyer** | A buyer that registers an Ed25519 key must sign every order and agent call; see "Signed agent requests" below |
 
 **Where we are on signed mandates.** The industry's trust layer is converging on signed mandates and agent spend controls:
 AP2 and Mastercard Agent Pay use signed mandates, and Visa adds spend controls through its Trusted Agent Protocol (sources in [`docs/research/valio-context.md`](research/valio-context.md)).
@@ -213,6 +213,28 @@ manual check.
 - **Prior art.** This is a detached signature over canonical JSON, in the spirit of JWS (RFC 7515) and HTTP
   Message Signatures (RFC 9421). It signs the business statement rather than the HTTP message, so the statement
   can be stored and checked later.
+
+## Signed agent requests (RFC 9421, optional)
+
+A buyer can register its agent's Ed25519 public key on the server:
+`AGENT_SIGNING_KEYS=<buyer>:<kid>:<base64 raw public key>` (comma-separated; several keys per buyer allowed).
+From then on, every `POST /api/orders` and `/api/agent/*` call for that buyer needs `X-Agent-Key` **and** a valid
+signature. A missing or bad one is a `401` with the reason, audited as a `bad_request_signature` security event.
+Buyers without a registered key work exactly as before.
+
+- **Headers.** `Content-Digest: sha-256=:<base64>:` (RFC 9530, over the exact body bytes);
+  `Signature-Input: sig1=("@method" "@path" "content-digest");created=<unix>;keyid="<kid>";alg="ed25519"`;
+  `Signature: sig1=:<base64 Ed25519 signature>:`.
+- **Signature base** (RFC 9421 §2.5): one line per component, `"@method": POST`, `"@path": /api/orders`,
+  `"content-digest": sha-256=:…:`, then `"@signature-params": (…);created=…;keyid="…";alg="ed25519"`, joined by
+  `\n` with no trailing newline.
+- **Accepted.** Exactly those three components, `created` within 300 s of the server clock, a `keyid` registered
+  for the key's buyer, a digest that matches the body, and each exact signature only once. A retry, including one
+  with the same `Idempotency-Key`, signs again with a fresh `created`.
+- **Client.** `scripts/sign_request.py generate` makes a key pair and prints the public entry to register;
+  `scripts/sign_request.py send` signs and sends a request. Its `sign_headers()` is the function the tests use.
+- **What it adds.** Each order carries proof of which agent key sent it and that the body wasn't changed in
+  transit. A leaked `X-Agent-Key` alone can't place orders for that buyer.
 
 ## Next steps
 
