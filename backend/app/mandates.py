@@ -15,6 +15,7 @@ _MANDATES = {m.buyer_id: m for m in [
             HardRule(kind=RuleKind.EXCLUDED_ALLERGEN, value="AP", source_text="Our kitchen is peanut-free."),
             HardRule(kind=RuleKind.AUTO_APPROVE_LIMIT_CENTS, value=150000,
                      source_text="Order on your own up to 1,500 euros per order; above that, ask me."),
+            # Sign-off rule (D13): below 90% on time the order is held for the chef, never refused.
             HardRule(kind=RuleKind.MIN_DELIVERY_RELIABILITY, value=0.9,
                      source_text="Deliveries up here are fragile: ask me before anything that arrives on time under 90%."),
         ],

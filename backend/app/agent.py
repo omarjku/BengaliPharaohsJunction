@@ -242,6 +242,16 @@ def _numbers(text: str) -> set[float]:
     return out
 
 
+def _singular(w: str) -> str:
+    """lingonberries → lingonberry, potatoes → potato, biscuits → biscuit; 'glass', 'gas' stay."""
+    lw = w.lower()
+    if lw.endswith("ies") and len(lw) > 4:
+        return w[:-3] + "y"
+    if lw.endswith("oes"):
+        return w[:-2]
+    return w[:-1] if lw.endswith("s") and not lw.endswith(("ss", "us", "is")) and len(lw) > 3 else w
+
+
 def _stem(w: str) -> str:
     return w.lower().rstrip("s")
 
@@ -341,9 +351,15 @@ async def parse(text: str) -> tuple[dict, bool]:
 async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[str], bool]:
     """Catalogue hits for one item (claims + allergen filters), narrowed and ordered by Gemini. → (ids, used_gemini)."""
     excl = sorted(set(item["exclude_allergens"]) | excluded)
-    hits = catalogue.search(item["query"], item["claims"], excl, False, None, SEARCH_LIMIT)
-    if not hits and len(item["query"].split()) > 1:  # "whole milk" not found → try the head noun
-        hits = catalogue.search(item["query"].split()[-1], item["claims"], excl, False, None, SEARCH_LIMIT)
+    words = item["query"].split()
+    # Catalogue names are singular ("lingonberry jam", "Digestive biscuit"), and search needs every word, so try:
+    # as given → singular → each word alone, longest first ("reindeer meat" → "reindeer", not "meat").
+    tries = list(dict.fromkeys([item["query"], " ".join(map(_singular, words))]
+                               + (sorted({_singular(w) for w in words}, key=len, reverse=True) if len(words) > 1 else [])))
+    hits = []
+    for q in tries:
+        if hits := catalogue.search(q, item["claims"], excl, False, None, SEARCH_LIMIT):
+            break
     if not hits:
         return [], True
     listing = "\n".join(json.dumps({"id": p["id"], "name": p["name_en"] or p["name_fi"], "brand": p["brand"]},
@@ -397,12 +413,143 @@ def _decided_by(scored: list) -> str:
         if k[0] or k[-2:] >= bk[-2:]:  # blocked, or it loses on price and rank anyway
             continue
         rel = [r.message for r in asks if r.code in (C.LOW_RELIABILITY, C.DATA_MISSING) and "min_reliability" in r.facts]
-        if k[:-4] == bk[:-4] and rel:
+        if k[:-4] == bk[:-4] and k[-4] > bk[-4] and rel:  # it lost on concerns, and one is reliability
             return f" Chosen over {_name(ln['product'])}: {rel[0]}"
         if k[:-3] == bk[:-3] and not bk[-3] and k[-3]:
             return f" Chosen over {_name(ln['product'])} because it is Finnish-origin (your preference), at a similar price."
         return ""
     return ""
+
+
+async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str, m: Mandate, excluded: set[str],
+                    now: datetime, reasons: list[Reason], parsed_by_gemini: bool) -> dict:
+    """Per-item core shared by the request and menu flows: catalogue search, Gemini rank, live Valio quotes, quantity,
+    gate checks, Gemini Decisions confidence, the choice (safety, confidence, limits, concerns, Finnish preference,
+    price), substitutes. Appends the problems it finds to `reasons`. An item may carry a `context` string: what the
+    Decisions judge reads as the request for that item (the menu flow says which dishes it is for)."""
+    found = await asyncio.gather(*(candidates(text, it, excluded) for it in items))
+    if not all(by_gemini for _, by_gemini in found) and parsed_by_gemini:
+        reasons.append(gate._r(C.LOW_CONFIDENCE, INFO, "Gemini couldn't rank the catalogue matches; plain keyword "
+                               "order was used.", None, "Check the chosen products."))
+    ids = list(dict.fromkeys(pid for cands, _ in found for pid in cands))
+    quotes: dict[str, dict] = {}
+    try:
+        quotes = {q["product_id"]: q for q in await valio.get_quotes(ids, requested.isoformat())} if ids else {}
+    except Exception:  # noqa: BLE001 - upstream details stay in the server log
+        log.exception("Valio quote failed")
+        reasons.append(gate._r(C.ENGINE_ERROR, ASK, "Valio's price and availability check failed; nothing was "
+                               "ordered.", None, "Retry in a moment."))
+        found = []
+
+    lines, checked, alternatives, chosen, per_item = [], [], [], [], []
+    threshold = mandates.confidence_threshold(buyer_id)
+    limits = gate._nums(m, RuleKind.AUTO_APPROVE_LIMIT_CENTS)
+    spent = orders._spent_7d(buyer_id, now)
+    for n, (it, (cands, _)) in enumerate(zip(items, found)):
+        amount_ok = it["amount"] is not None and _unit_ok(it["unit"])
+        scored = []
+        for rank, pid in enumerate(cands):
+            p, q = catalogue.get(pid), quotes.get(pid)
+            qty = quantity.resolve(p, it["amount"], it["unit"]) if amount_ok else None
+            rs, info = gate.check_line(pid, qty and qty["quantity"], q, requested, m, excluded, now)
+            line = {"item": n, "product": p, "quote": q, "quantity": qty, "line_total_cents": info["line_total_cents"],
+                    "why": "", "chosen": False, "confidence": None, "confidence_reason": None,
+                    "facts": {k: (p or {}).get(k) for k in FACTS}}
+            lines.append(line)
+            checked.append((line, rs))
+            blocking = [r for r in rs if gate._blocking(r)]
+            viable = not blocking and qty is not None and qty["quantity"] is not None
+            asks = [r for r in rs if r.severity is not INFO]
+            line["why"] = " ".join(r.message for r in asks) or (
+                f"Matches '{it['query']}' and is orderable for {requested}." if q else "No quote from Valio.")
+            total = info["line_total_cents"]
+            over = total is not None and (total > m.per_line_cap_cents or any(total > lim for lim in limits)
+                                          or (m.weekly_budget_cents and spent + total > m.weekly_budget_cents))
+            scored.append(((not viable, bool(qty and qty["needs_confirmation"]), bool(over), len(asks),
+                            total if total is not None else float("inf"), rank), line, asks))
+        per_item.append((n, it, cands, amount_ok, scored))
+
+    # One Decisions call for every line we might order: does it really meet the request, is the quantity right?
+    viable = [line for *_, scored in per_item for key, line, _ in scored if not key[0]]
+    judged = await asyncio.gather(*(_judge_one(items[ln["item"]].get("context") or text,
+                                               dict(ln["product"], _qty=ln["quantity"]["explanation"]), ["meets", "qty"])
+                                    for ln in viable))
+    for line, (conf, why, weakest) in zip(viable, judged):
+        line["confidence"], line["confidence_reason"], line["_weakest"] = conf, why, weakest
+
+    for n, it, cands, amount_ok, scored in per_item:
+        # Safe first, then Gemini-confident, within the mandate's limits, fewer concerns, cheapest total; rank last.
+        # When every line is below the threshold, the most likely one goes to the chef, not the cheapest.
+        scored = [((k[0], k[1], low := ln["confidence"] is None or ln["confidence"] < threshold,
+                    -(ln["confidence"] or 0) if low else 0) + k[2:], ln, a) for k, ln, a in scored]
+
+        label = f"'{it['query']}'" + (f" ({', '.join(it['claims'] + ['no ' + a for a in it['exclude_allergens']])})"
+                                      if it["claims"] or it["exclude_allergens"] else "")
+        if not cands:
+            reasons.append(gate._r(C.UNKNOWN_PRODUCT, ASK, f"No product in Valio's catalogue matches {label}.", None,
+                                   "Rephrase the product, or name it more precisely."))
+            continue
+        if not amount_ok:
+            reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, f"How much {it['query']}? The request gives no amount and "
+                                   "unit the agent can convert (L, dl, cl, ml, kg, g, pcs).", None,
+                                   f"Say the amount, e.g. '20 L {it['query']}'."))
+            continue
+        # Soft Finnish preference (mandate guidance): after safety, confidence, limits and concerns, just before price,
+        # and only within 10% of the cheapest viable total ("when the price is similar"). It never blocks or asks.
+        # Keys end (..., concerns, total, rank); indexing from the end keeps this right when others add fields in front.
+        fi_pref = any("finnish" in g.text.lower() for g in m.guidance)
+        cheapest = min((k[-2] for k, _, _ in scored if not k[0]), default=None)
+        scored = [((*k[:-2], not (fi_pref and cheapest is not None and (ln["product"] or {}).get("origin") == "fi"
+                                  and k[-2] <= cheapest * 1.1), *k[-2:]), ln, a) for k, ln, a in scored]
+        scored.sort(key=lambda s: s[0])
+        (not_viable, *_), best, best_asks = scored[0]
+        if not_viable:  # every candidate is blocked: bring the best one's traps to the human
+            if best["quantity"]["quantity"] is None:
+                reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, best["quantity"]["explanation"], best["product"]["id"],
+                                       "Confirm the quantity in sales units."))
+            reasons += best_asks
+            try:  # J4: substitutes from the front door's own finder (same category + dietary claims, re-quoted)
+                subs = (await gate._alternatives(cands, set(ids), requested, m, excluded, now))[0]
+            except Exception:  # noqa: BLE001 - no substitutes is still a valid answer
+                log.exception("substitute search failed")
+                subs = []
+            judged = await judge(it.get("context") or text,
+                                 [(catalogue.get(a.product_id) or {"id": a.product_id}, ["sub"]) for a in subs])
+            ranked = sorted(zip(subs, judged), key=lambda x: -(x[1][0] or 0))  # most acceptable first
+            alternatives += [a.model_copy(update={"summary": a.summary + (
+                f" Gemini Decisions: {_pct(conf)} that it is an acceptable substitute"
+                + ("" if conf >= threshold else f", below your {threshold:.2f} threshold: check before accepting")
+                + "." if conf is not None else " Not checked by Gemini Decisions.")}) for a, (conf, *_) in ranked]
+            continue
+        best["chosen"] = True
+        chosen.append(best)
+        best["why"] = (f"Best match for {label}: {_name(best['product'])}, {_offer(best)}, orderable for {requested}. "
+                       + best["quantity"]["explanation"] + (" " + best["why"] if best_asks else "")
+                       + _decided_by(scored) + _facts_text(best["facts"]))
+        if best["quantity"]["needs_confirmation"]:
+            reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, best["quantity"]["explanation"], best["product"]["id"],
+                                   "Confirm the quantity in sales units."))
+        conf, pid = best["confidence"], best["product"]["id"]
+        if conf is None:  # unverified: the mandate's uncertainty policy decides (ask by default)
+            reasons.append(gate._unknown(m.uncertainty_policy, C.LOW_CONFIDENCE, f"Gemini Decisions couldn't check "
+                           f"whether {_name(best['product'])} fits the request.", pid,
+                           "Check the product and quantity yourself, or retry.", threshold=threshold))
+        else:  # recorded either way, so the audit shows the confidence behind every chosen line
+            low = conf < threshold
+            reasons.append(gate._r(C.LOW_CONFIDENCE, ASK if low else INFO,
+                           f"{'Not sure' if low else 'Confident'} that {_name(best['product'])} is right "
+                           f"({_pct(conf)} vs your {threshold:.2f} threshold). {best['confidence_reason']}", pid,
+                           "Confirm the product and quantity, or pick an alternative." if low else None,
+                           confidence=conf, threshold=threshold, question=best["_weakest"]))
+        for key, line, _ in scored[1:]:
+            if not key[0]:
+                alternatives.append(Alternative(product_id=line["product"]["id"], summary=(
+                    f"Also matches {label}: {_name(line['product'])}, {_offer(line)}.")))
+
+    rejected = [RejectedOption(product_id=line["product"]["id"], reasons=gate._sorted(rs)) for line, rs in checked
+                if not line["chosen"] and any(r.severity is not INFO for r in rs)]
+    return {"lines": lines, "chosen": chosen, "alternatives": alternatives, "rejected": rejected, "quotes": quotes}
+
 
 
 async def run(text: str, requested: date, buyer_id: str) -> dict:
@@ -454,124 +601,9 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
         reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, "No product could be read from the request.", None,
                                "Say what to order and how much, e.g. '1000 L lactose-free milk'."))
 
-    found = await asyncio.gather(*(candidates(text, it, excluded) for it in request["items"]))
-    if not all(by_gemini for _, by_gemini in found) and parsed_by_gemini:
-        reasons.append(gate._r(C.LOW_CONFIDENCE, INFO, "Gemini couldn't rank the catalogue matches; plain keyword "
-                               "order was used.", None, "Check the chosen products."))
-    ids = list(dict.fromkeys(pid for cands, _ in found for pid in cands))
-    quotes: dict[str, dict] = {}
-    try:
-        quotes = {q["product_id"]: q for q in await valio.get_quotes(ids, requested.isoformat())} if ids else {}
-    except Exception:  # noqa: BLE001 - upstream details stay in the server log
-        log.exception("Valio quote failed")
-        reasons.append(gate._r(C.ENGINE_ERROR, ASK, "Valio's price and availability check failed; nothing was "
-                               "ordered.", None, "Retry in a moment."))
-        found = []
-
-    lines, checked, alternatives, chosen, per_item = [], [], [], [], []
-    threshold = mandates.confidence_threshold(buyer_id)
-    limits = gate._nums(m, RuleKind.AUTO_APPROVE_LIMIT_CENTS)
-    spent = orders._spent_7d(buyer_id, now)
-    for n, (it, (cands, _)) in enumerate(zip(request["items"], found)):
-        amount_ok = it["amount"] is not None and _unit_ok(it["unit"])
-        scored = []
-        for rank, pid in enumerate(cands):
-            p, q = catalogue.get(pid), quotes.get(pid)
-            qty = quantity.resolve(p, it["amount"], it["unit"]) if amount_ok else None
-            rs, info = gate.check_line(pid, qty and qty["quantity"], q, requested, m, excluded, now)
-            line = {"item": n, "product": p, "quote": q, "quantity": qty, "line_total_cents": info["line_total_cents"],
-                    "why": "", "chosen": False, "confidence": None, "confidence_reason": None,
-                    "facts": {k: (p or {}).get(k) for k in FACTS}}
-            lines.append(line)
-            checked.append((line, rs))
-            blocking = [r for r in rs if gate._blocking(r)]
-            viable = not blocking and qty is not None and qty["quantity"] is not None
-            asks = [r for r in rs if r.severity is not INFO]
-            line["why"] = " ".join(r.message for r in asks) or (
-                f"Matches '{it['query']}' and is orderable for {requested}." if q else "No quote from Valio.")
-            total = info["line_total_cents"]
-            over = total is not None and (total > m.per_line_cap_cents or any(total > lim for lim in limits)
-                                          or (m.weekly_budget_cents and spent + total > m.weekly_budget_cents))
-            scored.append(((not viable, bool(qty and qty["needs_confirmation"]), bool(over), len(asks),
-                            total if total is not None else float("inf"), rank), line, asks))
-        per_item.append((n, it, cands, amount_ok, scored))
-
-    # One Decisions call for every line we might order: does it really meet the request, is the quantity right?
-    viable = [line for *_, scored in per_item for key, line, _ in scored if not key[0]]
-    for line, (conf, why, weakest) in zip(viable, await judge(text, [(dict(ln["product"], _qty=ln["quantity"]["explanation"]),
-                                                              ["meets", "qty"]) for ln in viable])):
-        line["confidence"], line["confidence_reason"], line["_weakest"] = conf, why, weakest
-
-    for n, it, cands, amount_ok, scored in per_item:
-        # Safe first, then Gemini-confident, within the mandate's limits, fewer concerns, cheapest total; rank last.
-        # When every line is below the threshold, the most likely one goes to the chef, not the cheapest.
-        scored = [((k[0], k[1], low := ln["confidence"] is None or ln["confidence"] < threshold,
-                    -(ln["confidence"] or 0) if low else 0) + k[2:], ln, a) for k, ln, a in scored]
-
-        label = f"'{it['query']}'" + (f" ({', '.join(it['claims'] + ['no ' + a for a in it['exclude_allergens']])})"
-                                      if it["claims"] or it["exclude_allergens"] else "")
-        if not cands:
-            reasons.append(gate._r(C.UNKNOWN_PRODUCT, ASK, f"No product in Valio's catalogue matches {label}.", None,
-                                   "Rephrase the product, or name it more precisely."))
-            continue
-        if not amount_ok:
-            reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, f"How much {it['query']}? The request gives no amount and "
-                                   "unit the agent can convert (L, dl, cl, ml, kg, g, pcs).", None,
-                                   f"Say the amount, e.g. '20 L {it['query']}'."))
-            continue
-        # Soft Finnish preference (mandate guidance): after safety, confidence, limits and concerns, just before price,
-        # and only within 10% of the cheapest viable total ("when the price is similar"). It never blocks or asks.
-        # Keys end (..., concerns, total, rank); indexing from the end keeps this right when others add fields in front.
-        fi_pref = any("finnish" in g.text.lower() for g in m.guidance)
-        cheapest = min((k[-2] for k, _, _ in scored if not k[0]), default=None)
-        scored = [((*k[:-2], not (fi_pref and cheapest is not None and (ln["product"] or {}).get("origin") == "fi"
-                                  and k[-2] <= cheapest * 1.1), *k[-2:]), ln, a) for k, ln, a in scored]
-        scored.sort(key=lambda s: s[0])
-        (not_viable, *_), best, best_asks = scored[0]
-        if not_viable:  # every candidate is blocked: bring the best one's traps to the human
-            if best["quantity"]["quantity"] is None:
-                reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, best["quantity"]["explanation"], best["product"]["id"],
-                                       "Confirm the quantity in sales units."))
-            reasons += best_asks
-            try:  # J4: substitutes from the front door's own finder (same category + dietary claims, re-quoted)
-                subs = (await gate._alternatives(cands, set(ids), requested, m, excluded, now))[0]
-            except Exception:  # noqa: BLE001 - no substitutes is still a valid answer
-                log.exception("substitute search failed")
-                subs = []
-            judged = await judge(text, [(catalogue.get(a.product_id) or {"id": a.product_id}, ["sub"]) for a in subs])
-            ranked = sorted(zip(subs, judged), key=lambda x: -(x[1][0] or 0))  # most acceptable first
-            alternatives += [a.model_copy(update={"summary": a.summary + (
-                f" Gemini Decisions: {_pct(conf)} that it is an acceptable substitute"
-                + ("" if conf >= threshold else f", below your {threshold:.2f} threshold: check before accepting")
-                + "." if conf is not None else " Not checked by Gemini Decisions.")}) for a, (conf, *_) in ranked]
-            continue
-        best["chosen"] = True
-        chosen.append(best)
-        best["why"] = (f"Best match for {label}: {_name(best['product'])}, {_offer(best)}, orderable for {requested}. "
-                       + best["quantity"]["explanation"] + (" " + best["why"] if best_asks else "")
-                       + _decided_by(scored) + _facts_text(best["facts"]))
-        if best["quantity"]["needs_confirmation"]:
-            reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, best["quantity"]["explanation"], best["product"]["id"],
-                                   "Confirm the quantity in sales units."))
-        conf, pid = best["confidence"], best["product"]["id"]
-        if conf is None:  # unverified: the mandate's uncertainty policy decides (ask by default)
-            reasons.append(gate._unknown(m.uncertainty_policy, C.LOW_CONFIDENCE, f"Gemini Decisions couldn't check "
-                           f"whether {_name(best['product'])} fits the request.", pid,
-                           "Check the product and quantity yourself, or retry.", threshold=threshold))
-        else:  # recorded either way, so the audit shows the confidence behind every chosen line
-            low = conf < threshold
-            reasons.append(gate._r(C.LOW_CONFIDENCE, ASK if low else INFO,
-                           f"{'Not sure' if low else 'Confident'} that {_name(best['product'])} is right "
-                           f"({_pct(conf)} vs your {threshold:.2f} threshold). {best['confidence_reason']}", pid,
-                           "Confirm the product and quantity, or pick an alternative." if low else None,
-                           confidence=conf, threshold=threshold, question=best["_weakest"]))
-        for key, line, _ in scored[1:]:
-            if not key[0]:
-                alternatives.append(Alternative(product_id=line["product"]["id"], summary=(
-                    f"Also matches {label}: {_name(line['product'])}, {_offer(line)}.")))
-
-    rejected = [RejectedOption(product_id=line["product"]["id"], reasons=gate._sorted(rs)) for line, rs in checked
-                if not line["chosen"] and any(r.severity is not INFO for r in rs)]
+    res = await _pipeline(text, request["items"], requested, buyer_id, m, excluded, now, reasons, parsed_by_gemini)
+    lines, chosen, alternatives, rejected, quotes = (res[k] for k in ("lines", "chosen", "alternatives", "rejected",
+                                                                     "quotes"))
     contract_quotes = [cq.model_copy(update={"product_name": _name(catalogue.get(pid) or {"id": pid})})
                        for pid, q in quotes.items() if (cq := valio.to_contract_quote(q))]
 

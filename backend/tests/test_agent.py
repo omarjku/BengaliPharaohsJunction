@@ -419,3 +419,8 @@ def test_one_clause_grounds_at_most_one_item(shop1, monkeypatch):
     body = run("1 L lactose-free milk")
     assert body["order"] is None and any("same part of the request" in r["message"]
                                          for r in body["decision"]["reasons"])
+
+
+def test_singular_search_fallbacks():
+    assert [agent._singular(w) for w in ("lingonberries", "potatoes", "biscuits", "glass", "gas", "eggs")] == [
+        "lingonberry", "potato", "biscuit", "glass", "gas", "egg"]

@@ -7,12 +7,15 @@ This is an agent-agnostic REST front door for purchasing from Valio's mock API.
 
 It turns a buyer's text request into catalogue matches, quantity conversions, live
 price and availability checks, a mandate decision, and an order or human hand-off.
-Gemini parses the request and ranks catalogue matches when configured. A simple
-parser and lexical search are the fallback. Money, stock, dates, quantities, and
+Gemini parses the request and ranks catalogue matches; the Gemini Decisions API then
+gives a calibrated confidence that each chosen product and quantity really fits the
+request, and anything under the buyer's threshold (0.8 for the demo buyer) goes to the
+human. A simple parser and lexical search are the fallback. Money, stock, dates, quantities, and
 mandate checks stay in deterministic Python code. Every decision is auditable.
 
 The rule behind every answer (decision D6): when the data is uncertain, bring it to
-the human with the reason and alternatives. Never silently guess.
+the human with the reason and alternatives. Never silently guess. (That is the default
+`ask` uncertainty policy; a mandate can choose `decline` or `approve` instead.)
 
 ## Try it
 
@@ -47,7 +50,7 @@ Set the variables from `.env.example`:
 | --- | --- |
 | `VALIO_API_KEY` | Key for Valio's mock API. |
 | `VALIO_BASE_URL` | Valio API base URL. |
-| `GEMINI_API_KEY` | Enables Gemini parsing and catalogue ranking. |
+| `GEMINI_API_KEY` | Enables Gemini parsing, catalogue ranking and Decisions confidence. |
 | `FRONTEND_ORIGINS` | Comma-separated browser origins allowed by CORS. |
 | `AGENT_KEYS` | Comma-separated `key=buyer_id[:name]` entries for purchasing agents. |
 | `APPROVER_KEYS` | Comma-separated `key=buyer_id[:name]` entries for human approvers. |
@@ -69,6 +72,7 @@ routes derive the buyer identity from the key, not from a trusted request body.
 | `POST /api/orders/{id}/approve`<br>`POST /api/orders/{id}/reject` | Human sign-off or refusal. | `X-Approver-Key` |
 | `GET /api/audit` | Reads that buyer's audit trail. | `X-Approver-Key` |
 | `POST /api/quotes` | Gets price and availability for product IDs. | None |
+| `GET /api/products/{product_id}` | One product's static facts. | None |
 | `GET /api/products/search` | Searches the static catalogue with filters. | None |
 | `POST /api/quantity/resolve` | Converts a buyer amount to sales units. | None |
 | `GET /api/health` | Reports service and catalogue status. | None |
@@ -95,8 +99,13 @@ guessing. The milk request and chosen alternatives are shown in
 
 ### J3 — Autonomy and controls
 
-`backend/app/mandates.py` defines the demo buyer's rules. `backend/app/gate.py`
-checks hard rules, spend limits, budgets, stock, cut-offs, and prices.
+`backend/app/mandates.py` defines the demo buyer's rules, and `backend/app/gate.py`
+checks them with fresh quotes. Two kinds of rule:
+- **Hard rules refuse** the order: an excluded allergen the product contains, a
+  missing required claim, a unit price over the maximum, a passed cut-off.
+- **Sign-off rules hold it for the chef** (`pending_approval`): the auto-approve
+  limit, the per-line cap and weekly budget, and the delivery-reliability floor
+  (decision D13: a kitchen may knowingly accept a less reliable supplier).
 `backend/app/orders.py` separates automatic orders from pending approval and
 re-checks fresh data at approval. `backend/app/auth.py`, `/api/audit`, and the
 `AuditEntry` contract scope and record the actors, reasons, quotes, and rejected

@@ -48,3 +48,32 @@ On price alone, the agent would have bought the "milk drink" (EUR 1,400, within 
 ## Interface for T06 `decide()`
 
 The agent sets the contract's `Decision.confidence` (the weakest chosen line) and exposes `agent.judge(text, [(product, kinds)]) -> [(confidence, why)]`. A `decide(..., confidence=...)` can take either value without changes on our side.
+
+## Showcase 2: menu to cart (`POST /api/agent/menu`, T15)
+
+The chef pastes a menu, the covers and the delivery date. Gemini (`gemini-4-hydrogen`, structured output, the menu sent as untrusted data) turns each dish into ingredients, each with an amount per portion and a one-line assumption the chef can check. Code then:
+- scales everything to the covers and merges the same ingredient across dishes (normalised to L / kg / pcs, with exact fractions, rounded *up*);
+- runs each ingredient through the same pipeline as a normal request: catalogue, Gemini match, live Valio quotes, quantity, gate checks, Gemini Decisions confidence, mandate limits, reliability floor, Finnish preference.
+
+Recipe amounts are guesses, so the agent **never orders from a menu**. The decision is always ASK_HUMAN with `MENU_ASSUMPTIONS`, and the chef orders by posting the returned `order_lines` to the front door, which re-checks them.
+
+Guards: a dish must appear in the menu the chef sent (an injected "Butter feast" is dropped and reported), instruction-like text is flagged, a per-portion amount over 1 kg / 1 L / 6 pieces is flagged as suspicious, and at most 20 ingredients are priced.
+
+### Live run (Sat 14 Nov 2026): "Sautéed reindeer with mashed potatoes and lingonberries; Lingonberry cheesecake", 80 covers, Monday
+
+**What Gemini decided:** 2 dishes, 13 per-dish assumptions, for example "Mashed potatoes: 200 g potato per portion", "Main protein: 150 g sliced reindeer meat per portion" and "Cheesecake filling: 80 g cream cheese per slice". Butter, sugar and lingonberries appear in both dishes and were merged; for example butter is 30 g + 15 g per cover, 3.6 kg for 80 covers.
+
+| ingredient (for 80) | chosen at Valio | total | Gemini Decisions confidence |
+|---|---|---|---|
+| reindeer meat 12 kg | Rönkä reindeer top loin, frozen (FI) | EUR 768.24 | 0.92 product, **0.77 quantity**: ask |
+| potato 16 kg | Early potato, washed (FI) | EUR 14.56 | 0.89 / 0.84 |
+| butter 3.6 kg (both dishes) | Valio butter 500 g unsalted (FI) | EUR 23.10 | 0.92 / 0.85 |
+| milk 4 L | Valio skimmed milk 1 l | EUR 3.52 | **0.72 product**: the assumption said *whole* milk for mash |
+| cream cheese 6.4 kg | Philadelphia Original 1.65 kg | EUR 43.74 | 0.95 / 0.91 |
+| whipping cream 3.2 L | Arla whipping cream 1 L lactose free | EUR 29.48 | **0.56 product**: ask |
+| digestive biscuits 2.8 kg | Digestive Classic 400 g | EUR 9.48 | 0.96 / **0.73 quantity** |
+| sugar 2.8 kg | Segafredo brown sugar 500 x 5 g sachets | EUR 16.09 | **0.69 product**: sachets for a kitchen, rightly doubted |
+| lingonberries | Polarica lingonberry 2.5 kg | | not orderable: no delivery schedule, no allergen data |
+| gelatin | Tørsleff's gelatin leaf | | not orderable: Terminal product, cut-off passed |
+
+Cart: **EUR 908.21**, with 8 `order_lines` ready to post. The decision is ASK_HUMAN: `MENU_ASSUMPTIONS`, plus each doubted line with its number and the reason, plus the two unorderable ingredients with their traps. The confidence scores do the triage. Lines Gemini is sure of (potato, butter, cream cheese) go through on the chef's one confirmation. Lines it doubts (brown sugar sachets for a cheesecake, skimmed milk where the recipe assumed whole milk) are exactly the ones a chef would want to look at. Gemini output varies between runs; the guards and thresholds do not.

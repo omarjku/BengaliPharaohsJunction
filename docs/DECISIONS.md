@@ -17,6 +17,7 @@ Source: our ~19-min recording, transcribed locally. **Quotes are ours.** Where w
 | D10 | Gemma offline | Doesn't make sense without internet. **Later / focus on main stuff first.** | ⏸ Parked |
 | D11 | Work split | **Keep it dynamic**: no fixed owners, claim tasks on the board. UI: both want to be involved. | ✅ Decided |
 | D12 | Demo + video | **Live demo at peer review** + **submission video made with RAEA.** Story: Lapland chef speaks a new menu → cart with reasons → trap explained ("can't arrive Monday, here are 2 alternatives") → asks the human → audit log → rogue order blocked at Valio's door. | ✅ Decided |
+| D13 | Reliability floor | **Reliability floor holds for the chef (ASK_HUMAN), never refuses.** Reason: Lapland kitchens may knowingly accept a less reliable supplier; D6, bring it to the human. A product with no reliability record is held the same way. (Omar, Sun 15 Nov, after the Codex review.) | ✅ Decided |
 | ⏱ | Timeline | **Sat midday: end-to-end example working AND deployed.** Sat evening: features on top. If ahead: start pitch, deck, video. | ✅ Decided |
 
 ## Explainers for D2 and D7 (both now decided, kept for reference)

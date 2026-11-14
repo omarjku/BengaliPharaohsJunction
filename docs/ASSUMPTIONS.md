@@ -64,8 +64,8 @@ Approval cannot make an expired cut-off orderable.
 **Code / human path.** `backend/app/valio.py` adds `cutoff_passed` from the
 API clock. `backend/app/gate.py` checks the clock again and emits
 `CUTOFF_PASSED` with a suggested fix. The `Decision` is `ASK_HUMAN`, but the
-reason is in `NOT_APPROVABLE`, so the order status is `refused` and nothing is
-stored. Approval re-runs the check with fresh quotes in `backend/app/orders.py`.
+reason is in `NOT_APPROVABLE`, so the order status is `refused` and no order is
+stored (the run is still audited). Approval re-runs the check with fresh quotes in `backend/app/orders.py`.
 
 Files: `docs/valio-api-notes.md`, `docs/DECISIONS.md`,
 `backend/app/valio.py`, `backend/app/gate.py`, `backend/app/orders.py`.
@@ -175,25 +175,25 @@ known integration boundary, not a verified equivalence.
 Files: `docs/valio-api-notes.md`, `backend/app/valio.py`,
 `backend/app/quantity.py`, `backend/app/gate.py`.
 
-### 9. Mandates have two different paths
+### 9. Mandates live at Valio, never in the request
 
-**Data / behaviour.** `POST /api/agent/run` accepts `buyer_id`, but not a
-mandate. `POST /api/orders` accepts a `mandate` in its body.
+**Data / behaviour.** Neither `POST /api/agent/run` nor `POST /api/orders`
+accepts a mandate. `OrderRequest` forbids extra fields, so sending one is a
+`422`.
 
-**Assumption.** The agent flow uses a trusted server-side mandate. The direct
-order flow is still the current milestone implementation and trusts the
-mandate supplied by a valid agent key for that same buyer.
+**Assumption.** The buyer's rules are Valio-side state, tied to the buyer that
+the agent key belongs to. A compromised or buggy agent cannot loosen its own
+limits.
 
-**Code / human path.** `backend/app/mandates.py` has one in-code demo mandate.
-`backend/app/agent.py` loads it by `buyer_id`. If it is missing, the run adds
-`MANDATE_MISSING`, asks the human, audits the run, and does not place an order.
-`backend/app/main.py` checks that the optional body `buyer_id` and
-`mandate.buyer_id` match the buyer from `X-Agent-Key`. It then passes that body
-mandate to `backend/app/orders.py`; it does not replace it with
-`mandates.get()`. The body mandate is stored with the order.
+**Code / human path.** `backend/app/mandates.py` holds one in-code demo
+mandate (and the buyer's Gemini confidence threshold, which the v0.2 contract
+has no field for). `backend/app/agent.py` and `backend/app/main.py` both load
+it for the key's buyer. If it is missing, the agent adds `MANDATE_MISSING` and
+asks the human, and the front door refuses the order with `MANDATE_MISSING`.
+Both are audited.
 
 Files: `backend/app/mandates.py`, `backend/app/agent.py`,
-`backend/app/main.py`, `backend/app/orders.py`, `docs/DECISIONS.md`.
+`backend/app/main.py`, `backend/app/orders.py`.
 
 ### 10. Demo API keys are placeholders, not credentials
 
@@ -266,6 +266,29 @@ stale. A database transaction is the documented next step before scaling.
 Files: `backend/app/main.py`, `backend/app/orders.py`, `dev.sh`,
 `docs/DECISIONS.md`.
 
+### 14. The reliability floor is a sign-off rule, not a hard rule
+
+**Data / behaviour.** Valio's reliability file covers 4,425 of 17,546 products
+(0–1, the share delivered on time). The demo mandate sets
+`MIN_DELIVERY_RELIABILITY` 0.9 because Lapland deliveries are fragile.
+
+**Assumption (decision D13).** Falling below the floor is a question for the
+chef, never a refusal: a kitchen may knowingly accept a less reliable supplier.
+It is a **sign-off rule**, like the auto-approve limit, per-line cap and weekly
+budget. **Hard rules** refuse: an excluded allergen the product contains, a
+missing required claim, a unit price over the maximum, a passed cut-off.
+
+**Code / human path.** `backend/app/gate.py` returns `LOW_RELIABILITY` with
+`ASK_HUMAN` below the floor. With no reliability record it returns
+`DATA_MISSING` under the mandate's uncertainty policy (ask by default). The
+front door holds the order as `pending_approval`. The agent prefers a product
+without that concern, and says so in the chosen line's `why`. The rule is still
+stored in `Mandate.hard_rules`, because the v0.2 contract has nowhere else to
+put it.
+
+Files: `backend/app/mandates.py`, `backend/app/gate.py`, `backend/app/agent.py`,
+`docs/DECISIONS.md`.
+
 ## Open interface and operating model
 
 Valio's mock has no order endpoint. The repository defines the order and human
@@ -303,8 +326,8 @@ These are not implemented claims:
 - Special-case the `9999999999` Stock value only after that confirmation.
 - Resolve quantity against the live API sales unit, and add tests for fractional
   non-`KG` lot sizes.
-- Move mandates from the in-code demo map to an authenticated server-side
-  store, and use the stored mandate on `POST /api/orders` too.
+- Move mandates from the in-code demo map to a database the buyer can edit,
+  and add `min_confidence` to the `Mandate` contract.
 - Move orders and audits to Postgres with transactions before adding workers or
   instances. Add retention and recovery rules.
 - Replace example key values with rotated secrets managed outside the repo.

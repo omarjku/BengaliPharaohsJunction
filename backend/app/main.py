@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import agent, auth, catalogue, config, gate, mandates, orders, quantity, valio
+from . import agent, auth, menu, catalogue, config, gate, mandates, orders, quantity, valio
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -267,3 +267,31 @@ async def agent_run(req: AgentRunRequest, who: Agent) -> dict:
         raise HTTPException(403, detail="This agent key may only run the agent for its own buyer")
     _catalogue_ready()
     return await agent.run(req.text, req.requested_date, who.buyer_id)
+
+
+# --- T15 menu → cart: a proposal only (always ASK_HUMAN); the chef orders it by posting order_lines to /api/orders.
+class MenuRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    menu_text: str = Field(min_length=1, max_length=4000,
+                           examples=["Reindeer stew with mashed potatoes; lingonberry cheesecake"])
+    covers: int = Field(ge=1, le=2000, examples=[80])
+    requested_date: date = Field(examples=["2026-11-16"])
+
+    @field_validator("menu_text")
+    @classmethod
+    def utf8(cls, t: str) -> str:
+        return AgentRunRequest.utf8(t)
+
+    @field_validator("requested_date")
+    @classmethod
+    def near_today(cls, d: date) -> date:
+        return OrderRequest.near_today(d)
+
+
+@app.post("/api/agent/menu")
+async def agent_menu(req: MenuRequest, who: Agent) -> dict:
+    """Menu + covers → a proposed cart. Needs X-Agent-Key (the buyer comes from the key; mandate server-side).
+    Returns {menu, assumptions, ingredients, lines, cart_total_cents, order_lines, decision, audit_id}; the decision is
+    always ASK_HUMAN (MENU_ASSUMPTIONS) and nothing is ordered here."""
+    _catalogue_ready()
+    return await menu.propose(req.menu_text, req.covers, req.requested_date, who.buyer_id)
