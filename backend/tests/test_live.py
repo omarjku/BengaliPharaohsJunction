@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app import config, live
+from app import config, live, orders
 from app.main import app
 
 c = TestClient(app)
@@ -45,10 +45,11 @@ class FakeLive:
 
 
 @pytest.fixture
-def talk(monkeypatch):
+def talk(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "AGENT_KEYS", "agent-chef=chef")
     monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(config, "TALK_ENABLED", True)
+    monkeypatch.setattr(orders, "AUDIT_FILE", tmp_path / "audit.jsonl")
 
     def use(script):
         fake = FakeLive(script)

@@ -145,3 +145,7 @@
   - #17: /ask opens the Decisions budget before its preflight calls.
 - **Reported, not fixed here:** #11, order + audit atomicity in orders.py (Room 2's file). The stream's error text no
   longer claims "nothing was ordered" when it may have got that far.
+
+## 12. room3-assume (Codex builds, Claude supervises) — Sat 14 Nov
+- **Ask:** assume sensible amounts instead of asking (proposed carts, amounts in the product's natural unit with tappable options), standing diets per relevant ingredient, spare memory notes, grouped Decisions calls, specific off-topic replies (also in Talk).
+- **Run:** `codex exec -s workspace-write -m gpt-reserve -c model_reasoning_effort=max`, ~43 min. **Result:** 486 tests pass; added direct-order `assumptions`, amount `options`, profile-aware menu ingredients, off-topic `topic`. **Kept:** all of it. Its latency benchmark hit a Gemini ConnectError (sandbox network), so no valid number from Codex.
