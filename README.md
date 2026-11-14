@@ -25,7 +25,7 @@ cp .env.example .env    # then fill in VALIO_API_KEY and GEMINI_API_KEY
 
 ## Front door auth (backend)
 The order routes need API keys from env (see `.env.example`), as comma-separated `key=buyer_id[:name]` lists:
-- `AGENT_KEYS`: the buyer's purchasing agent sends `X-Agent-Key` to `POST /api/orders`. The buyer comes from the key; a different `buyer_id` or `mandate.buyer_id` in the body is refused (403).
+- `AGENT_KEYS`: the buyer's purchasing agent sends `X-Agent-Key` to `POST /api/orders`. The buyer comes from the key (a different body `buyer_id` is 403) and the order is judged by that buyer's mandate stored server-side (`backend/app/mandates.py`, demo buyer `lapland-kitchen`); a `mandate` in the body is a 422, and a buyer with no stored mandate is refused with `MANDATE_MISSING`. Approve re-checks against the buyer's current stored mandate.
 - `APPROVER_KEYS`: a human sends `X-Approver-Key` to `GET /api/orders/{id}`, `POST /api/orders/{id}/approve|reject` and `GET /api/audit`, for their own buyer only. `signed_off_by` is the key's name, never the body. Agent keys never approve.
 - Neither set: those routes answer 503 (the door is never open by default).
 - Run **one** uvicorn worker (`uvicorn app.main:app`, no `--workers N`): the order lock and store are in-process.

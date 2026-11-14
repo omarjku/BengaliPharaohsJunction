@@ -17,7 +17,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from trade_contracts import AuditEntry, AuditInput, Decision, Mandate, PurchaseRequest, RequestItem
 
-from . import catalogue, gate
+from . import catalogue, gate, mandates
 from .auth import Principal
 
 # ponytail: JSON files on local disk (D8). Render's disk is ephemeral, so orders + audit vanish on redeploy and
@@ -59,7 +59,7 @@ def _append_audit(entry: AuditEntry) -> None:
             f.write(entry.model_dump_json() + "\n")
 
 
-async def _audit(actor: str, order_id: str, buyer_id: str, requested_date: str, lines: list[dict], mandate: Mandate,
+async def _audit(actor: str, order_id: str, buyer_id: str, requested_date: str, lines: list[dict], mandate: Mandate | None,
            res: gate.GateResult | None, decision=None, now: datetime | None = None) -> str:
     """The contracts have no Order shape, so the order is recorded as the PurchaseRequest it fulfils."""
     now = now or datetime.now(timezone.utc)
@@ -105,8 +105,8 @@ def _busy() -> HTTPException:
     return HTTPException(409, detail="The buyer's orders changed while this one was being checked; retry.")
 
 
-async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate) -> dict:
-    """`mandate` is whatever governs this buyer: today the one the agent sends, later the stored one (mandates.py)."""
+async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | None) -> dict:
+    """`mandate` is the buyer's stored one (mandates.get), never the client's; None → refused (MANDATE_MISSING)."""
     oid = str(uuid4())
     for _ in range(MAX_RETRIES):
         now = datetime.now(timezone.utc)
@@ -162,7 +162,7 @@ async def approve(order_id: str, who: Principal) -> dict:
     for _ in range(MAX_RETRIES):
         o = _pending(order_id, who.buyer_id)
         seen, now = o["updated_at"], datetime.now(timezone.utc)
-        mandate = Mandate.model_validate(o["mandate"])
+        mandate = mandates.get(o["buyer_id"])  # the buyer's CURRENT rules, not the snapshot taken at order time
         lines = [SimpleNamespace(product_id=li["product_id"], quantity=li["quantity"]) for li in o["lines"]]
         spent = _spent_7d(o["buyer_id"], now, skip=order_id)
         res = await _gate(lines, date.fromisoformat(o["requested_date"]), mandate, order_id, spent_7d_cents=spent,

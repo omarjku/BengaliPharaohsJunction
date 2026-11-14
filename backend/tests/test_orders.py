@@ -3,7 +3,7 @@ import json
 from datetime import timedelta
 
 import pytest
-from conftest import NOW, PAST, REQ, quote
+from conftest import NOW, PAST, REQ, quote, store_mandate
 from fastapi.testclient import TestClient
 
 from app import orders
@@ -17,7 +17,8 @@ MANDATE = {"id": "m1", "buyer_id": "chef", "hard_rules": [{"kind": "auto_approve
 
 
 def order(lines, buyer="chef", mandate=None, **extra):
-    body = {"buyer_id": buyer, "requested_date": REQ.isoformat(), "mandate": mandate or MANDATE,
+    store_mandate(mandate or dict(MANDATE, buyer_id=buyer))
+    body = {"buyer_id": buyer, "requested_date": REQ.isoformat(),
             "lines": [{"product_id": p, "quantity": q} for p, q in lines], **extra}
     return c.post("/api/orders", json=body, headers={"X-Agent-Key": AGENT.get(buyer, "agent-chef")})
 
@@ -119,11 +120,12 @@ def test_orders_survive_a_restart(shop, monkeypatch):
     {"requested_date": "monday"},
     {"buyer_id": "a b"},
     {"unit_price_cents": 1},  # the client can't set prices
+    {"mandate": MANDATE},  # nor its own rules: the stored mandate decides
     {"lines": [{"product_id": "463335", "quantity": 1, "unit_price_cents": 1}]},
 ])
 def test_order_validation_422(shop, body):
-    base = {"buyer_id": "chef", "requested_date": REQ.isoformat(), "mandate": MANDATE,
-            "lines": [{"product_id": "463335", "quantity": 1}]}
+    store_mandate(MANDATE)
+    base = {"buyer_id": "chef", "requested_date": REQ.isoformat(), "lines": [{"product_id": "463335", "quantity": 1}]}
     assert c.post("/api/orders", json={**base, **body}).status_code == 422
     assert shop.calls == []  # rejected before Valio is called
 

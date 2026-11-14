@@ -33,7 +33,7 @@ UNIT_PRICE_OVER_MAX = getattr(C, "UNIT_PRICE_OVER_MAX", C.LINE_OVER_CAP)
 # Valio physically can't deliver the line as ordered, or the mandate forbids it: the order has to change,
 # a signature can't fix it.
 NOT_APPROVABLE = frozenset({C.CUTOFF_PASSED, C.UNDELIVERABLE, C.STOCK_NONE, C.STOCK_PARTIAL, C.PRICE_MISSING,
-                            CLAIM_MISSING, UNIT_PRICE_OVER_MAX} - {C.DATA_MISSING, C.LINE_OVER_CAP})
+                            C.MANDATE_MISSING, CLAIM_MISSING, UNIT_PRICE_OVER_MAX} - {C.DATA_MISSING, C.LINE_OVER_CAP})
 NUMERIC_RULES = (RuleKind.MAX_UNIT_PRICE_CENTS, RuleKind.MIN_DELIVERY_RELIABILITY, RuleKind.AUTO_APPROVE_LIMIT_CENTS)
 # Claims worth keeping when looking for a substitute (dietary needs, not marketing claims like LOW_SODIUM_SALT).
 DIETARY_CLAIMS = {"FREE_FROM_LACTOSE", "FREE_FROM_GLUTEN", "VEGAN", "VEGETARIAN", "FREE_FROM_MILK"}
@@ -253,11 +253,25 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
     return alts, bad
 
 
-async def check(lines: list, requested: date, m: Mandate, request_id: str, spent_7d_cents: int = 0,
+def _no_mandate(lines: list, request_id: str, now: datetime) -> GateResult:
+    """No stored mandate = nobody has said what this buyer may order: refuse without asking Valio anything."""
+    r = _r(C.MANDATE_MISSING, ASK, "No mandate is on file for this buyer, so nothing can be ordered on its behalf.",
+           None, "Set up the buyer's mandate with Valio, then order again.")
+    info = [{"product_id": ln.product_id, "name": (catalogue.get(ln.product_id) or {}).get("name_en") or ln.product_id,
+             "quantity": ln.quantity, "unit": None, "unit_price_cents": None, "line_total_cents": None} for ln in lines]
+    decision = Decision(request_id=request_id, outcome="ASK_HUMAN", reasons=[r], alternatives=[],
+                        rules_version=RULES_VERSION, decided_at=now)
+    return GateResult("refused", decision, [], [], info, 0)
+
+
+async def check(lines: list, requested: date, m: Mandate | None, request_id: str, spent_7d_cents: int = 0,
                 approved_prices: dict[str, int] | None = None, now: datetime | None = None) -> GateResult:
     """Run every hard check on an order. `lines` items have .product_id and .quantity (sales units).
+    `m` is the buyer's STORED mandate (mandates.py), never one from the client; None → refused, MANDATE_MISSING.
     Quotes are fetched here, server-side; nothing the client says about price or stock is trusted."""
     now = now or datetime.now(timezone.utc)
+    if m is None:
+        return _no_mandate(lines, request_id, now)
     ids = [ln.product_id for ln in lines]
     quotes = {q["product_id"]: q for q in await valio.get_quotes(ids, requested.isoformat(), fresh=True)}
 
