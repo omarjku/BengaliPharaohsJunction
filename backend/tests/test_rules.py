@@ -123,3 +123,57 @@ def test_no_stated_limit_means_the_default_not_unlimited(lk, monkeypatch):
                                    {"kind": "min_delivery_reliability", "value": 0.9}])
     r = c.put("/api/mandate", json={"mandate": stripped}, headers=APPR)  # PUT without a limit: default added
     assert r.status_code == 200 and rules.gate._nums(mandates.get("lapland-kitchen"), rules.RuleKind.AUTO_APPROVE_LIMIT_CENTS) == [50000]
+
+
+# --- Codex review of b209cae (rules): validation and durability
+
+
+def _rules(*extra):
+    return [{"kind": "excluded_allergen", "value": "AP"}, {"kind": "auto_approve_limit_cents", "value": 150000},
+            {"kind": "min_delivery_reliability", "value": 0.9}, *extra]
+
+
+@pytest.mark.parametrize("rule, problem", [
+    ({"kind": "auto_approve_limit_cents", "value": 200000, "scope": "this_order"}, "one order only"),
+    ({"kind": "max_unit_price_cents", "value": 150000.9}, "whole number of cents"),
+    ({"kind": "max_unit_price_cents", "value": "not-a-number"}, "whole number of cents"),
+    ({"kind": "excluded_allergen", "value": "banana"}, "Unknown allergen"),
+])
+def test_invalid_rules_are_refused_not_stored(lk, rule, problem):
+    r = c.put("/api/mandate", json={"mandate": mandate(hard_rules=_rules(rule)), "confirm_large_change": True},
+              headers=APPR)
+    assert r.status_code == 422 and problem in " ".join(r.json()["detail"]["problems"])
+    assert not mandates.STORE.exists()
+
+
+def test_reliability_floor_must_be_real_and_lowering_it_needs_confirmation(lk):
+    zero = mandate(hard_rules=[*_rules()[:2], {"kind": "min_delivery_reliability", "value": 0}])
+    assert c.put("/api/mandate", json={"mandate": zero, "confirm_large_change": True}, headers=APPR).status_code == 422
+    lower = mandate(hard_rules=[*_rules()[:2], {"kind": "min_delivery_reliability", "value": 0.5}])
+    assert c.put("/api/mandate", json={"mandate": lower}, headers=APPR).status_code == 409
+
+
+def test_removing_or_extending_expiry_needs_confirmation(lk):
+    soon = mandate(expires_at="2027-01-01T00:00:00+00:00")
+    assert c.put("/api/mandate", json={"mandate": soon}, headers=APPR).status_code == 200  # adding one: tighter
+    for later in (None, "2030-01-01T00:00:00+00:00"):
+        r = c.put("/api/mandate", json={"mandate": mandate(expires_at=later)}, headers=APPR)
+        assert r.status_code == 409 and r.json()["detail"]["changes"][0]["field"] == "expires_at"
+
+
+def test_no_rule_change_without_its_audit_entry(lk, monkeypatch):
+    def broken(_entry):
+        raise OSError("disk full")
+    monkeypatch.setattr(orders, "_append_audit", broken)
+    tight = mandate(hard_rules=[*_rules()[:1], {"kind": "auto_approve_limit_cents", "value": 1000}, _rules()[2]])
+    assert c.put("/api/mandate", json={"mandate": tight}, headers=APPR).status_code == 503
+    assert mandates.get("lapland-kitchen").id == "lapland-kitchen-2026-11"  # rolled back to the seeded mandate
+
+
+def test_corrupt_store_fails_closed(lk):
+    body = {"mandate": mandate()}  # built before the store is corrupted
+    mandates.STORE.parent.mkdir(parents=True, exist_ok=True)
+    mandates.STORE.write_text("{")
+    assert c.get("/api/mandate", headers=APPR).status_code == 503
+    assert c.put("/api/mandate", json=body, headers=APPR).status_code == 503
+    assert mandates.STORE.read_text() == "{"  # never overwritten (it may hold other buyers' rules)
