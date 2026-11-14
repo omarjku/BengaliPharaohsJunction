@@ -4,11 +4,18 @@
 
 - An open REST boundary: OpenAPI 3.1 and JSON Schemas.
 - An MCP server, so any agent can use the same front door.
-- Ed25519-signed decisions, with an optional RFC 9421 per-agent request-signing scheme.
+- Ed25519-signed order responses, with an optional RFC 9421 per-agent request-signing scheme.
 - Push-to-talk voice, Talk (Gemini Live) and photo input, all on one pipeline.
-- Buyer profiles, an append-only audit trail, and idempotent retries.
+- Buyer profiles, onboarding, standing orders, kitchen history/calendar, an append-only audit trail, and idempotent retries.
+- A 24-hour QR test-kitchen sandbox when `SANDBOX_ENABLED=1`.
 
 The limits are written as `ponytail:` comments in the code and in `docs/ASSUMPTIONS.md`.
+
+The latest real-Gemini release acceptance is 7/12 flows passed. The report found five
+release gaps: a 25 kg butter correction was treated as 25 packs, usual-product choice
+was ambiguous, duplicate protection fired on questions and changes, a `plus ...` line
+was lost after a follow-up, and a vague party request had no choices. TODO: rerun the
+live acceptance after those fixes; this file does not claim a post-fix score.
 
 ## The path, in order
 
@@ -20,7 +27,7 @@ The limits are written as `ponytail:` comments in the code and in `docs/ASSUMPTI
 | 4 | **Signed quotes with expiry** | The door re-quotes live (correct, but chatty). A signed quote makes the fixed-price handoff verifiable | Agree a signature and key directory with Valio; verify and expire at the door; keep the signed payload in the audit |
 | 5 | **Cross-language search with Gemini embeddings** | Keyword search misses a product named in the other language ("linssi" / red lentils) | Embed the catalogue's names once, add a vector index, and keep the Decisions judge on top |
 | 6 | **Product images** | Valio's data carries media ids but no image files, so the UI can't show packs | Ask Valio for the media endpoint, then show the pack beside each line; photo input could then compare against it |
-| 7 | **CI on CRACI** | CI (PR #34, built by Codex) isn't merged yet | Merge #34, switch its runner to CRACI, gate merges on the 434 backend tests and the eval |
-| 8 | **Larger evals** | 33 judge cases, 3 photo checks, none for spare amounts | Borderline judge cases (0.4–0.8), 20–30 photos, a spare-amounts set; re-measure the threshold per buyer |
+| 7 | **CI on CRACI** | CI is not verified on the release branch; the current offline suite is 634 passed, 21 failed, 1 skipped | Make the CI workflow run the required offline backend command, fix the existing menu/diet failures, then gate merges on the suite and the live eval |
+| 8 | **Larger evals** | 33 judge cases, 3 hand-checked photo fixtures, and no labelled spare-amount set | Add borderline judge cases (0.4–0.8), 20–30 photo cases, and a spare-amount set; re-measure the threshold per buyer |
 | 9 | **Peppol BIS Order / UBL export** | A standard order document for procurement systems | The mapping is in `docs/STANDARDS.md`; implement it and validate against the Peppol rules |
-- Spending from the kitchen's bank via PSD2 account access (not built), and real door-counter and POS integrations in place of the simulated seed.
+| 10 | **Bank and operations integrations** | Spending from the kitchen's bank via PSD2 account access is not built; the door-counter and POS history is still a simulated seed | Add PSD2 account access only with explicit kitchen consent, then replace the seed with authenticated door-counter and POS integrations |
