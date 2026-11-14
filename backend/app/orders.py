@@ -17,13 +17,15 @@ from uuid import uuid4
 from fastapi import HTTPException
 from trade_contracts import AuditEntry, AuditInput, Decision, Mandate, PurchaseRequest, RequestItem
 
-from . import catalogue, gate, mandates, signing
+from . import catalogue, config, gate, mandates, signing
 from .auth import Principal
 
 # ponytail: JSON files on local disk (D8). Render's disk is ephemeral, so orders + audit vanish on redeploy and
 # the public routes can grow the files without bound; move to Postgres (Aiven) with retention before production.
-AUDIT_FILE = catalogue.DATA / "audit.jsonl"
-ORDERS_FILE = catalogue.DATA / "orders.json"
+AUDIT_FILE = config.DATA_DIR / "audit.jsonl"
+ORDERS_FILE = config.DATA_DIR / "orders.json"
+IDEM_FILE = config.DATA_DIR / "idempotency.json"
+IDEM_TTL = timedelta(hours=24)  # how long a retry with the same Idempotency-Key gets the original answer (as Stripe)
 FRONT_DOOR = "valio_front_door"
 
 log = logging.getLogger(__name__)
@@ -35,6 +37,7 @@ _file_lock = threading.Lock()
 _order_lock = asyncio.Lock()
 MAX_RETRIES = 3
 _orders: dict[str, dict] | None = None
+_idem: dict[str, dict] | None = None
 
 
 def _store() -> dict[str, dict]:
@@ -44,12 +47,53 @@ def _store() -> dict[str, dict]:
     return _orders
 
 
-def _save() -> None:
+def _write(path, obj) -> None:
     with _file_lock:
-        ORDERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = ORDERS_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(_store(), ensure_ascii=False))
-        os.replace(tmp, ORDERS_FILE)  # atomic: a crash never leaves half a file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(obj, ensure_ascii=False))
+        os.replace(tmp, path)  # atomic: a crash never leaves half a file
+
+
+def _save() -> None:
+    _write(ORDERS_FILE, _store())
+
+
+def _idem_store() -> dict[str, dict]:
+    global _idem
+    if _idem is None:
+        _idem = json.loads(IDEM_FILE.read_text()) if IDEM_FILE.exists() else {}
+    return _idem
+
+
+def _save_idem() -> None:
+    _write(IDEM_FILE, {k: r for k, r in _idem_store().items() if r["response"] is not None})
+
+
+async def idempotent(scope: str, fingerprint: str, run) -> tuple[dict, bool]:
+    """Stripe-style Idempotency-Key. `scope` = caller + route + key; `fingerprint` = hash of the request.
+    First call runs and stores its response; a retry with the same request gets that response back (→ True) without
+    placing anything again; the same key with a different request → 422; while the first is still running → 409.
+    Errors are not stored, so a failed call can be retried with the same key. Check-and-set has no await in between,
+    so the single event loop makes it atomic (ponytail: one worker, see main.py)."""
+    store, now = _idem_store(), datetime.now(timezone.utc)
+    for k in [k for k, r in store.items() if datetime.fromisoformat(r["at"]) < now - IDEM_TTL]:
+        del store[k]
+    if rec := store.get(scope):
+        if rec["fingerprint"] != fingerprint:
+            raise HTTPException(422, detail="This Idempotency-Key was already used with a different request")
+        if rec["response"] is None:
+            raise HTTPException(409, detail="A request with this Idempotency-Key is still running; retry shortly")
+        return rec["response"], True
+    store[scope] = {"fingerprint": fingerprint, "response": None, "at": now.isoformat()}
+    try:
+        resp = await run()
+    except BaseException:
+        store.pop(scope, None)
+        raise
+    store[scope]["response"] = resp
+    await asyncio.to_thread(_save_idem)
+    return resp, False
 
 
 def _append_audit(entry: AuditEntry) -> None:
