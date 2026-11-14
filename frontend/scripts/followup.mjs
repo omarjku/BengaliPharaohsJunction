@@ -16,7 +16,7 @@ async function page(lang = 'en', buyer = 'helsinki-bistro') {
     localStorage.setItem('valio-aimo-keys', JSON.stringify(k))
     localStorage.setItem('valio-aimo-lang', l)
   }, [keys(buyer), lang])
-  await p.goto('http://localhost:5173/')
+  await p.goto('http://localhost:5173/?app=1')
   await p.waitForSelector('#text')
   return p
 }

@@ -2,7 +2,7 @@
 // and whether it has a visible focus ring. Usage: npm run dev, then `node scripts/keyboard.mjs [baseUrl]`.
 import { chromium } from 'playwright'
 
-const BASE = process.argv[2] ?? 'http://localhost:5173/?mock=1'
+const BASE = process.argv[2] ?? 'http://localhost:5173/?mock=1&app=1'
 const browser = await chromium.launch({ channel: 'chrome', args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] })
 const page = await browser.newPage({ viewport: { width: 390, height: 800 } })
 const where = () => page.evaluate(() => {

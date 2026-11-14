@@ -36,7 +36,7 @@ for (const s of SHOTS.filter((x) => !only || x.name.includes(only))) {
       localStorage.setItem('valio-aimo-voice-intro-seen', '1')
       if (a) localStorage.setItem('valio-aimo-admin-key', a)
     }, [keys(s.buyer), lang, s.valio ? env.VALIO_ADMIN_KEYS.split(',')[0].split('=')[0] : ''])
-    await page.goto('http://localhost:5173/')
+    await page.goto('http://localhost:5173/?app=1')
     await page.waitForSelector('#text')
     if (s.valio) {
       await page.getByRole('button', { name: 'Valio', exact: true }).click()

@@ -56,7 +56,7 @@ async function open(clip, { buyer = 'helsinki-bistro', lang = 'en', deny = false
   page.on('pageerror', (e) => console.log('PAGE ERROR', e.message))
   page.on('console', (m) => m.type() === 'error' && console.log('console error', m.text()))
   await page.addInitScript(INIT, [keys(buyer), lang])
-  await page.goto('http://localhost:5173/')
+  await page.goto('http://localhost:5173/?app=1')
   await page.waitForSelector('.mic')
   return { browser, ctx, page }
 }
