@@ -1,6 +1,6 @@
 """Offline contract tests for the text Gemini tool-calling agent."""
 import asyncio
-from datetime import date
+from datetime import date, datetime as real_datetime
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -9,6 +9,105 @@ from app import chat_agent
 from app.main import app
 
 client = TestClient(app)
+
+
+def _held_order_body(pre, available_date):
+    return {"order": {"status": "pending_approval", "order_id": "order-1"},
+            "lines": [{"chosen": True, "product": {"id": "milk", "name_en": "Milk"},
+                       "quantity": {"requested": {"amount": 5, "unit": "L"}, "quantity": 5},
+                       "quote": {"available_date": available_date}}],
+            "decision": {"outcome": "ASK_HUMAN", "reasons": [
+                {"code": "ASSUMPTION_CONFIRM", "severity": "ASK", "message": pre["request_note"]}]}}
+
+
+def test_no_date_proposes_next_delivery_as_a_held_card(monkeypatch):
+    seen = []
+    assumed = date(2026, 11, 16)
+    note = "Delivery: Mon 16 Nov (assumed: next delivery day; change it if needed)"
+
+    monkeypatch.setattr(chat_agent.ask, "_delivery_assumption",
+                        lambda _today: (assumed, "Assumed Monday 16 Nov, the next delivery"))
+    monkeypatch.setattr(chat_agent, "_turn_guard", lambda _text: asyncio.sleep(0, result={"steer": 0.0, "note": None}))
+
+    async def fake_run(_text, delivery, _buyer_id, pre=None):
+        seen.append((delivery, pre))
+        return _held_order_body(pre, delivery.isoformat())
+
+    monkeypatch.setattr(chat_agent.agent, "run", fake_run)
+    result = asyncio.run(chat_agent._propose_order(
+        {"items": [{"text": "5 L milk", "amount": 5, "unit": "L"}]}, "chef", None))
+
+    assert seen and seen[0][0] == assumed
+    assert seen[0][1]["request_hold"] is True
+    assert seen[0][1]["request_note"] == note
+    assert result["status"] == "pending_approval"
+    assert result["card"]["requested_date"] == assumed.isoformat()
+    assert any(note in str(assumption) for assumption in result["assumptions"])
+
+
+def test_no_date_uses_the_later_shared_delivery_date_when_first_quote_is_late(monkeypatch):
+    calls = []
+    monday, wednesday = date(2026, 11, 16), date(2026, 11, 18)
+    monkeypatch.setattr(chat_agent.ask, "_delivery_assumption",
+                        lambda _today: (monday, "Assumed Monday 16 Nov, the next delivery"))
+    monkeypatch.setattr(chat_agent.ask, "_reject_order", lambda *_args: asyncio.sleep(0, result=True))
+    monkeypatch.setattr(chat_agent, "_turn_guard",
+                        lambda _text: asyncio.sleep(0, result={"steer": 0.0, "note": None}))
+
+    async def fake_run(_text, delivery, _buyer_id, pre=None):
+        calls.append(delivery)
+        return _held_order_body(pre, wednesday.isoformat() if delivery == monday else delivery.isoformat())
+
+    monkeypatch.setattr(chat_agent.agent, "run", fake_run)
+    result = asyncio.run(chat_agent._propose_order(
+        {"items": [{"text": "5 L milk", "amount": 5, "unit": "L"}]}, "chef", None))
+
+    assert calls == [monday, wednesday]
+    assert result["card"]["requested_date"] == wednesday.isoformat()
+    assert "Wed 18 Nov" in str(result["assumptions"])
+
+
+def test_no_date_uses_next_delivery_for_sunday_and_friday_evening(monkeypatch):
+    for frozen in (real_datetime(2026, 11, 15, 12), real_datetime(2026, 11, 13, 18)):
+        seen = {}
+        class FrozenDateTime:
+            @classmethod
+            def now(cls, tz):
+                return frozen.replace(tzinfo=tz)
+
+        monkeypatch.setattr(chat_agent, "datetime", FrozenDateTime)
+        monkeypatch.setattr(chat_agent, "_turn_guard",
+                            lambda _text: asyncio.sleep(0, result={"steer": 0.0, "note": None}))
+
+        async def fake_run(_text, delivery, _buyer_id, pre=None):
+            seen["delivery"] = delivery
+            return _held_order_body(pre, delivery.isoformat())
+
+        monkeypatch.setattr(chat_agent.agent, "run", fake_run)
+        asyncio.run(chat_agent._propose_order(
+            {"items": [{"text": "5 L milk", "amount": 5, "unit": "L"}]}, "chef", None))
+        assert seen["delivery"] == date(2026, 11, 16)
+
+
+def test_explicit_date_stays_explicit_and_is_not_marked_as_a_date_assumption(monkeypatch):
+    seen = {}
+    explicit = date(2026, 11, 20)
+    monkeypatch.setattr(chat_agent, "_turn_guard",
+                        lambda _text: asyncio.sleep(0, result={"steer": 0.0, "note": None}))
+
+    async def fake_run(_text, delivery, _buyer_id, pre=None):
+        seen.update(delivery=delivery, pre=pre)
+        return _held_order_body(pre, delivery.isoformat())
+
+    monkeypatch.setattr(chat_agent.agent, "run", fake_run)
+    result = asyncio.run(chat_agent._propose_order(
+        {"items": [{"text": "5 L milk", "amount": 5, "unit": "L"}], "delivery_date": explicit.isoformat()},
+        "chef", explicit))
+
+    assert seen["delivery"] == explicit
+    assert seen["pre"]["request_hold"] is False
+    assert result["card"]["requested_date"] == explicit.isoformat()
+    assert not any("assumed: next delivery day" in str(assumption) for assumption in result.get("assumptions", []))
 
 
 def test_dispatches_propose_order_through_the_tool_registry(monkeypatch):
@@ -404,8 +503,8 @@ def test_order_tools_pass_the_real_steering_score_and_injection_hold(monkeypatch
     monkeypatch.setattr(agent, "run", fake_run)
     monkeypatch.setattr(agent, "steering", fake_steer)
     chat_agent._TURN.set({"steer": 0.93, "note": agent.INJECTION_NOTE})
-    asyncio.run(chat_agent._propose_order({"items": [{"text": "15 kg reindeer roast"}], "delivery_date": "2026-11-20"},
-                                          "smoke-kitchen", date(2026, 11, 20)))
+    asyncio.run(chat_agent._propose_order({"items": [{"text": "15 kg reindeer roast"}]},
+                                          "smoke-kitchen", None))
     assert seen["steer"] == 0.93 and seen["request_hold"] is True and seen["request_note"] == agent.INJECTION_NOTE
 
 
