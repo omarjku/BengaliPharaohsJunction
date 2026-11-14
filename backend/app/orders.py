@@ -226,10 +226,20 @@ def _commit_sync(apply, undo, entry: AuditEntry, fd: dict) -> None:
 
 async def _commit(apply, undo, entry: AuditEntry, fd: dict) -> str:
     """Run the commit in a thread, shielded: a cancelled request (client gone, shutdown) can't stop it halfway;
-    the caller just loses the response. A failed write is a clean 503 with nothing changed."""
+    the caller just loses the response. On cancellation we still WAIT for the commit before re-raising, so the
+    caller's `async with _order_lock` is only released once the store is updated: no other order can check the
+    budget or the order's state in between (automated security review). A failed write is a clean 503."""
+    fut = asyncio.ensure_future(asyncio.to_thread(_commit_sync, apply, undo, entry, fd))
     try:
-        await asyncio.shield(asyncio.to_thread(_commit_sync, apply, undo, entry, fd))
+        await asyncio.shield(fut)
     except asyncio.CancelledError:
+        while not fut.done():
+            try:
+                await asyncio.shield(fut)
+            except asyncio.CancelledError:
+                continue
+            except Exception:  # noqa: BLE001 - it rolled back; the cancellation is what the caller hears about
+                break
         raise
     except Exception:
         log.exception("order commit failed; rolled back")

@@ -326,7 +326,9 @@ def test_cancelled_request_still_commits_order_and_audit_together(shop, monkeypa
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        await asyncio.sleep(0.4)  # the shielded commit finishes in its thread
+        # The task only ends once the commit is done, so the order lock is never free before the store is updated
+        # (automated security review: else another order could check the budget against stale state).
+        assert done and not orders._order_lock.locked()
     asyncio.run(go())
     assert done and len(orders._store()) == 1
     [entry] = orders.audit_log("chef", 10)
