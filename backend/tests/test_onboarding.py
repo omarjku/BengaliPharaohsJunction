@@ -21,7 +21,7 @@ def test_questions_and_keys(shop):
     assert r.status_code == 200 and r.json()["onboarded"] is False
     qs = {q["id"]: q for q in r.json()["questions"]}
     assert list(qs) == ["business_type", "delivery_days", "allergens", "spend_comfort", "local_preference",
-                        "location", "spare_level", "dietary", "cuisine", "staples"]
+                        "location", "spare_level", "dietary", "cuisine", "staples", "standing_orders"]
     assert qs["spare_level"]["options"] == ["none", "low", "normal", "high"] and qs["spare_level"]["input"] == "choice"
     assert "gluten_free" in qs["dietary"]["options"] and qs["delivery_days"]["input"] == "multi"
     assert c.get("/api/profile/onboarding").status_code == 401

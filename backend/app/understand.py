@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from . import agent, catalogue, kitchen, profile
 
 INTENTS = ("order_items", "plan_meal", "plan_period", "urgent", "change_cart", "ask_about_cart", "ask_kitchen",
-           "tell_kitchen", "greeting", "out_of_scope", "unrealistic")
+           "tell_kitchen", "greeting", "unclear", "out_of_scope", "unrealistic")
 _UNITS = {"l": "L", "litre": "L", "litres": "L", "liter": "L", "liters": "L", "dl": "dl", "cl": "cl",
           "ml": "ml", "kg": "kg", "kilo": "kg", "kilos": "kg", "kilogram": "kg", "kilograms": "kg",
           "g": "g", "gram": "g", "grams": "g", "pcs": "pcs", "pc": "pcs", "piece": "pcs",
@@ -40,6 +40,16 @@ _CORRECTION_AMOUNT = re.compile(
     r"(?P<newunit>kg|kilos?|kilograms?|g|grams?|l|litres?|liters?|ml|dl|cl|pcs?|pieces?|kpl)?\b", re.I)
 _CORRECTION_SIZE = re.compile(r"(?:oh\s+wait|actually|wait|make\s+that|change\s+that)\b[^.;\n]{0,80}?\b"
                               r"(?P<size>small|medium|large)\b", re.I)
+_DAY_WORDS = {
+    "monday": "monday", "tuesday": "tuesday", "wednesday": "wednesday", "thursday": "thursday",
+    "friday": "friday", "saturday": "saturday", "sunday": "sunday", "maanantai": "monday",
+    "tiistai": "tuesday", "keskiviikko": "wednesday", "torstai": "thursday", "perjantai": "friday",
+    "lauantai": "saturday", "sunnuntai": "sunday",
+}
+_STANDING_TRIGGER = re.compile(r"\b(?:usual|regular|normal|same\s+as|tavallinen|normaali|sama(?:\s+kuin)?)\b|"
+                               r"\b(?:every|joka)\b", re.I)
+_NON_FOOD = re.compile(r"\b(?:lego|legos|flight|flights|airplane|weather|poem|poems|football|vacation|holiday)\b",
+                       re.I)
 
 
 def _slots_schema() -> dict:
@@ -82,7 +92,9 @@ interpretation. Resolve relative dates from the supplied Helsinki date: next wee
 next occurrence, and "in 30 minutes" means today. Do not invent a required product, date, or guest count; use the
 question field only when code cannot safely assume it. Choices must be two or three short tappable answers with the
 right unit. For cart questions, use only the supplied compact last card. Kitchen reports are facts to log, not rules to
-learn silently. A plan_meal is a cart proposal, not an order.
+learn silently. A plan_meal is a cart proposal, not an order. When the chef asks for the usual, regular, normal, or
+same-as-every-weekday order, use the matching standing order in the supplied profile; any remembered quantity is an
+assumption that code will hold for chef confirmation. This applies in the chef's language.
 """
 
 
@@ -174,10 +186,48 @@ def _compact_profile(buyer_id: str) -> dict:
     try:
         ctx = profile.context(buyer_id) or {}
     except Exception:  # profile is local context; a missing profile must not sink understanding
-        return {"dietary": [], "memories": []}
+        return {"dietary": [], "allergens": [], "delivery_days": [], "standing_orders": [], "usual_products": [],
+                "notes": [], "memories": [], "text": "Kitchen profile: no saved facts"}
+    standing = []
+    for order in (ctx.get("standing_orders") or []):
+        if not isinstance(order, dict):
+            continue
+        standing.append({"weekday": _clean_text(order.get("weekday"), 20),
+                         "lines": [{"text": _clean_text(line.get("text"), 160),
+                                    "product_id": _clean_text(line.get("product_id"), 80),
+                                    "quantity": line.get("quantity"), "unit": _clean_text(line.get("unit"), 20)}
+                                   for line in (order.get("lines") or []) if isinstance(line, dict)][:50],
+                         "source": _clean_text(order.get("source_detail") or order.get("source"), 80)})
+    try:
+        text = profile.compact_text(buyer_id) if hasattr(profile, "compact_text") else "Kitchen profile: no saved facts"
+    except Exception:
+        text = "Kitchen profile: no saved facts"
+    onboarding_facts = []
+    for fact in (ctx.get("onboarding_facts") or []):
+        if not isinstance(fact, dict):
+            continue
+        value = fact.get("value")
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        elif value is not None and not isinstance(value, str):
+            value = str(value)
+        onboarding_facts.append({"key": _clean_text(fact.get("key"), 50), "value": _clean_text(value, 300),
+                                 "source": _clean_text(fact.get("source_detail") or fact.get("source"), 80)})
     return {"dietary": _clean_list([x.get("label") or x.get("tag") for x in ctx.get("dietary") or [] if isinstance(x, dict)], 20),
-            "memories": [{"text": _clean_text(x.get("text"), 160), "source": _clean_text(x.get("source"), 40)}
-                         for x in (ctx.get("memories") or []) if isinstance(x, dict)][:20]}
+            "allergens": _clean_list(ctx.get("allergens"), 20),
+            "delivery_days": _clean_list(ctx.get("delivery_days"), 7), "standing_orders": standing,
+            "onboarding_facts": onboarding_facts[:20],
+            "usual_products": [{"text": _clean_text(item.get("text"), 160),
+                                "source": _clean_text(item.get("source_detail") or item.get("source"), 80)}
+                               for item in (ctx.get("usual_products") or []) if isinstance(item, dict)][:20]
+                             + [{"text": _clean_text(product_id, 100), "source": "from your orders or you told me"}
+                                for product_id in _clean_list(ctx.get("usual_product_ids"), 20)],
+            "notes": [{"text": _clean_text(x.get("text"), 200), "source": _clean_text(x.get("source"), 60)}
+                      for x in (ctx.get("notes") or []) if isinstance(x, dict)][:20],
+            "memories": [{"text": _clean_text(x.get("text"), 160),
+                          "source": _clean_text(x.get("source_label") or x.get("source"), 60)}
+                         for x in (ctx.get("memories") or []) if isinstance(x, dict)][:20],
+            "text": _clean_text(text, 2_000)}
 
 
 def _compact_kitchen(buyer_id: str) -> dict:
@@ -188,7 +238,8 @@ def _compact_kitchen(buyer_id: str) -> dict:
     covers = ctx.get("covers") if isinstance(ctx, dict) else {}
     return {"covers": {"avg_per_weekday": (covers or {}).get("avg_per_weekday", {}) if isinstance(covers, dict) else {}},
             "usual_products": [{"name": _clean_text(x.get("name"), 100), "unit": _clean_text(x.get("unit"), 20)}
-                               for x in (ctx.get("usual_products") or []) if isinstance(x, dict)][:10],
+                               for x in (ctx.get("usual_products") or [])
+                               if isinstance(x, dict) and x.get("is_usual", True)][:10],
             "leftovers_recent": [{"date": _clean_text(x.get("date"), 20), "item": _clean_text(x.get("item"), 80),
                                   "amount": x.get("amount"), "unit": _clean_text(x.get("unit"), 20)}
                                  for x in (ctx.get("leftovers_recent") or []) if isinstance(x, dict)][:20]}
@@ -345,6 +396,13 @@ def _sanitize_action(raw, message: str, today: date) -> dict | None:
     action = {"intent": intent, "slots": clean, "question": _clean_text(raw.get("question"), 240) or None,
               "choices": _sanitize_choices(raw.get("choices")), "reply": _clean_text(raw.get("reply"), 500) or None,
               "topic": _clean_topic(raw.get("topic")), "interpretation": interpretation}
+    if isinstance(raw.get("proposed_fact"), dict):
+        action["proposed_fact"] = raw["proposed_fact"]
+    if intent == "out_of_scope" and not _NON_FOOD.search(message) and not clean["items"]:
+        intent = "unclear"
+        action["intent"] = intent
+        action["reply"] = "Sorry, I didn't catch that, could you say it again?"
+        action["question"] = action["reply"]
     if intent == "unrealistic":
         guests = clean["guests"] or 0
         action["reply"] = f"{guests:,} guests is beyond one kitchen; shall I plan for 500?"
@@ -367,6 +425,115 @@ def _fallback_items(message: str) -> list[dict]:
                 if set(pair[0]) <= set(item.get("claims") or []) and set(pair[1]) <= set(item.get("exclude_allergens") or [])]
         out.append({"name": item["query"], "amount": item.get("amount"), "unit": _unit(item.get("unit")), "diets": tags})
     return out
+
+
+def _standing_day(message: str) -> tuple[str | None, re.Match | None]:
+    if not _STANDING_TRIGGER.search(message):
+        return None, None
+    matches = []
+    for word, day in sorted(_DAY_WORDS.items(), key=lambda item: -len(item[0])):
+        if match := re.search(rf"\b{re.escape(word)}\w*\b", message, re.I):
+            matches.append((match.start(), day, match))
+    if not matches:
+        return None, None
+    _, day, marker = min(matches, key=lambda item: item[0])
+    return day, marker
+
+
+def _standing_remainder(message: str, marker: re.Match | None) -> str:
+    if marker is None:
+        return ""
+    remainder = message[:marker.start()] + " " + message[marker.end():]
+    # The extra clause is the part after "plus/add/also add"; it is deliberately parsed again so an unquantified
+    # extra becomes an assumed line or an amount question rather than disappearing with the standing-order phrase.
+    if match := re.search(r"\b(?:plus|add|adding|also\s+add|also\s+want\s+to\s+add|lisää|lisätään|lisäksi|myös)\b\s+(.+)$",
+                          remainder, re.I):
+        return match.group(1).strip(" .")
+    return remainder.strip(" .")
+
+
+def _standing_item(line: dict) -> dict | None:
+    text = _clean_text(line.get("text"), _MAX_NAME)
+    if not text:
+        return None
+    parsed = agent.fallback_parse(text)
+    first = parsed[0] if parsed else {}
+    product_id = str(line.get("product_id")) if line.get("product_id") is not None else None
+    product = catalogue.get(product_id) if product_id else None
+    name = (product or {}).get("name_en") or (product or {}).get("name_fi") or first.get("query") or text
+    amount = line.get("quantity") if line.get("quantity") is not None else first.get("amount")
+    unit = _unit(line.get("unit")) or _unit(first.get("unit"))
+    return {"name": _clean_text(name, _MAX_NAME), "amount": amount, "unit": unit, "_standing_order": True,
+            "_standing_text": text}
+
+
+def _same_standing_item(candidate: dict, standing: dict, *, name_only: bool = False) -> bool:
+    candidate_words = set(re.findall(r"[\wäöå]+", str(candidate.get("name") or "").lower()))
+    standing_words = set(re.findall(r"[\wäöå]+", str(standing.get("name") or "").lower()))
+    if not candidate_words or not standing_words or not (candidate_words <= standing_words or standing_words <= candidate_words):
+        return False
+    if name_only:
+        return True
+    if candidate.get("amount") is None or standing.get("amount") is None:
+        return False
+    return (float(candidate["amount"]) == float(standing["amount"])
+            and (_unit(candidate.get("unit")) or candidate.get("unit")) == (_unit(standing.get("unit")) or standing.get("unit")))
+
+
+def _expand_standing_order(action: dict, message: str, buyer_id: str) -> dict:
+    day, marker = _standing_day(message)
+    if not day:
+        return action
+    saved = next((order for order in profile.standing_orders(buyer_id) if order.get("weekday") == day), None)
+    if saved:
+        standing_items = [item for line in saved.get("lines") or [] if isinstance(line, dict)
+                          if (item := _standing_item(line))]
+        slots = dict(action.get("slots") or _default_slots(message))
+        current = [item for item in slots.get("items") or [] if isinstance(item, dict) and item.get("name")]
+        current = [item for item in current if not re.search(r"\b(?:usual|regular|normal|order|tilaus|tavallinen)\b", item["name"], re.I)]
+        fallback_extras = _fallback_items(_standing_remainder(message, marker))
+        extras = current or fallback_extras
+        if current:
+            for standing_item in standing_items:
+                exact = next((index for index, item in enumerate(extras)
+                              if _same_standing_item(item, standing_item)), None)
+                if exact is not None:
+                    extras.pop(exact)
+                elif not fallback_extras:
+                    named = next((index for index, item in enumerate(extras)
+                                  if _same_standing_item(item, standing_item, name_only=True)), None)
+                    if named is not None:
+                        extras.pop(named)
+        slots["items"] = standing_items + extras
+        action = dict(action, intent="order_items", slots=slots,
+                      interpretation=action.get("interpretation") or f"Expanded your saved {day} standing order.")
+        expanded = [item.get("_standing_text") or item.get("name") for item in standing_items]
+        expanded += [f"{item['amount']:g} {item['unit']} {item['name']}" if item.get("amount") is not None and item.get("unit")
+                     else item["name"] for item in extras]
+        action["_expanded_text"] = ", ".join(expanded) or message
+        return action
+
+    recent = profile.recent_order_for_weekday(buyer_id, day)
+    day_name = day.capitalize()
+    if recent and recent.get("lines"):
+        lines = ", ".join(line.get("text", "") for line in recent["lines"] if line.get("text"))
+        question = (f"No saved {day_name} standing order exists. I found your most recent {day_name} order "
+                    f"({recent['date']}): {lines}. Use it, or tell me your usual {day_name} order and I'll remember it?")
+        choices = [{"label": f"Use the most recent {day_name} order", "amount": None, "unit": None},
+                   {"label": f"Tell me the usual {day_name} order", "amount": None, "unit": None}]
+    else:
+        question = f"No saved {day_name} standing order exists. Tell me your usual {day_name} order and I'll remember it."
+        choices = [{"label": f"Tell me the usual {day_name} order", "amount": None, "unit": None}]
+    action = dict(action, intent="order_items", slots=dict(action.get("slots") or _default_slots(message)),
+                  question=question, choices=choices,
+                  proposed_fact={"kind": "preference_note", "key": f"standing_order:{day}",
+                                 "value": {"weekday": day, "lines": []}, "source": "chef confirmation required"})
+    action["slots"]["items"] = []
+    return action
+
+
+def _apply_standing_expansion(actions: list[dict], message: str, buyer_id: str) -> list[dict]:
+    return [_expand_standing_order(action, message, buyer_id) for action in actions]
 
 
 def _topic(message: str) -> str | None:
@@ -400,8 +567,12 @@ def _fallback_action(message: str, today: date, last_card: dict | None) -> dict:
         intent = "urgent"
     elif items or re.search(r"\d", message):
         intent = "order_items"
-    else:
+    elif _NON_FOOD.search(message):
         intent = "out_of_scope"
+    elif _GREETING.search(message):
+        intent = "greeting"
+    else:
+        intent = "unclear"
     slots = _default_slots(message)
     slots["items"] = [{k: item.get(k) for k in ("name", "amount", "unit")} for item in items]
     slots["diets"] = list(dict.fromkeys(tag for item in items for tag in item.get("diets") or []))
@@ -413,11 +584,14 @@ def _fallback_action(message: str, today: date, last_card: dict | None) -> dict:
     topic = _topic(message)
     action = {"intent": intent, "slots": slots, "question": None, "choices": [], "reply": None, "topic": topic,
               "interpretation": None}
+    if intent == "unclear":
+        action["reply"] = "Sorry, I didn't catch that, could you say it again?"
+        action["question"] = action["reply"]
     return action
 
 
 def _fallback_result(message: str, buyer_id: str, turns: list[dict], last_card: dict | None, today: date) -> dict:
-    action = _fallback_action(message, today, last_card)
+    action = _expand_standing_order(_fallback_action(message, today, last_card), message, buyer_id)
     return {"actions": [action], "source": "fallback"}
 
 
@@ -486,5 +660,6 @@ async def understand(message: str, buyer_id: str, turns: list[dict], last_card: 
     actions = _normalise(raw, message, today) if raw is not None else None
     if actions is None:
         return _fallback_result(message, buyer_id, turns, last_card, today)
+    actions = _apply_standing_expansion(actions, message, buyer_id)
     return {"actions": actions, "source": "gemini"}
 

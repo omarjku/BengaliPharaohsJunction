@@ -536,7 +536,7 @@ class OnboardingRequest(BaseModel):
     Without confirm=true nothing is stored: the response is a preview to show and edit."""
     model_config = ConfigDict(extra="forbid")
     answers: dict[str, Any] | None = Field(default=None, max_length=20)
-    about: str | None = Field(default=None, max_length=2000)
+    about: str | None = Field(default=None, max_length=6000)
     confirm: bool = False
 
 
@@ -567,7 +567,8 @@ async def post_onboarding(req: OnboardingRequest, who: Approver) -> dict:
     proposed, unclear = (await profile.from_about(req.about)) if req.about else ({}, [])
     proposed = {**proposed, **answers}  # what the chef typed beats what Gemini read
     questions = {q["id"]: q["question"] for q in profile.onboarding(who.buyer_id)["questions"]}
-    return {"stored": False, "proposed": [{"id": k, "question": questions[k], "value": v} for k, v in proposed.items()],
+    return {"stored": False, "proposed": [{"id": k, "question": questions.get(k, "What else should I remember about your kitchen?"), "value": v}
+                                           for k, v in proposed.items()],
             "unclear": unclear, "hints": profile.hints(proposed)}
 
 

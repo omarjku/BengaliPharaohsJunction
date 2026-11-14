@@ -60,7 +60,8 @@ def test_menu_without_guests_asks_and_never_guesses(shop1, monkeypatch):  # noqa
 
 def test_unclear_no_date_and_conflicting_dates_ask(shop1, monkeypatch):  # noqa: F811
     route(monkeypatch, "unclear")
-    assert post("hello there")["question"] == "I can only help with ordering from Valio. What do you need?"
+    greeting = post("hello there")
+    assert greeting["question"] is None and greeting["reply"].startswith("Hello")
     route(monkeypatch, "order")
     assert post("20 kg butter", requested=None)["question"] == "For which delivery day?"
     assert post("20 kg butter tomorrow", requested=None)["date_source"] == "text"

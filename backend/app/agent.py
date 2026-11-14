@@ -711,9 +711,20 @@ _QTY_LIKE = re.compile(r"\d[\d,. ]*\s*(l|dl|cl|ml|kg|g|pcs|kpl|x|litra\w*|kilo\w
 
 
 def unparsed_clauses(text: str, items: list[dict]) -> list[str]:
-    """Clauses that carry a quantity but no parsed item comes from: never silently dropped (QA PI-02)."""
+    """Clauses with no grounded item, including a product named without a quantity: never silently drop speech."""
     covered = set().union(*(grounding(text, anchored(text, it))[1] for it in items)) if items else set()
-    return [c.strip() for i, c in enumerate(re.split(_SPLIT, text)) if i not in covered and _QTY_LIKE.search(c)]
+    stop = {"and", "or", "plus", "also", "please", "i", "we", "need", "want", "to", "for", "on", "by",
+            "delivered", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+            "maanantai", "tiistai", "keskiviikko", "torstai", "perjantai", "lauantai", "sunnuntai"}
+    out = []
+    for i, clause in enumerate(re.split(_SPLIT, text)):
+        clean = clause.strip(" .")
+        if i in covered or not clean:
+            continue
+        words = set(re.findall(r"[\wäöå]+", clean.lower()))
+        if _QTY_LIKE.search(clean) or words - stop:
+            out.append(clean)
+    return out
 
 
 async def same_product(source: str, query: str) -> float | None:

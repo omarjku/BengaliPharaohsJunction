@@ -203,6 +203,7 @@ def _history(buyer_id: str, now: datetime | None = None) -> tuple[dict[str, dict
             current["_revenue_source"] = CHEF_SOURCE
         if row.get("leftovers"):
             current["leftovers"] = row["leftovers"]
+            current["_leftovers_source"] = CHEF_SOURCE
         current["source"] = CHEF_SOURCE if current.get("source") == CHEF_SOURCE else current.get("source", CHEF_SOURCE)
     return rows, bool(seed), chef_used, start, end
 
@@ -244,7 +245,9 @@ def _usual_products(buyer_id: str, confirmed: list[dict]) -> list[dict]:
     quantities = defaultdict(list)
     units = defaultdict(list)
     times = Counter()
+    from_profile = set()
     for order in confirmed:
+        seen_in_order = set()
         for line in order.get("lines", []):
             pid = str(line.get("product_id")) if line.get("product_id") is not None else None
             if not pid:
@@ -254,12 +257,15 @@ def _usual_products(buyer_id: str, confirmed: list[dict]) -> list[dict]:
                 quantities[pid].append(quantity)
             if line.get("unit"):
                 units[pid].append(line["unit"])
-            times[pid] += 1
+            if pid not in seen_in_order:
+                times[pid] += 1
+                seen_in_order.add(pid)
     for memory in profile._memories(buyer_id):
         value = memory.value if isinstance(memory.value, dict) else {}
         pid = value.get("product_id")
         if pid:
             str_pid = str(pid)
+            from_profile.add(str_pid)
             quantities.setdefault(str_pid, [])
             units.setdefault(str_pid, [])
             times.setdefault(str_pid, 0)
@@ -271,7 +277,9 @@ def _usual_products(buyer_id: str, confirmed: list[dict]) -> list[dict]:
             typical = int(typical)
         unit = Counter(units[pid]).most_common(1)[0][0] if units[pid] else p.get("sales_unit")
         out.append({"product_id": pid, "name": p.get("name_en") or p.get("name_fi") or pid,
-                    "typical_quantity": typical, "unit": unit, "times_ordered": times[pid]})
+                    "typical_quantity": typical, "unit": unit, "times_ordered": times[pid],
+                    "is_usual": pid in from_profile or times[pid] >= 2,
+                    "source_label": "you told me" if pid in from_profile else "from your orders"})
     return out
 
 
@@ -382,7 +390,8 @@ def _simulated_order_history(buyer_id: str) -> dict | None:
         if products:
             weekdays[key] = {"orders": products[0]["weekday_orders"], "products": products,
                              "co_occurrences": co_occurrences}
-    return {"simulated": True, "source": SIMULATED_ORDER_SOURCE, "weekdays": weekdays}
+    return {"simulated": True, "source": SIMULATED_ORDER_SOURCE, "source_label": "simulated demo history",
+            "weekdays": weekdays}
 
 
 def _label(sources: set[str]) -> str:
@@ -401,10 +410,16 @@ def kitchen_context(buyer_id: str, now: datetime | None = None) -> dict:
     rows, seeded, chef_used, start, end = _history(buyer_id, now)
     confirmed = _confirmed(buyer_id)
     weekday_values = {key: [] for key in DAY_KEYS}
+    weekday_sources = {key: set() for key in DAY_KEYS}
     for row in rows.values():
         if row.get("covers") is not None:
-            weekday_values[DAY_KEYS[date.fromisoformat(row["date"]).weekday()]].append(row["covers"])
+            key = DAY_KEYS[date.fromisoformat(row["date"]).weekday()]
+            weekday_values[key].append(row["covers"])
+            weekday_sources[key].add(row.get("_covers_source") or row.get("source"))
     avg = {key: (round(sum(values) / len(values), 1) if values else None) for key, values in weekday_values.items()}
+    avg_source = {key: ("you told me" if CHEF_SOURCE in weekday_sources[key] else
+                        "simulated demo history" if SEED_SOURCE in weekday_sources[key] else None)
+                  for key in DAY_KEYS}
     pattern = SEEDS.get(buyer_id) or {}
     busiest = list(pattern.get("busiest_days") or [])
     if not busiest:
@@ -416,6 +431,9 @@ def kitchen_context(buyer_id: str, now: datetime | None = None) -> dict:
     prior_rows = [rows.get(d.isoformat()) for d in prior_days]
     last_covers_values = [r["covers"] for r in last_rows if r and r.get("covers") is not None]
     prior_covers_values = [r["covers"] for r in prior_rows if r and r.get("covers") is not None]
+    last_cover_sources = {r.get("_covers_source") for r in last_rows if r and r.get("covers") is not None}
+    last_cover_source = ("you told me" if CHEF_SOURCE in last_cover_sources else
+                         "simulated demo history" if SEED_SOURCE in last_cover_sources else None)
     last_covers = sum(last_covers_values)
     prior_covers = sum(prior_covers_values)
     trend = round((last_covers - prior_covers) / prior_covers * 100, 1) if last_covers_values and prior_covers else None
@@ -429,7 +447,9 @@ def kitchen_context(buyer_id: str, now: datetime | None = None) -> dict:
         row = rows.get(when.isoformat())
         for item in (row or {}).get("leftovers", []):
             leftovers.append({"date": when.isoformat(), "item": item["item"], "amount": item.get("amount"),
-                              "unit": item.get("unit")})
+                              "unit": item.get("unit"),
+                              "source_label": "you told me" if (row or {}).get("_leftovers_source") == CHEF_SOURCE
+                              else "simulated demo history"})
     spend = _spend(confirmed, today)
     sources = set()
     if seeded:
@@ -440,12 +460,21 @@ def kitchen_context(buyer_id: str, now: datetime | None = None) -> dict:
         sources.add(ORDERS_SOURCE)
     usual = _usual_products(buyer_id, confirmed)
     context = {"buyer_id": buyer_id, "period": {"from": start.isoformat(), "to": end.isoformat()},
-            "covers": {"avg_per_weekday": avg, "busiest_days": busiest, "last_7_days": last_covers,
-                       "trend_pct": trend},
-            "revenue": {"last_7_days_eur": last_revenue, "source": _label(revenue_sources)},
+            "covers": {"avg_per_weekday": avg, "source_by_weekday": avg_source,
+                       "source_label": last_cover_source,
+                       "busiest_days_source_label": ("simulated demo history" if pattern and busiest else
+                                                      "you told me" if busiest else None),
+                       "busiest_days": busiest, "last_7_days": last_covers, "trend_pct": trend},
+            "revenue": {"last_7_days_eur": last_revenue, "source": _label(revenue_sources),
+                        "source_label": ("you told me" if CHEF_SOURCE in revenue_sources else
+                                         "simulated demo history" if SEED_SOURCE in revenue_sources else None)},
             "leftovers_recent": leftovers, "spend": {"per_week_cents": spend, "source": ORDERS_SOURCE},
             "usual_products": usual, "sources": [s for s in (SEED_SOURCE, CHEF_SOURCE, ORDERS_SOURCE) if s in sources],
             "simulated": seeded}
+    context["spend"]["source_label"] = "from your orders" if confirmed else "no source"
+    context["sources"] += [label for label in ("simulated demo history", "you told me", "from your orders")
+                            if label not in context["sources"] and ((label == "simulated demo history" and seeded)
+                            or (label == "you told me" and chef_used) or (label == "from your orders" and confirmed))]
     simulated_orders = _simulated_order_history(buyer_id)
     if simulated_orders is not None:
         context["simulated_order_history"] = simulated_orders
@@ -466,14 +495,24 @@ def summary(buyer_id: str) -> str:
     covers = ctx["covers"]["last_7_days"]
     revenue = ctx["revenue"]["last_7_days_eur"]
     revenue_text = f"EUR {revenue:,.2f}" if revenue is not None else "no revenue figure"
-    busy = ", ".join(ctx["covers"]["busiest_days"]) or "no busiest day yet"
-    leftovers = ", ".join(dict.fromkeys(x["item"] for x in ctx["leftovers_recent"][:6])) or "none recorded"
+    busy_names = ", ".join(ctx["covers"]["busiest_days"]) or "no busiest day yet"
+    busy_source = ctx["covers"].get("busiest_days_source_label") or "no source"
+    busy = f"{busy_names} ({busy_source})"
+    leftovers = ", ".join(dict.fromkeys(f"{x['item']} ({x.get('source_label') or 'no source'})"
+                                       for x in ctx["leftovers_recent"][:6])) or "none recorded"
     spend = sum(x["cents"] for x in ctx["spend"]["per_week_cents"][-1:]) / 100
-    usual = ", ".join(x["name"] for x in ctx["usual_products"][:3]) or "none recorded"
-    sentences = [f"In the last 7 days, the kitchen recorded {covers} covers and {revenue_text} in revenue.",
-                 f"Busiest days are {busy}; recent leftovers are {leftovers}, latest-week front-door spend is EUR {spend:,.2f}, and usual products include {usual}."]
+    usual_names = [f"{x['name']} ({x.get('source_label') or 'no source'})" for x in ctx["usual_products"]
+                   if x.get("is_usual")]
+    usual = ", ".join(usual_names[:3]) or "none recorded"
+    cover_source = ctx["covers"].get("source_label")
+    revenue_source = ctx["revenue"].get("source_label")
+    spend_source = ctx["spend"].get("source_label")
+    sentences = [f"In the last 7 days, the kitchen recorded {covers} covers ({cover_source or 'no source'}) and "
+                 f"{revenue_text} in revenue ({revenue_source or 'no source'}).",
+                 f"Busiest days are {busy}; recent leftovers are {leftovers}, latest-week front-door spend is EUR "
+                 f"{spend:,.2f} ({spend_source}), and usual products include {usual}."]
     if ctx["simulated"]:
-        sentences.append("This history is simulated demo data.")
+        sentences.append("Only figures labelled simulated demo history come from the simulated demo history.")
     return " ".join(sentences)
 
 

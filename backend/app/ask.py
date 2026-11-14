@@ -426,8 +426,15 @@ def _action_date(action: dict, requested: date | None, today: date) -> tuple[dat
 def _parsed_action(action: dict, source: str, text: str) -> tuple[dict, bool]:
     slots = action.get("slots") or {}
     tags = [tag for tag in slots.get("diets") or [] if tag in agent.DIETARY]
-    items = [agent._item(item["name"], item.get("amount"), item.get("unit"), tags, source=item["name"])
-             for item in slots.get("items") or [] if item.get("name")]
+    items = []
+    for item in slots.get("items") or []:
+        if not item.get("name"):
+            continue
+        parsed = agent._item(item["name"], item.get("amount"), item.get("unit"), tags, source=item["name"])
+        if item.get("_standing_order"):
+            parsed.update(amount_assumed=True,
+                          amount_assumption="from your saved standing order; confirm this remembered line before ordering")
+        items.append(parsed)
     return {"summary": text, "items": items}, source == "gemini"
 
 
@@ -475,7 +482,8 @@ def _kitchen_reply(text: str, context: dict) -> str:
         names = ", ".join(dict.fromkeys(str(item.get("item")) for item in leftovers if item.get("item")))
         return f"Recent leftovers are {names}." if names else "There are no recent leftovers recorded."
     if "usual" in low:
-        names = ", ".join(str(item.get("name")) for item in (context or {}).get("usual_products") or [] if item.get("name"))
+        names = ", ".join(str(item.get("name")) for item in (context or {}).get("usual_products") or []
+                           if item.get("name") and item.get("is_usual", True))
         return f"Usual products include {names}." if names else "There are no usual products recorded yet."
     if "friday" in low or "perjantai" in low:
         value = covers.get("fri")
@@ -505,6 +513,14 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
                           meant: float | None = None) -> dict:
     intent = action["intent"]
     slots = action.get("slots") or {}
+    if intent == "unclear":
+        reply = "Sorry, I didn't catch that, could you say it again?"
+        return _simple_card(intent, reply, question=reply)
+    if action.get("question") and not (slots.get("items") or slots.get("dishes")):
+        card = _simple_card(intent, action["question"], question=action["question"], choices=action.get("choices"))
+        if action.get("proposed_fact"):
+            card["proposed_fact"] = action["proposed_fact"]
+        return card
     if intent == "greeting":
         return _simple_card(intent, action.get("reply") or "Hello! What do you need for the kitchen?")
     if intent == "out_of_scope":
@@ -600,8 +616,9 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
                 body.update(covers_source="kitchen", covers_assumption=context_plan["assumption"],
                             kitchen_leftovers=context_plan["leftovers"], kitchen_note=_leftovers_note(context_plan["leftovers"]))
         return body
-    parsed, parsed_by_gemini = _parsed_action(action, source, text)
-    body = await agent.run(text, when, buyer_id, pre={"parsed": (parsed, parsed_by_gemini), "steer": steer,
+    request_text = action.get("_expanded_text") or text
+    parsed, parsed_by_gemini = _parsed_action(action, source, request_text)
+    body = await agent.run(request_text, when, buyer_id, pre={"parsed": (parsed, parsed_by_gemini), "steer": steer,
                                                        "steer_checked": steer is not None, "meant": meant,
                                                        "meant_checked": meant is not None})
     try:
@@ -718,8 +735,11 @@ async def _route(text, requested, buyer_id, today, stated, guess, t0, given_cove
         if context_plan is not None:
             covers = context_plan["covers"]
     if intent == "unclear":  # off-topic first: "what's the weather like?" isn't a date question (QA round 2)
-        question = (f"I order food and kitchen supplies from Valio, so I can't help with {topic}. What do you need for "
-                    "the kitchen?" if topic else "I can only help with ordering from Valio. What do you need?")
+        if understand._NON_FOOD.search(text):
+            question = (f"I order food and kitchen supplies from Valio, so I can't help with {topic or 'that'}. "
+                        "What do you need for the kitchen?")
+        else:
+            question = "Sorry, I didn't catch that, could you say it again?"
         return _ask(intent, covers, requested or stated, "request" if requested else "text" if stated else None,
                     question, C.QTY_AMBIGUOUS,
                     "Name the products and amounts, e.g. '20 kg butter for Monday', or paste a menu with the number "
