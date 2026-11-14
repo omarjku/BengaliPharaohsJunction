@@ -394,9 +394,18 @@ class PortionOverride(BaseModel):
     """The chef's own portion for one ingredient (the menu screen's editable grams per portion)."""
     model_config = ConfigDict(extra="forbid")
     ingredient: str = Field(min_length=1, max_length=80, examples=["butter"])
-    per_cover: float = Field(gt=0, le=5000, examples=[25])
-    unit: Literal["L", "dl", "cl", "ml", "kg", "g", "pcs"] = Field(examples=["g"])
+    per_cover: float | None = Field(default=None, gt=0, le=5000, examples=[25])
+    unit: Literal["L", "dl", "cl", "ml", "kg", "g", "pcs"] | None = Field(default=None, examples=["g"])
     dish: str | None = Field(default=None, max_length=120, description="Only in this dish; default: every dish.")
+    spare_percent: float | None = Field(default=None, ge=0, le=20, description="The chef's spare for this ingredient.")
+
+    @model_validator(mode="after")
+    def _something(self):
+        if (self.per_cover is None) != (self.unit is None):
+            raise ValueError("per_cover and unit go together")
+        if self.per_cover is None and self.spare_percent is None:
+            raise ValueError("set per_cover + unit, or spare_percent")
+        return self
 
 
 class MenuRequest(BaseModel):

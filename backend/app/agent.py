@@ -1043,6 +1043,10 @@ async def none() -> None:
     return None
 
 
+async def empty() -> dict:
+    return {}
+
+
 async def _given(value, make):
     """`value` if the caller precomputed it, else await make() (a factory: no coroutine is built when unused)."""
     return value if value is not None else await make()
@@ -1070,6 +1074,92 @@ def recent_duplicate(buyer_id: str, lines: list[dict], now: datetime, requested:
                 and {(li["product_id"], float(li["quantity"])) for li in o["lines"]} == want):
             return o
     return None
+
+
+# --- Kitchen loss ("buy a little extra to be safe"): Gemini proposes, code clamps, the kitchen's level scales it.
+SPARE_MAX = 20.0  # percent, hard ceiling whatever Gemini says
+SPARE_DEFAULT_CAP = 10.0  # no spare level in the profile: Gemini's proposal, at most this
+SPARE_LEVELS = {"none": 0.0, "low": 0.5, "normal": 1.0, "high": 1.5}
+SPARE_PROMPT = UNTRUSTED + """
+You estimate kitchen loss for a restaurant's purchasing agent: how much extra (spare_percent, 0-20) to buy for each
+ingredient so the kitchen doesn't run short, with one short reason a chef would accept. Think about the ingredient's
+role in the dish: fragile or technique-heavy uses (baking, pastry, emulsions, anything binned if imperfect) → more;
+trimmed produce and fish → yield loss; shelf-stable or simple ingredients → little or none; expensive AND highly
+perishable → keep it small, because unused spare is waste. Answer for every ingredient listed, by its exact name."""
+_SPARE_SCHEMA = {"type": "object", "required": ["items"], "properties": {"items": {"type": "array", "items": {
+    "type": "object", "required": ["ingredient", "spare_percent", "reason"], "properties": {
+        "ingredient": {"type": "string"}, "spare_percent": {"type": "number"}, "reason": {"type": "string"}}}}}}
+
+
+def spare_level(buyer_id: str) -> str | None:
+    """The kitchen's spare level from its profile (a preference_note memory 'spare_level'), or None if not set."""
+    for m in profile._memories(buyer_id):
+        if m.kind.value == "preference_note" and m.key == "spare_level" and m.value.get("level") in SPARE_LEVELS:
+            return m.value["level"]
+    return None
+
+
+async def spare_proposals(items: list[dict], context: str) -> dict[str, tuple[float, str]]:
+    """{ingredient key: (percent 0-20, reason)} from Gemini (cached like every reading); {} if it can't answer."""
+    names = [{"ingredient": it["query"], "for": it.get("dishes") or []} for it in items]
+    out = await _gemini(SPARE_PROMPT, _wrap(json.dumps({"context": context[:2000], "ingredients": names},
+                                                       ensure_ascii=False)), _SPARE_SCHEMA, {"thinkingBudget": 0})
+    got = {}
+    for x in (out or {}).get("items") or []:
+        try:
+            pct = float(x.get("spare_percent"))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(pct):
+            got[_spare_key(str(x.get("ingredient") or ""))] = (min(max(pct, 0.0), SPARE_MAX), str(x.get("reason") or "")[:160])
+    return got
+
+
+def _spare_key(name: str) -> str:
+    return " ".join(sorted({_singular(w) for w in re.findall(r"[\wäöå]+", name.lower())}))
+
+
+def spare_target(proposal: tuple[float, str] | None, level: str | None) -> tuple[float, str, str]:
+    """→ (percent, reason, source) after the kitchen's level and the clamps."""
+    pct, why = proposal or (0.0, "Gemini proposed no spare for this one.")
+    if level is None:
+        return min(pct, SPARE_DEFAULT_CAP), why, "gemini"
+    return min(pct * SPARE_LEVELS[level], SPARE_MAX), why, "kitchen"
+
+
+def rounding_spare(needed: float, qty: dict | None) -> float:
+    """Percent extra that rounding up to whole sales units already gives (packs count as spare first)."""
+    d = (qty or {}).get("delivered")
+    return round(max(0.0, (d - needed) / needed * 100), 1) if d and needed else 0.0
+
+
+async def spare_suggestions(chosen: list[dict], items: list[dict], text: str, buyer_id: str) -> None:
+    """Direct orders: never add anything silently (the chef asked for exactly this); offer one tap of spare per chosen
+    line, only when the kitchen set a spare level other than 'none'."""
+    level = spare_level(buyer_id)
+    if not chosen or level in (None, "none"):
+        return
+    props = await spare_proposals([items[ln["item"]] for ln in chosen], text)
+    for ln in chosen:
+        it, q = items[ln["item"]], ln["quantity"]
+        if not q or q.get("quantity") is None or not it.get("amount") or not ln.get("quote"):
+            continue
+        pct, why, _ = spare_target(props.get(_spare_key(it["query"])), level)
+        have = rounding_spare(it["amount"], q)
+        unit = it["unit"]
+        if have >= pct:
+            ln["spare_suggestion"] = {"percent": round(pct, 1), "extra_quantity": 0, "unit": unit, "extra_cost_cents": 0,
+                                      "reason": f"Packs already give {gate._qty(q['delivered'])} {unit} for your "
+                                                f"{gate._qty(it['amount'])} {unit}."}
+            continue
+        more = resolve(ln["product"], it["amount"] * (1 + pct / 100), unit)
+        if more.get("quantity") is None or more["quantity"] <= q["quantity"]:
+            continue
+        price = gate.eur_to_cents(ln["quote"]["price"])
+        ln["spare_suggestion"] = {"percent": round(pct, 1),
+                                  "extra_quantity": round((more.get("delivered") or 0) - (q.get("delivered") or 0), 3),
+                                  "unit": unit, "extra_sales_units": more["quantity"] - q["quantity"],
+                                  "extra_cost_cents": round(price * (more["quantity"] - q["quantity"])), "reason": why}
 
 
 async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None) -> dict:
@@ -1236,6 +1326,9 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
         audit_id = audit(decision)
     for ln in lines:
         ln.pop("_weakest", None)  # internal: the weakest question is in confidence_reason and the audit facts
+    await spare_suggestions(chosen, request["items"], text, buyer_id)  # an offer only: nothing above changes
+    sug = [ln["spare_suggestion"] for ln in chosen if ln.get("spare_suggestion")]
     return {"request": request, "lines": lines, "decision": decision.model_dump(mode="json"), "order": order,
+            "spare_suggestion": sug[0] if len(chosen) == 1 and sug else None,
             "audit_id": audit_id,  # lines held back for their own reasons: each gets a next step (none if the
             "held_items": [] if request_blocked else sorted(res["failed_items"])}  # whole request was held)
