@@ -154,11 +154,11 @@ IdemKey = Annotated[str | None, Header(pattern=r"^[\x21-\x7e]{1,255}$",
                                                    "original response instead of acting twice (24 h).")]
 
 
-async def _once(response: Response, scope: str, key: str | None, request: dict, run) -> dict:
+async def _once(response: Response, who: auth.Principal, scope: str, key: str | None, request: dict, run) -> dict:
     """Run `run` once per Idempotency-Key (scope = caller + route); a replay says so in Idempotent-Replayed."""
     if key is None:
         return await run()
-    body, replayed = await orders.idempotent(f"{scope}:{key}", hashlib.sha256(signing.canonical(request)).hexdigest(), run)
+    body, replayed = await orders.idempotent(who.buyer_id, f"{scope}:{key}", hashlib.sha256(signing.canonical(request)).hexdigest(), run)
     if replayed:
         response.headers["Idempotent-Replayed"] = "true"
     return body
@@ -216,7 +216,7 @@ async def place_order(req: OrderRequest, who: Agent, response: Response, idempot
     always with reasons, suggested fixes and alternatives. Every run is audited. Needs X-Agent-Key."""
     mandate = _mandate_for(who, req)
     _catalogue_ready()
-    return await _once(response, f"agent:{who.buyer_id}:orders", idempotency_key, req.model_dump(mode="json"),
+    return await _once(response, who, f"agent:{who.buyer_id}:orders", idempotency_key, req.model_dump(mode="json"),
                        lambda: orders.place(who.buyer_id, req.requested_date, req.lines, mandate))
 
 
@@ -239,7 +239,7 @@ async def approve_order(order_id: OrderId, who: Approver, response: Response, bo
     """Human sign-off as the key's owner; re-runs the gate first (cut-offs pass, prices and stock change).
     Needs X-Approver-Key. The approver's name comes from the key, never the body."""
     _catalogue_ready()
-    return await _once(response, f"approver:{who.buyer_id}:approve:{order_id}", idempotency_key,
+    return await _once(response, who, f"approver:{who.buyer_id}:approve:{order_id}", idempotency_key,
                        body.model_dump(mode="json") if body else {},
                        lambda: orders.approve(order_id, who, body.decided_at if body else None))
 
@@ -247,7 +247,7 @@ async def approve_order(order_id: OrderId, who: Approver, response: Response, bo
 @app.post("/api/orders/{order_id}/reject")
 async def reject_order(order_id: OrderId, who: Approver, response: Response, idempotency_key: IdemKey = None) -> dict:
     """Human refusal as the key's owner. Needs X-Approver-Key; a request body is ignored."""
-    return await _once(response, f"approver:{who.buyer_id}:reject:{order_id}", idempotency_key, {},
+    return await _once(response, who, f"approver:{who.buyer_id}:reject:{order_id}", idempotency_key, {},
                        lambda: orders.reject(order_id, who))
 
 

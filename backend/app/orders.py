@@ -25,7 +25,7 @@ from .auth import Principal
 AUDIT_FILE = config.DATA_DIR / "audit.jsonl"
 ORDERS_FILE = config.DATA_DIR / "orders.json"
 IDEM_FILE = config.DATA_DIR / "idempotency.json"
-IDEM_MAX = 50_000  # memory/file bound; oldest keys go first (rate limits keep real traffic far below this)
+IDEM_PER_CALLER = 5_000  # keys kept per caller (agent key's buyer / approver); a caller only ever evicts its own
 IDEM_TTL = timedelta(hours=24)  # how long a retry with the same Idempotency-Key gets the original answer (as Stripe)
 FRONT_DOOR = "valio_front_door"
 
@@ -72,7 +72,7 @@ def _idem_snapshot() -> dict:
     return {k: r for k, r in _idem_store().items() if r["response"] is not None}
 
 
-async def idempotent(scope: str, fingerprint: str, run) -> tuple[dict, bool]:
+async def idempotent(caller: str, scope: str, fingerprint: str, run) -> tuple[dict, bool]:
     """Stripe-style Idempotency-Key. `scope` = caller + route + key; `fingerprint` = hash of the request.
     First call runs and stores its response; a retry with the same request gets that response back (→ True) without
     placing anything again; the same key with a different request → 422; while the first is still running → 409.
@@ -81,8 +81,9 @@ async def idempotent(scope: str, fingerprint: str, run) -> tuple[dict, bool]:
     store, now = _idem_store(), datetime.now(timezone.utc)
     for k in [k for k, r in store.items() if datetime.fromisoformat(r["at"]) < now - IDEM_TTL]:
         del store[k]
-    for k in list(store)[: max(0, len(store) - IDEM_MAX + 1)]:  # insertion order = oldest first
-        if store[k]["response"] is not None:
+    if scope not in store:  # over quota: drop this caller's own oldest finished keys, never another buyer's
+        mine = [k for k, r in store.items() if r.get("caller") == caller and r["response"] is not None]
+        for k in mine[: max(0, len(mine) - IDEM_PER_CALLER + 1)]:  # insertion order = oldest first
             del store[k]
     if rec := store.get(scope):
         if rec["fingerprint"] != fingerprint:
@@ -90,7 +91,7 @@ async def idempotent(scope: str, fingerprint: str, run) -> tuple[dict, bool]:
         if rec["response"] is None:
             raise HTTPException(409, detail="A request with this Idempotency-Key is still running; retry shortly")
         return rec["response"], True
-    store[scope] = {"fingerprint": fingerprint, "response": None, "at": now.isoformat()}
+    store[scope] = {"caller": caller, "fingerprint": fingerprint, "response": None, "at": now.isoformat()}
     try:
         resp = await run()
     except BaseException:
