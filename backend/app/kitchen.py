@@ -7,6 +7,7 @@ import re
 import shutil
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
+from itertools import combinations
 from pathlib import Path
 from statistics import median
 from zoneinfo import ZoneInfo
@@ -19,6 +20,7 @@ HELSINKI = ZoneInfo("Europe/Helsinki")
 SEED = Path(__file__).with_name("kitchen_seed.json")
 SEEDS = json.loads(SEED.read_text())
 SEED_SOURCE = "demo seed (simulated door counter and POS export)"
+SIMULATED_ORDER_SOURCE = "demo seed (simulated order ledger)"
 CHEF_SOURCE = "chef's log"
 ORDERS_SOURCE = "front door orders"
 DAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -273,6 +275,116 @@ def _usual_products(buyer_id: str, confirmed: list[dict]) -> list[dict]:
     return out
 
 
+def _whole_number(value):
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def weekday_product_habits(order_history: list[dict], weekday: int) -> list[dict]:
+    """Calculate per-product weekday habits from an explicit order ledger."""
+    if isinstance(weekday, bool) or not isinstance(weekday, int) or not 0 <= weekday <= 6:
+        return []
+    weekday_orders = []
+    for order in order_history:
+        if not isinstance(order, dict):
+            continue
+        try:
+            when = date.fromisoformat(order.get("date"))
+        except (TypeError, ValueError):
+            continue
+        if when.weekday() == weekday:
+            weekday_orders.append(order)
+    if not weekday_orders:
+        return []
+
+    quantities, spends, units, appearances = defaultdict(list), defaultdict(list), defaultdict(set), Counter()
+    for order in weekday_orders:
+        per_product = defaultdict(list)
+        for line in order.get("lines", []):
+            if not isinstance(line, dict) or line.get("product_id") is None:
+                continue
+            product_id = str(line["product_id"])
+            if not product_id:
+                continue
+            quantity, spend = line.get("quantity"), line.get("spend_cents")
+            if _number(quantity) is None or _number(spend) is None or quantity < 0 or spend < 0:
+                continue
+            unit = line.get("unit")
+            per_product[product_id].append((quantity, spend, unit if isinstance(unit, str) else None))
+        for product_id, lines in per_product.items():
+            order_units = {unit for _, _, unit in lines}
+            if len(order_units) != 1:
+                continue
+            quantity = sum(quantity for quantity, _, _ in lines)
+            spend = sum(spend for _, spend, _ in lines)
+            quantities[product_id].append(quantity)
+            spends[product_id].append(spend)
+            units[product_id].update(order_units)
+            appearances[product_id] += 1
+
+    total = len(weekday_orders)
+    return [{"product_id": product_id,
+             "typical_quantity": _whole_number(median(quantities[product_id])),
+             "typical_spend_cents": _whole_number(median(spends[product_id])),
+             "weekday_orders": total, "times_ordered": appearances[product_id],
+             "order_frequency": appearances[product_id] / total, "unit": next(iter(units[product_id]))}
+            for product_id in sorted(appearances, key=lambda pid: (-appearances[pid], pid))
+            if len(units[product_id]) == 1]
+
+
+def weekday_product_cooccurrences(order_history: list[dict], weekday: int) -> list[dict]:
+    """Calculate weekday product pairs that appeared together in ledger orders."""
+    if isinstance(weekday, bool) or not isinstance(weekday, int) or not 0 <= weekday <= 6:
+        return []
+    pairs, total = Counter(), 0
+    for order in order_history:
+        if not isinstance(order, dict):
+            continue
+        try:
+            when = date.fromisoformat(order.get("date"))
+        except (TypeError, ValueError):
+            continue
+        if when.weekday() != weekday:
+            continue
+        total += 1
+        product_ids = sorted({str(line["product_id"]) for line in order.get("lines", [])
+                              if isinstance(line, dict) and line.get("product_id") is not None
+                              and str(line["product_id"])})
+        pairs.update(combinations(product_ids, 2))
+    return [{"product_ids": list(pair), "weekday_orders": total, "times_coordered": count,
+             "cooccurrence_frequency": count / total}
+            for pair, count in sorted(pairs.items(), key=lambda item: (-item[1], item[0]))]
+
+
+def is_weekday_spend_shock(order_line_spend_cents, baseline_spend_cents) -> bool:
+    """True only when an order line costs more than three times its weekday baseline."""
+    return (_number(order_line_spend_cents) is not None and _number(baseline_spend_cents) is not None
+            and baseline_spend_cents > 0 and order_line_spend_cents > baseline_spend_cents * 3)
+
+
+def ghost_staples(habits: list[dict], cart_product_ids: list, pantry_product_ids: list) -> list[dict]:
+    """Return frequent weekday products that are absent from both the cart and pantry."""
+    excluded = {str(product_id) for product_id in [*cart_product_ids, *pantry_product_ids]}
+    return [habit for habit in habits if isinstance(habit, dict)
+            and _number(habit.get("order_frequency")) is not None
+            and habit["order_frequency"] >= 0.8 and str(habit.get("product_id")) not in excluded]
+
+
+def _simulated_order_history(buyer_id: str) -> dict | None:
+    ledger = (SEEDS.get(buyer_id) or {}).get("simulated_order_ledger")
+    if not isinstance(ledger, list):
+        return None
+    weekdays = {}
+    for weekday, key in enumerate(DAY_KEYS):
+        products = weekday_product_habits(ledger, weekday)
+        co_occurrences = weekday_product_cooccurrences(ledger, weekday)
+        if products:
+            weekdays[key] = {"orders": products[0]["weekday_orders"], "products": products,
+                             "co_occurrences": co_occurrences}
+    return {"simulated": True, "source": SIMULATED_ORDER_SOURCE, "weekdays": weekdays}
+
+
 def _label(sources: set[str]) -> str:
     if CHEF_SOURCE in sources:
         return CHEF_SOURCE
@@ -327,13 +439,17 @@ def kitchen_context(buyer_id: str, now: datetime | None = None) -> dict:
     if confirmed:
         sources.add(ORDERS_SOURCE)
     usual = _usual_products(buyer_id, confirmed)
-    return {"buyer_id": buyer_id, "period": {"from": start.isoformat(), "to": end.isoformat()},
+    context = {"buyer_id": buyer_id, "period": {"from": start.isoformat(), "to": end.isoformat()},
             "covers": {"avg_per_weekday": avg, "busiest_days": busiest, "last_7_days": last_covers,
                        "trend_pct": trend},
             "revenue": {"last_7_days_eur": last_revenue, "source": _label(revenue_sources)},
             "leftovers_recent": leftovers, "spend": {"per_week_cents": spend, "source": ORDERS_SOURCE},
             "usual_products": usual, "sources": [s for s in (SEED_SOURCE, CHEF_SOURCE, ORDERS_SOURCE) if s in sources],
             "simulated": seeded}
+    simulated_orders = _simulated_order_history(buyer_id)
+    if simulated_orders is not None:
+        context["simulated_order_history"] = simulated_orders
+    return context
 
 
 def plan_hint(buyer_id: str, target_date: date) -> dict:

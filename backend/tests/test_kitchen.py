@@ -85,7 +85,7 @@ def test_context_merges_seed_chef_log_orders_and_memories(shop, monkeypatch):
     assert order.status_code == 200 and order.json()["status"] == "confirmed"
     ctx = kitchen.kitchen_context("helsinki-bistro")
     assert set(ctx) == {"buyer_id", "period", "covers", "revenue", "leftovers_recent", "spend", "usual_products",
-                        "sources", "simulated"}
+                        "sources", "simulated", "simulated_order_history"}
     assert ctx["simulated"] is True
     assert "demo seed (simulated door counter and POS export)" in ctx["sources"]
     assert "chef's log" in ctx["sources"] and "front door orders" in ctx["sources"]
@@ -142,3 +142,80 @@ def test_a_report_logged_today_shows_up_in_the_context(shop, monkeypatch):
     assert c.post("/api/kitchen/log", headers={"X-Agent-Key": "agent-chef"}, json={"text": "we fed 120 tonight"}).status_code == 200
     ctx = c.get("/api/kitchen/context", headers={"X-Agent-Key": "agent-chef"}).json()
     assert ctx["covers"]["last_7_days"] == 120 and "chef's log" in ctx["sources"]
+
+
+def test_weekday_habits_use_only_that_weekday_and_keep_no_history_empty():
+    history = [
+        {"date": "2026-11-06", "lines": [{"product_id": "milk", "quantity": 2, "spend_cents": 500}]},
+        {"date": "2026-11-13", "lines": [{"product_id": "milk", "quantity": 4, "spend_cents": 700},
+                                           {"product_id": "bread", "quantity": 1, "spend_cents": 200}]},
+        {"date": "2026-11-12", "lines": [{"product_id": "milk", "quantity": 99, "spend_cents": 9999}]},
+    ]
+
+    assert kitchen.weekday_product_habits([], 4) == []
+    assert kitchen.weekday_product_habits(history, 4) == [
+        {"product_id": "milk", "typical_quantity": 3, "typical_spend_cents": 600,
+         "weekday_orders": 2, "times_ordered": 2, "order_frequency": 1.0, "unit": None},
+        {"product_id": "bread", "typical_quantity": 1, "typical_spend_cents": 200,
+         "weekday_orders": 2, "times_ordered": 1, "order_frequency": 0.5, "unit": None},
+    ]
+
+
+def test_weekday_habits_aggregate_duplicate_lines_per_order_and_skip_mixed_units():
+    history = [
+        {"date": "2026-11-06", "lines": [
+            {"product_id": "milk", "quantity": 1, "spend_cents": 100, "unit": "L"},
+            {"product_id": "milk", "quantity": 2, "spend_cents": 200, "unit": "L"},
+            {"product_id": "flour", "quantity": 1, "spend_cents": 100, "unit": "kg"},
+            {"product_id": "flour", "quantity": 1, "spend_cents": 100, "unit": "L"},
+        ]},
+        {"date": "2026-11-13", "lines": [
+            {"product_id": "milk", "quantity": 5, "spend_cents": 500, "unit": "L"},
+        ]},
+    ]
+
+    assert kitchen.weekday_product_habits(history, 4) == [
+        {"product_id": "milk", "typical_quantity": 4, "typical_spend_cents": 400,
+         "weekday_orders": 2, "times_ordered": 2, "order_frequency": 1.0, "unit": "L"},
+    ]
+
+
+def test_weekday_cooccurrences_include_pairs_seen_together_but_not_unseen_pairs():
+    history = [
+        {"date": "2026-11-06", "lines": [{"product_id": "milk"}, {"product_id": "bread"}]},
+        {"date": "2026-11-13", "lines": [{"product_id": "milk"}, {"product_id": "bread"}]},
+        {"date": "2026-11-20", "lines": [{"product_id": "milk"}]},
+        {"date": "2026-11-27", "lines": [{"product_id": "eggs"}]},
+    ]
+
+    assert kitchen.weekday_product_cooccurrences(history, 4) == [
+        {"product_ids": ["bread", "milk"], "weekday_orders": 4,
+         "times_coordered": 2, "cooccurrence_frequency": 0.5},
+    ]
+
+
+def test_spend_shock_and_ghost_staples_respect_boundaries_and_exclusions():
+    habits = [
+        {"product_id": "milk", "typical_quantity": 3, "typical_spend_cents": 600,
+         "weekday_orders": 5, "times_ordered": 4, "order_frequency": 0.8},
+        {"product_id": "bread", "typical_quantity": 1, "typical_spend_cents": 200,
+         "weekday_orders": 5, "times_ordered": 3, "order_frequency": 0.6},
+    ]
+
+    assert kitchen.is_weekday_spend_shock(1800, 600) is False
+    assert kitchen.is_weekday_spend_shock(1801, 600) is True
+    assert kitchen.ghost_staples(habits, cart_product_ids=[], pantry_product_ids=[]) == [habits[0]]
+    assert kitchen.ghost_staples(habits, cart_product_ids=["milk"], pantry_product_ids=[]) == []
+    assert kitchen.ghost_staples(habits, cart_product_ids=[], pantry_product_ids=["milk"]) == []
+
+
+def test_context_exposes_only_explicitly_labelled_simulated_order_history(shop):
+    context = kitchen.kitchen_context("helsinki-bistro", datetime(2026, 11, 14, tzinfo=HELSINKI))
+
+    assert "simulated_order_history" in context
+    ledger = context["simulated_order_history"]
+    assert ledger["simulated"] is True
+    assert ledger["source"] == "demo seed (simulated order ledger)"
+    assert ledger["weekdays"]["fri"]["products"]
+    assert ledger["weekdays"]["fri"]["co_occurrences"]
+    assert "weekday_product_habits" not in context
