@@ -353,6 +353,11 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
                                    "that it belongs and the amount is reasonable).", None,
                                    "Correct the amount or remove the ingredient before ordering.", check=y))
     lines, chosen = res["lines"], res["chosen"]
+    for ingredient in ingredients:
+        ingredient["diet_checks"] = []
+    for line in lines:
+        if line.get("chosen"):
+            ingredients[line["item"]]["diet_checks"] = list(line.get("diet_checks") or [])
     for ln in lines:
         ln["dishes"] = ingredients[ln["item"]]["dishes"]
         ln.pop("_weakest", None)

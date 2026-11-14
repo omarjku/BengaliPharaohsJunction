@@ -50,6 +50,16 @@ DIETARY = {
     "egg_free": ([], ["AE"]), "nut_free": ([], ["AN", "AP"]), "peanut_free": ([], ["AP"]),
     "soy_free": ([], ["AY"]), "fish_free": ([], ["AF"]),
 }
+DIETARY_LABELS = {tag: list(dict.fromkeys([*claims, *({
+    "milk_free": ["FREE_FROM_MILK"], "egg_free": ["FREE_FROM_EGGS"],
+    "soy_free": ["FREE_FROM_SOY"], "fish_free": ["FREE_FROM_FISH"],
+}.get(tag, []))])) for tag, (claims, _) in DIETARY.items()}
+
+
+def _diet_claims(tag: str) -> list[str]:
+    return DIETARY_LABELS.get(tag, [])
+
+
 _WORDS = {"lactose-free": "lactose_free", "lactose free": "lactose_free", "gluten-free": "gluten_free",
           "gluten free": "gluten_free", "vegan": "vegan", "vegetarian": "vegetarian", "dairy-free": "milk_free",
           "dairy free": "milk_free", "milk-free": "milk_free", "egg-free": "egg_free", "nut-free": "nut_free",
@@ -652,11 +662,11 @@ async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str,
         risks = await diet.at_risk([item["query"]], tags)
     profile_diets = [t for t in profile_diets or [] if t in tags]
     risky = {t for t in tags if item["query"] in risks.get(t, set())}
-    diet_claims = {claim for t in risky for claim in DIETARY[t][0]}
-    profile_claims = {claim for t in risky if t in profile_diets for claim in DIETARY[t][0]}
+    diet_claims = {claim for t in risky for claim in _diet_claims(t)}
+    profile_claims = {claim for t in risky if t in profile_diets for claim in _diet_claims(t)}
     item["exclude_allergens"] = sorted(set(item.get("exclude_allergens") or []) |
                                        {allergen for tag in tags for allergen in DIETARY[tag][1]})
-    all_diet_claims = {claim for t in DIETARY for claim in DIETARY[t][0]}
+    all_diet_claims = {claim for t in DIETARY for claim in _diet_claims(t)}
     base_claims = [claim for claim in item.get("claims") or [] if claim not in all_diet_claims]
     stated_claims = sorted(diet_claims - profile_claims)
     required_claims = sorted(set(base_claims) | diet_claims)
@@ -703,6 +713,7 @@ async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str,
         return hits
 
     hits = await find(required_claims)
+    labelled_hits = list(hits) if required_claims else []
     if required_claims and not hits:
         # A profile label is guidance, and a stated diet is an explicit requirement. If no fully labelled product is
         # the requested kind, search the remaining requirements so the chef gets a real line plus an explicit ASK.
@@ -710,11 +721,15 @@ async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str,
         hits = await find(fallback_claims)
         if hits:
             item["claims"] = fallback_claims
+            if labelled_hits:
+                item["labelled_alternative"] = _name(labelled_hits[0])
             if profile_claims:
                 item["profile_unlabelled"] = sorted(profile_claims)
         else:
             hits = await find(base_claims)
             item["claims"] = base_claims
+            if labelled_hits:
+                item["labelled_alternative"] = _name(labelled_hits[0])
             if stated_claims:
                 item["unlabelled"] = stated_claims
             if profile_claims:
@@ -732,6 +747,8 @@ async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str,
             plain = await find(fallback_claims)
         if plain:
             item["claims"] = fallback_claims
+            if labelled_hits:
+                item["labelled_alternative"] = _name(labelled_hits[0])
             if profile_claims:
                 item.pop("profile_applied", None)
                 item["profile_unlabelled"] = sorted(profile_claims)
@@ -864,63 +881,66 @@ def _claim_words(claims: list[str]) -> list[str]:
 
 
 def _label_reasons(it: dict, best: dict) -> list[Reason]:
-    """One plain sentence per dietary label decision on a chosen line (profile default, or no labelled product)."""
-    pid, name, out = best["product"]["id"], _name(best["product"]), []
-    if it.get("unlabelled"):  # the buyer asked for it: never guessed, always asked
-        need = " and ".join(_claim_words(it["unlabelled"]))
-        out.append(gate._r(C.DATA_MISSING, ASK, f"Valio labels no {it['query']} {need}. Closest: {name}. Check its "
-                           f"label before ordering.", pid, f"Check that {name} is {need}, or pick another product.",
-                           unlabelled=", ".join(it["unlabelled"])))
+    """One plain sentence for a profile default; dietary uncertainty is handled by ``_dietary_reasons``."""
+    pid, out = best["product"]["id"], []
     if it.get("profile_applied"):
         need = " and ".join(_claim_words(it["profile_applied"]))
         out.append(gate._r(C.PROFILE_DEFAULT, INFO, f"{need.capitalize()}, because {it['profile_why']}: only "
                            f"{it['query']} that Valio labels {need} was considered.", pid,
                            f"Say 'regular {it['query']}' if this order doesn't need it.",
                            profile=it["profile_why"], claims=", ".join(it["profile_applied"])))
-    if it.get("profile_unlabelled"):
-        need = " and ".join(_claim_words(it["profile_unlabelled"]))
-        # still never guessed: a gluten-free kitchen checks an unlabelled product before it is ordered
-        out.append(gate._r(C.PROFILE_DEFAULT, ASK, f"Your profile asks for {need} ({it['profile_why']}), but Valio "
-                           f"labels no {it['query']} {need}. Closest: {name}. Check its label before ordering.", pid,
-                           f"Check that {name} is {need}.", profile=it["profile_why"],
-                           claims=", ".join(it["profile_unlabelled"])))
     return out
 
 
-def _dietary_reasons(it: dict, product: dict, risks: dict[str, set[str]], tags: list[str] | None = None) -> list[Reason]:
-    """Ask when an at-risk, unlabelled product cannot be cleared from allergen evidence."""
+def _dietary_checks(it: dict, product: dict, risks: dict[str, set[str]], details: dict[str, dict[str, dict]],
+                    tags: list[str] | None = None) -> list[dict]:
+    """Return only the three chef-facing levels; a contradiction is never exposed as an offer."""
     out = []
     for tag in tags or _diet_tags(it):
         if it["query"] not in risks.get(tag, set()):
             continue
-        verdict = diet.verdict(product, tag, True)
-        if verdict == "unknown":
-            label = " and ".join(_claim_words(DIETARY[tag][0])) or tag.replace("_", "-")
-            out.append(gate._r(C.ALLERGEN_DATA_MISSING, ASK, f"{_name(product)} is an at-risk {it['query']} for "
-                              f"{label}, but its allergen data is missing and it has no {label} label.",
-                              product["id"], f"Check the label for {label} before ordering.", diet=tag))
-        elif DIETARY[tag][0] and verdict == "need_label" and not (it.get("unlabelled") or it.get("profile_unlabelled")):
-            label = " and ".join(_claim_words(DIETARY[tag][0]))
-            out.append(gate._r(C.DATA_MISSING, ASK, f"{_name(product)} is an at-risk {it['query']} for {label}, "
-                              f"but it is not labelled {label}.", product["id"],
-                              f"Pick a product labelled {label}, or check this label first.", diet=tag))
+        result = diet.check(product, tag, True, (details.get(tag) or {}).get(it["query"]))
+        if result["level"] in diet.LEVELS:
+            out.append({"diet": tag, **result})
     return out
 
 
-def _dietary_line_reason(it: dict, product: dict, risks: dict[str, set[str]], tags: list[str] | None = None) -> str:
-    """Plain reason attached to a chosen labelled replacement on the line itself."""
-    labels = []
-    for tag in tags or _diet_tags(it):
-        if DIETARY[tag][0] and it["query"] in risks.get(tag, set()) \
-                and diet.verdict(product, tag, True) == "ok":
-            labels += DIETARY[tag][0]
-    if not labels:
+def _allergens_present(product: dict) -> bool:
+    allergens = product.get("allergens") or {}
+    if not isinstance(allergens, dict):
+        return False
+    return any(allergens.get(key) for key in ("contains", "may_contain", "free_from"))
+
+
+def _dietary_reasons(it: dict, product: dict, checks: list[dict]) -> list[Reason]:
+    """Ask exactly once per ingredient when one or more diet checks remain unverifiable."""
+    unknown = [c for c in checks if c["level"] == "unverifiable"]
+    if not unknown:
+        return []
+    tags = [c["diet"] for c in unknown]
+    labels = " and ".join(" and ".join(_claim_words(DIETARY[tag][0]) or [tag.replace("_", "-")])
+                           for tag in tags)
+    legacy = ""
+    if it.get("unlabelled"):
+        need = " and ".join(_claim_words(it["unlabelled"]))
+        legacy = f" Valio labels no {it['query']} {need}; check its label."
+    alternative = it.get("labelled_alternative")
+    question = f"Can't verify this {it['query']} is {labels}."
+    question += legacy
+    question += f" Use it, or pick the labelled {alternative}?" if alternative else " Use it, or pick a labelled one?"
+    allergen_data = _allergens_present(product)
+    code = C.DATA_MISSING if allergen_data else C.ALLERGEN_DATA_MISSING
+    fix = (f"Pick the labelled {alternative}, or check this label before ordering." if alternative
+           else f"Check the label for {labels} before ordering.")
+    return [gate._r(code, ASK, question, product["id"], fix, diet=", ".join(tags))]
+
+
+def _dietary_line_reason(product: dict, checks: list[dict]) -> str:
+    """Show every selected diet basis on the line itself, in addition to the structured field."""
+    if not checks:
         return ""
-    label = " and ".join(_claim_words(labels))
-    context = it.get("profile_why") or f"your request requires {label}"
-    context = context.removeprefix("your profile says: ")
-    context = re.sub(r"^Our kitchen", "your kitchen", context)
-    return f"{_name(product)}, because {it['query']} isn't {label} and {context}."
+    facts = "; ".join(f"{c['diet'].replace('_', '-')}: {c['basis']}" for c in checks)
+    return f"Diet check: {_name(product)}, because {facts}."
 
 
 async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str, m: Mandate, excluded: set[str],
@@ -943,6 +963,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
         item_diets[id(it)] = tags
     risk = await diet.at_risk([it["query"] for it in items],
                               sorted({tag for tags in item_diets.values() for tag in tags}))
+    risk_details = diet.risk_details([it["query"] for it in items],
+                                     sorted({tag for tags in item_diets.values() for tag in tags}))
     usual = profile.usual(buyer_id)
     progress.phase("searching")
     done = [0]
@@ -982,7 +1004,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             rs, info = gate.check_line(pid, qty and qty["quantity"], q, requested, m, excluded, now)
             line = {"item": n, "product": p, "quote": q, "quantity": qty, "line_total_cents": info["line_total_cents"],
                     "why": "", "chosen": False, "confidence": None, "confidence_reason": None,
-                    "facts": {k: (p or {}).get(k) for k in FACTS}}
+                    "facts": {k: (p or {}).get(k) for k in FACTS},
+                    "diet_checks": _dietary_checks(it, p, risk, risk_details, item_diets[id(it)])}
             lines.append(line)
             checked.append((line, rs))
             blocking = [r for r in rs if gate._blocking(r)]
@@ -1090,8 +1113,9 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                                 and (ln["confidence"] or 0) > (best["confidence"] or 0)), None)
             best["usual"] = best["product"]["id"] in usual
             reasons += _label_reasons(it, best)
-            reasons += _dietary_reasons(it, best["product"], risk, item_diets[id(it)])
-            dietary_reason = _dietary_line_reason(it, best["product"], risk, item_diets[id(it)])
+            dietary_reasons = _dietary_reasons(it, best["product"], best["diet_checks"])
+            reasons += dietary_reasons
+            dietary_reason = _dietary_line_reason(best["product"], best["diet_checks"])
             late = next((r for r in best_asks if r.code is C.DATE_NOT_HONOURED), None)  # QA VT-05: say it plainly
             when = (f"orderable, but it arrives {late.facts.get('available_date')}, not {requested}" if late
                     else f"orderable for {requested}")
