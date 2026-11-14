@@ -100,6 +100,16 @@ export const placeOrder = (input: OrderInput) =>
     ? mock().then((m) => m.place(input))
     : api<OrderResponse>('/api/orders', { ...post(input), headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')
 
+// The approver's name lives on the stored order (signed_off_by), not in the approve/reject response.
+export const getOrder = (orderId: string) =>
+  MOCK
+    ? mock().then((m) => m.order(orderId))
+    : api<{ signed_off_by: string | null }>(
+        `/api/orders/${encodeURIComponent(orderId)}`,
+        { headers: keyHeader('X-Approver-Key', getKeys().approverKey) },
+        'approver',
+      )
+
 export const decideOrder = (orderId: string, action: 'approve' | 'reject') =>
   MOCK
     ? mock().then((m) => m.decide(orderId, action))
