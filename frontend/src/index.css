@@ -490,13 +490,21 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
 .landing { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 26rem) minmax(0, 1fr); align-items: center; gap: var(--s6); padding: var(--s7) clamp(1rem, 8vw, 8rem); background: #0a0a0a; color: #f2f2f2; }
 .landing-name { margin: 0 0 var(--s5); font: 500 clamp(3.5rem, 9vw, 6.5rem)/0.95 'Pixelify Sans', ui-monospace, monospace; letter-spacing: 0; }
 .landing-text { margin: 0 0 var(--s6); font-size: 1.125rem; line-height: 1.6; color: #c9ccd1; max-width: 26rem; }
-.landing-cta { font: 500 1rem/1 inherit; font-family: inherit; padding: 0.9rem 1.25rem; border: 0; border-radius: 12px; background: #f2f2f2; color: #0a0a0a; cursor: pointer; }
-.landing-cta:focus-visible { outline: 3px solid #00b3ff; outline-offset: 3px; }
-@media (hover: hover) { .landing-cta:hover { background: #fff; } }
-.landing-art { aspect-ratio: 1; width: 100%; max-width: 40rem; justify-self: center; border-radius: 50%; overflow: hidden; }
+.landing-stage { justify-self: center; display: grid; justify-items: center; gap: var(--s4); }
+.door { --door-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 100' shape-rendering='crispEdges'%3E%3Cpath fill-rule='evenodd' d='M0 100V30h2V22h2V16h2V12h4V8h4V6h4V4h4V2h4V0h8v2h4v2h4v2h4v2h4v4h4v4h2v6h2v8h2v70zM8 40h18v22H8zM34 40h18v22H34zM8 68h18v22H8zM34 68h18v22H34z'/%3E%3C/svg%3E"); position: relative; display: block; width: min(62vw, 15rem); aspect-ratio: 3 / 5; padding: 0; border: 0; background: none; cursor: pointer; perspective: 1100px; -webkit-tap-highlight-color: transparent; touch-action: pan-y; }
+.door:focus-visible { outline: 3px solid #4cc3e3; outline-offset: 8px; border-radius: 2px; }
+.door-light { position: absolute; inset: 0; background: var(--paper); -webkit-mask: var(--door-mask) center / 100% 100% no-repeat; mask: var(--door-mask) center / 100% 100% no-repeat; opacity: 0.12; transition: opacity 600ms var(--ease-out); }
+.door.open .door-light { opacity: 1; }
+.door-leaf { position: absolute; inset: 0; display: block; background: #000 conic-gradient(#00607a 25%, transparent 0 50%, #00607a 0 75%, transparent 0) 0 0 / 4px 4px; background-blend-mode: normal; transform-origin: left center; transition: transform 600ms var(--ease-out); -webkit-mask: var(--door-mask) center / 100% 100% no-repeat; mask: var(--door-mask) center / 100% 100% no-repeat; }
+.door.open .door-leaf { transform: rotateY(-78deg); }
+.door-leaf > canvas, .door-leaf > div { mix-blend-mode: lighten; }
+.door-handle { position: absolute; right: 12%; top: 54%; width: 7%; aspect-ratio: 1; background: #fff; }
+.door-hint { margin: 0; font: 400 1rem/1.4 'Pixelify Sans', ui-monospace, monospace; color: #c9ccd1; }
+@media (hover: hover) { .door:not(.open):hover .door-leaf { transform: rotateY(-8deg); } }
+@media (prefers-reduced-motion: reduce) { .door-leaf, .door-light { transition: none; } }
 @media (max-width: 760px) {
   .landing { grid-template-columns: 1fr; padding-block: var(--s6); }
-  .landing-art { order: -1; max-width: 18rem; }
+  .landing-stage { order: -1; }
 }
 
 /* Valio Aimo palette: deep teal, lime for the one primary action */
