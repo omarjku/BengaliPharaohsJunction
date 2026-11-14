@@ -24,36 +24,36 @@ It is open by design: OpenAPI 3.1, JSON Schemas, an MCP server for any agent, a 
 licence.
 
 ## Description: long (≈300 words)
-By 2028, Gartner expects most B2B buying to run through AI agents. Valio Aimo already has A.I.mo for its own
-customers, but restaurants will bring their own agents, and today nothing checks them at the door. **Front Door** is
-that door: the interface and operating model Valio could offer buyers' agents.
+Gartner expects most B2B buying to run through AI agents by 2028. Valio Aimo already has A.I.mo for its own
+customers, but restaurants will bring their own agents, and nothing checks them at the door. **Front Door** is that
+door: the interface and operating model Valio could offer buyers' agents.
 
 **The buyer's agent (Gemini).** A chef types a need or pastes a menu with the number of covers.
-- Gemini parses the request.
-- Our agent searches Valio's full catalogue and quotes the live Valio API (price, stock, cut-off), then converts
-  "litres" and "kilos" into Valio's sales units with exact arithmetic.
+- Gemini parses it.
+- Our agent searches Valio's full catalogue, quotes the live Valio API (price, stock, cut-off) and converts litres
+  and kilos into sales units exactly.
 - The Gemini Decisions API gives a calibrated confidence that each product and quantity is what the chef meant.
-  On 30 labelled cases with real Valio products, our 0.80 threshold ordered no wrong product.
-- It orders on its own only when it is confident and within the buyer's limits. For example, it rejects 5-gram
-  sugar sachets for baking and picks caster sugar.
+  On 30 labelled cases, our 0.80 threshold ordered no wrong product.
+- It acts alone only when it is confident and within the buyer's limits. For example, it rejects 5-gram sugar
+  sachets for baking and picks caster sugar.
 
-**Valio's front door.** Every order, from any agent, is re-checked against the buyer's mandate, which is stored at
-Valio's side, never sent by the agent. It uses fresh quotes.
-- **Hard rules refuse:** an excluded allergen, a missing claim, the maximum price, a passed cut-off.
+**Valio's front door.** It re-checks every order, from any agent, against the buyer's mandate, which is stored at
+Valio's side and never sent by the agent. It uses fresh quotes.
+- **Hard rules refuse:** excluded allergens, missing claims, the maximum price, passed cut-offs.
 - **Sign-off rules hold the order for the chef:** spend limits, the weekly budget, delivery reliability.
-- **Traps in Valio's data become questions, not guesses:** "available Monday" after the cut-off, stock 999999
-  (unknown, not unlimited), short stock (it proposes a split or a substitute), prompt injection.
-- Only a human approver can approve, from a phone.
-- Every decision is Ed25519-signed and lands in an audit trail for the buyer and for Valio.
+- **Data traps become questions, not guesses:** "available Monday" after the cut-off, stock 999999 (unknown),
+  short stock (it proposes a split or a substitute), prompt injection.
+- Only a human approves, even from a phone.
+- Every decision is Ed25519-signed and audited for the buyer and for Valio.
 
 **Open and honest.**
-- An OpenAPI 3.1 spec and JSON Schemas for every message.
+- An OpenAPI 3.1 spec and JSON Schemas.
 - An MCP server, so Claude, ChatGPT or Gemini CLI can order through the same door.
-- GS1 allergen codes, a Peppol BIS Order mapping, and a standards map (AP2, RFC 9421).
-- Every assumption is documented. Valio's API here is the challenge mock, and cut-offs and delivery days are demo
+- GS1 allergens, a Peppol mapping, and a standards map.
+- Every assumption is documented: Valio's API is the challenge mock, and cut-offs and delivery days are demo
   assumptions.
 
-Codex was our adversary throughout: 62 review findings, 43 fixed, each with a test.
+Codex was our adversary: 62 findings, 43 fixed, each with a test.
 
 ## Challenges
 - **Valio Aimo: Trusted Trade Agents** (main challenge)
