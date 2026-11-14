@@ -10,6 +10,7 @@ come back from the door, which holds the order for sign-off or refuses it.
 """
 import asyncio
 from contextvars import ContextVar
+import copy
 import json
 import logging
 import math
@@ -119,6 +120,12 @@ async def _gemini(system: str, prompt: str, schema: dict, thinking: dict | None 
     """One structured-output call. None on no key / any failure (never raises, never logs the key)."""
     if not config.GEMINI_API_KEY:
         return None
+    # Same input → same reading for 10 min (demo soak: repeated menus gave carts from EUR 883 to 1,196, and the reading
+    # took 2-10 s each time). Only successful answers are kept; every check still runs on the cached reading.
+    key = json.dumps([config.GEMINI_MODEL, system, prompt, schema, thinking], sort_keys=True, ensure_ascii=False)
+    now = time.monotonic()
+    if (hit := _GEMINI_CACHE.get(key)) and now - hit[0] < DECISION_CACHE_TTL_S:
+        return copy.deepcopy(hit[1])
     body = {"systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"responseMimeType": "application/json", "responseSchema": schema, "temperature": 0}
@@ -129,13 +136,19 @@ async def _gemini(system: str, prompt: str, schema: dict, thinking: dict | None 
         r.raise_for_status()
         parts = r.json()["candidates"][0]["content"]["parts"]
         out = json.loads("".join(p.get("text", "") for p in parts if not p.get("thought")))
-        return out if isinstance(out, dict) else None  # a list or scalar is as unusable as no answer (Codex #16)
+        if not isinstance(out, dict):
+            return None  # a list or scalar is as unusable as no answer (Codex #16)
+        if len(_GEMINI_CACHE) >= DECISION_CACHE_MAX:
+            _GEMINI_CACHE.clear()  # ponytail: crude bound, like the Decisions cache
+        _GEMINI_CACHE[key] = (now, copy.deepcopy(out))
+        return out
     except Exception as e:  # noqa: BLE001 - any failure means "use the fallback"
         log.warning("Gemini call failed (%s); using fallback", type(e).__name__)
         return None
 
 
 _DECISION_CACHE: dict[str, tuple[float, dict]] = {}
+_GEMINI_CACHE: dict[str, tuple[float, dict]] = {}
 DECISIONS_PER_RUN = 150  # a 10-item request needs ~120 uncached calls at most (match 12 + judge/plausible 3x8 per item)
 _BUDGET: ContextVar[list | None] = ContextVar("decisions_budget", default=None)
 
