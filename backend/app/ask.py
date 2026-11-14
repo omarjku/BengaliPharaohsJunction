@@ -8,16 +8,20 @@ for N people) or `unclear`, and reads the number of guests. Code decides everyth
 - order → agent.run, menu → menu.propose: the response is their body plus {intent, covers, requested_date,
   date_source, question}, so the UI reuses its components.
 """
+import asyncio
+import logging
 import re
+import time
 from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from trade_contracts import ReasonCode as C
 
-from . import agent, gate, menu, urgent
+from . import agent, gate, menu, urgent, progress
 
 TZ = ZoneInfo("Europe/Helsinki")
+log = logging.getLogger(__name__)
 INTENT_PROMPT = agent.UNTRUSTED + """
 You route a food buyer's message for a wholesaler's ordering agent. Classify it:
 - "order": a list of products to buy (e.g. "20 kg döner kebab meat", "milk and 30 croissants for tomorrow").
@@ -87,8 +91,16 @@ def _ask(intent: str, covers, when, source, question: str, code: C, fix: str) ->
 
 async def ask(text: str, requested: date | None, buyer_id: str) -> dict:
     today = datetime.now(TZ).date()
-    intent, covers, _ = await classify(text)
-    stated = date_from_text(text, today)
+    stated = date_from_text(text, today)  # deterministic, so the date guard can start with everything else
+    guess = requested or stated or (today if urgent.URGENT.search(text) else None)
+    # One parallel batch: intent check, order parse, steering and date guards (room3-speed; the parse is wasted only
+    # when it turns out to be a menu, the guards only when the request stops at a question).
+    t0 = time.monotonic()
+    progress.phase("understanding")
+    (intent, covers, _), parsed, steer, meant = await asyncio.gather(
+        classify(text), agent.parse(text), agent.steering(text),
+        agent.date_intent(text, guess, today) if guess else agent.none())
+    t1 = time.monotonic()
     if requested and stated and requested != stated:
         return _ask(intent, covers, requested, "request", f"Which delivery day: {stated:%A %d %B} (as written) or "
                     f"{requested:%A %d %B} (as selected)?", C.LOW_CONFIDENCE, "Pick one delivery date.")
@@ -113,7 +125,10 @@ async def ask(text: str, requested: date | None, buyer_id: str) -> dict:
                         "Add the number of guests, e.g. 'for 80 guests'.")
         body = await menu.propose(text, covers, when, buyer_id)
     else:
-        body = await agent.run(text, when, buyer_id)
+        body = await agent.run(text, when, buyer_id, pre={"parsed": parsed, "steer": steer,
+                                                         "meant": meant if when == guess else None})
     # Suggestions only (walk-in, Click & Collect, next delivery): never an order the agent places.
     meta["urgent_options"] = urgent.urgent_options(text, buyer_id, when, datetime.now(TZ), body.get("lines", []))
+    meta["timings_ms"] = {"understand": round((t1 - t0) * 1000), "total": round((time.monotonic() - t0) * 1000)}
+    log.info("ask %s: understand %d ms, total %d ms", intent, meta["timings_ms"]["understand"], meta["timings_ms"]["total"])
     return meta | body

@@ -27,7 +27,7 @@ from trade_contracts import (Alternative, AuditEntry, AuditInput, Decision, Mand
 from trade_contracts import ReasonCode as C
 from trade_contracts.common import RuleKind
 
-from . import catalogue, config, gate, mandates, orders, quantity, valio
+from . import catalogue, config, gate, mandates, orders, quantity, valio, progress
 
 RULES_VERSION = "m1-buyer-agent-0.1"
 ACTOR = "buyer_agent"
@@ -78,11 +78,6 @@ For each product asked for:
   allergy"); empty if not stated. Never the delivery day.
 summary: one short sentence restating the request."""
 
-RANK_PROMPT = UNTRUSTED + """
-You match a restaurant buyer's request to a food wholesaler's catalogue. You get the item to match and catalogue
-products found by keyword search. Return the ids of the products that ARE the item, best match
-first (a product merely made from it is not a match: milk ice cream is not milk). Return an empty list if none match."""
-RANK_INPUT = "Item: {query}{diet}\nProducts:\n{products}"  # parsed fields only: no raw chef text to steer the pick
 
 _PARSE_SCHEMA = {"type": "object", "required": ["summary", "items"], "properties": {
     "summary": {"type": "string"},
@@ -91,12 +86,32 @@ _PARSE_SCHEMA = {"type": "object", "required": ["summary", "items"], "properties
                        "amount": {"type": "number", "nullable": True},
                        "unit": {"type": "string", "nullable": True},
                        "dietary": {"type": "array", "items": {"type": "string", "enum": list(DIETARY)}}}}}}}
-_RANK_SCHEMA = {"type": "object", "required": ["ids"], "properties": {"ids": {"type": "array", "items": {"type": "string"}}}}
 
 
 def _wrap(text: str) -> str:
     """The chef's text as data: delimiter look-alikes are removed so it can't close the tag early."""
     return "<buyer_request>" + re.sub(r"(?i)</?\s*buyer_request\s*>", " ", text) + "</buyer_request>"
+
+
+_HTTP: list = [None, None, None]  # [event loop, client, Decisions semaphore]: per loop (asyncio objects bind to one)
+
+
+def _bind() -> None:
+    loop = asyncio.get_running_loop()
+    if _HTTP[0] is not loop or getattr(_HTTP[1], "is_closed", False):
+        _HTTP[:] = [loop, httpx.AsyncClient(timeout=GEMINI_TIMEOUT_S,  # keep-alive: no TLS handshake per call
+                                            limits=httpx.Limits(max_connections=32, max_keepalive_connections=16)),
+                    asyncio.Semaphore(16)]  # at most 16 concurrent paid Decisions calls (menus fan out)
+
+
+def _http() -> httpx.AsyncClient:
+    _bind()
+    return _HTTP[1]
+
+
+def _slots() -> asyncio.Semaphore:
+    _bind()
+    return _HTTP[2]
 
 
 async def _gemini(system: str, prompt: str, schema: dict) -> dict | None:
@@ -107,19 +122,17 @@ async def _gemini(system: str, prompt: str, schema: dict) -> dict | None:
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"responseMimeType": "application/json", "responseSchema": schema, "temperature": 0}}
     try:
-        async with httpx.AsyncClient(timeout=GEMINI_TIMEOUT_S) as http:
-            r = await http.post(f"{GEMINI_URL}/{config.GEMINI_MODEL}:generateContent",
-                                headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)
-            r.raise_for_status()
-            parts = r.json()["candidates"][0]["content"]["parts"]
-            return json.loads("".join(p.get("text", "") for p in parts if not p.get("thought")))
+        r = await _http().post(f"{GEMINI_URL}/{config.GEMINI_MODEL}:generateContent",
+                               headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)
+        r.raise_for_status()
+        parts = r.json()["candidates"][0]["content"]["parts"]
+        return json.loads("".join(p.get("text", "") for p in parts if not p.get("thought")))
     except Exception as e:  # noqa: BLE001 - any failure means "use the fallback"
         log.warning("Gemini call failed (%s); using fallback", type(e).__name__)
         return None
 
 
 _DECISION_CACHE: dict[str, tuple[float, dict]] = {}
-_DECISION_SLOTS = asyncio.Semaphore(16)  # bound concurrent paid Decisions calls per process (menus fan out)
 DECISION_CACHE_TTL_S = 600
 DECISION_CACHE_MAX = 5000
 
@@ -138,8 +151,8 @@ async def _decisions(input_text: str, questions: dict) -> dict | None:
         return hit[1]
     body = {"model": config.GEMINI_DECISION_MODEL, "input": input_text, "questions": questions}
     try:
-        async with _DECISION_SLOTS, httpx.AsyncClient(timeout=GEMINI_TIMEOUT_S) as http:
-            r = await http.post(DECISIONS_URL, headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)
+        async with _slots():
+            r = await _http().post(DECISIONS_URL, headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)
             r.raise_for_status()
             answers = r.json()["answers"]
             if not all(k in answers for k in questions):
@@ -523,6 +536,25 @@ SYNONYMS = {"kebab bread": ["pita bread", "pitabread", "pitaleipä"], "kebab mea
             "gyro": ["gyros"], "fry": ["french fries", "fries"], "chip": ["french fries"], "pita": ["pita bread"]}
 
 
+MATCH_MIN = 0.5  # P(this hit IS the item) needed to be a candidate at all; the line threshold still applies later
+MATCH_TOP = 10  # every real match competes on confidence, limits and price; a top-5-by-score cut dropped the
+                # cheapest milk behind small packs scoring 0.97 (measured, room3-speed)
+
+
+async def match(item: dict, hits: list[dict]) -> list[str] | None:
+    """Which catalogue hits ARE the item, best first: the Decisions 'meets' question per hit, in parallel (~0.5-0.9 s
+    for 20 hits). It replaced a Gemini rank call that took 5-8 s (measured, room3-speed) and is the same calibrated,
+    evaluated question the line judge asks: those answers are cached, so judging the chosen lines reuses them.
+    The canonical item carries the grounded purpose ('for the rotisserie' → a spit). None if Decisions is down."""
+    text = _AMOUNTS.sub(" ", canonical(item))
+    res = await asyncio.gather(*(_judge_one(text, p, ["meets"]) for p in hits))
+    if all(y is None for y, *_ in res):
+        return None
+    ranked = sorted(((y, n, p["id"]) for n, ((y, *_), p) in enumerate(zip(res, hits)) if y is not None and y >= MATCH_MIN),
+                    key=lambda x: (-x[0], x[1]))
+    return [pid for _, _, pid in ranked][:MATCH_TOP]
+
+
 async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[str], bool]:
     """Catalogue hits for one item (claims + allergen filters), narrowed and ordered by Gemini. → (ids, used_gemini)."""
     excl = sorted(set(item["exclude_allergens"]) | excluded)
@@ -545,16 +577,9 @@ async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[st
         hits = [p for _, p in sorted(found.values(), key=lambda x: (-x[0], len(x[1]["name_en"] or "")))][:SEARCH_LIMIT]
     if not hits:
         return [], True
-    listing = "\n".join(json.dumps({"id": p["id"], "name": p["name_en"] or p["name_fi"], "brand": p["brand"]},
-                                   ensure_ascii=False) for p in hits)
-    diet = f" ({', '.join(item['claims'] + ['no ' + a for a in item['exclude_allergens']])})" \
-        if item["claims"] or item["exclude_allergens"] else ""
-    diet += f", {item['purpose']}" if item.get("purpose") else ""  # grounded: "for the rotisserie" → a spit, not slices
-    out = await _gemini(RANK_PROMPT, RANK_INPUT.format(query=item["query"], diet=diet, products=listing), _RANK_SCHEMA)
-    if out is None or not isinstance(out.get("ids"), list):
+    ids = await match(item, hits)
+    if ids is None:  # Decisions unavailable: plain search order, flagged by the caller
         return [p["id"] for p in hits[:QUOTE_TOP]], False
-    known = {p["id"] for p in hits}
-    ids = [i for i in dict.fromkeys(map(str, out["ids"])) if i in known][:QUOTE_TOP]
     if not ids:  # say plainly what Valio has instead
         item["closest"] = [_name(p) for p in hits[:3]]
     return ids, True
@@ -641,13 +666,15 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
     gate checks, Gemini Decisions confidence, the choice (safety, confidence, limits, concerns, Finnish preference,
     price), substitutes. Appends the problems it finds to `reasons`. The Decisions judge reads `canonical(item)`
     (parsed fields only; menu items add their dishes), never raw text."""
+    progress.phase("searching")
     found = await asyncio.gather(*(candidates(text, it, excluded) for it in items))
     if not all(by_gemini for _, by_gemini in found) and parsed_by_gemini:
-        reasons.append(gate._r(C.LOW_CONFIDENCE, INFO, "Gemini couldn't rank the catalogue matches; plain keyword "
-                               "order was used.", None, "Check the chosen products."))
+        reasons.append(gate._r(C.LOW_CONFIDENCE, INFO, "Gemini Decisions couldn't check which catalogue hits "
+                               "match; plain keyword order was used.", None, "Check the chosen products."))
     ids = list(dict.fromkeys(pid for cands, _ in found for pid in cands))
     quotes: dict[str, dict] = {}
     try:
+        progress.phase("stock")
         quotes = {q["product_id"]: q for q in await valio.get_quotes(ids, requested.isoformat())} if ids else {}
     except Exception:  # noqa: BLE001 - upstream details stay in the server log
         log.exception("Valio quote failed")
@@ -685,10 +712,18 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
 
     # One Decisions call for every line we might order: does it really meet the request, is the quantity right?
     viable = [line for *_, scored in per_item for key, line, _ in scored if not key[0]]
-    judged = await asyncio.gather(*(judge_line(canonical(items[ln["item"]]), ln["product"],
-                                               ln["quantity"]["explanation"]) for ln in viable))
-    for line, (conf, why, weakest) in zip(viable, judged):
+    # ...and, in the same parallel batch, the plausibility guard for every line that could be chosen (room3-speed:
+    # it used to run after the choice, adding a serial round trip).
+    progress.phase("judging")
+    kitchen_facts = mandates.kitchen(buyer_id)
+    judged, sizes = await asyncio.gather(
+        asyncio.gather(*(judge_line(canonical(items[ln["item"]]), ln["product"], ln["quantity"]["explanation"])
+                         for ln in viable)),
+        asyncio.gather(*(plausible(kitchen_facts, canonical(items[ln["item"]]), ln["product"],
+                                   ln["quantity"]["explanation"], ln["line_total_cents"]) for ln in viable)))
+    for line, (conf, why, weakest), p_ok in zip(viable, judged, sizes):
         line["confidence"], line["confidence_reason"], line["_weakest"] = conf, why, weakest
+        line["plausibility"] = p_ok
 
     for n, it, cands, amount_ok, scored in per_item:
         mark = len(reasons)
@@ -783,10 +818,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                 failed.add(n)
 
     # Guard (Gemini Decisions): is the chosen quantity believable for this kitchen? Only adds a question.
-    sizes = await asyncio.gather(*(plausible(mandates.kitchen(buyer_id), canonical(items[ln["item"]]), ln["product"],
-                                             ln["quantity"]["explanation"], ln["line_total_cents"]) for ln in chosen))
-    for ln, p_ok in zip(chosen, sizes):
-        ln["plausibility"] = p_ok
+    for ln in chosen:
+        p_ok = ln.get("plausibility")
         if p_ok is not None and p_ok < PLAUSIBLE_MIN:
             r = gate._r(C.QTY_SUSPICIOUS, ASK, f"Unusually large order: {gate._qty(ln['quantity']['quantity'])} "
                         f"{ln['quantity']['sales_unit']} of {_name(ln['product'])} for "
@@ -804,7 +837,19 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
 
 
 
-async def run(text: str, requested: date, buyer_id: str) -> dict:
+async def none() -> None:
+    return None
+
+
+async def _given(value, make):
+    """`value` if the caller precomputed it, else await make() (a factory: no coroutine is built when unused)."""
+    return value if value is not None else await make()
+
+
+async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None) -> dict:
+    """`pre`: results the caller already computed in parallel (POST /api/agent/ask runs the parse and the steering and
+    date guards alongside its intent check): {"parsed", "steer", "meant"}; anything missing is computed here."""
+    pre = pre or {}
     run_id, now = str(uuid4()), datetime.now(timezone.utc)
     mandate = mandates.get(buyer_id)
     m = mandate or Mandate(id="none", buyer_id=buyer_id)  # checks still run; nothing is ordered without a mandate
@@ -815,7 +860,8 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
     excluded = set().union(*(gate._allergen_codes(str(v)) for v in gate._rules(m, RuleKind.EXCLUDED_ALLERGEN)))
 
     (request, parsed_by_gemini), steer, meant = await asyncio.gather(
-        parse(text), steering(text), date_intent(text, requested, datetime.now(ZoneInfo("Europe/Helsinki")).date()))
+        _given(pre.get("parsed"), lambda: parse(text)), _given(pre.get("steer"), lambda: steering(text)),
+        _given(pre.get("meant"), lambda: date_intent(text, requested, datetime.now(ZoneInfo("Europe/Helsinki")).date())))
     if meant is not None and meant < DATE_MIN:
         reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"Did you mean delivery on {requested:%A %d %B}? The request's "
                                f"wording suggests another day (Gemini Decisions: {_pct(meant)} that this is the day "
@@ -912,6 +958,7 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
     orderable = [ln for ln in chosen if ln["item"] not in res["failed_items"]]
     if orderable and not blocked and mandate:
         try:  # product ids are unique here (duplicates asked above)
+            progress.phase("ordering")
             order = await orders.place(buyer_id, requested, [SimpleNamespace(product_id=ln["product"]["id"],
                                                                              quantity=ln["quantity"]["quantity"])
                                                              for ln in orderable], mandate)

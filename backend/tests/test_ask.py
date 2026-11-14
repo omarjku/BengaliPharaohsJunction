@@ -1,9 +1,10 @@
 """One input for everyone: POST /api/agent/ask routes to the order or menu flow (Gemini faked, shop offline)."""
+import json
 from datetime import date
 
 from conftest import REQ
 from fastapi.testclient import TestClient
-from test_agent import ITEM, decisions, shop1  # noqa: F401 - pytest fixtures + helpers
+from test_agent import ITEM, decisions, fake_match, shop1  # noqa: F401 - pytest fixtures + helpers
 from test_menu import PORRIDGE
 
 from app import agent, ask, menu
@@ -20,8 +21,9 @@ def route(monkeypatch, intent, covers=None, items=ITEM, dishes=(PORRIDGE,), rank
             return {"summary": "x", "items": items}
         if schema is menu._MENU_SCHEMA:
             return {"dishes": list(dishes)}
-        return {"ids": list(ranked)}
+        return None
     monkeypatch.setattr(agent, "_gemini", fake)
+    fake_match(monkeypatch, list(ranked))
 
 
 def post(text, requested=REQ):
@@ -136,3 +138,35 @@ def test_ask_route_asap_means_today_with_urgent_options(shop1, monkeypatch):  # 
     body = r.json()
     assert body["requested_date"] == datetime.now(ask.TZ).date().isoformat() and body["date_source"] == "text"
     assert [o["kind"] for o in body["urgent_options"]][:2] == ["walk_in", "click_and_collect"]
+
+
+def _events(raw: str) -> list[tuple[str, dict]]:
+    out = []
+    for block in raw.strip().split("\n\n"):
+        kind = next(l[7:] for l in block.splitlines() if l.startswith("event: "))
+        out.append((kind, json.loads(next(l[6:] for l in block.splitlines() if l.startswith("data: ")))))
+    return out
+
+
+def test_ask_stream_sends_phases_then_the_same_result(shop1, monkeypatch):  # noqa: F811
+    route(monkeypatch, "order")
+    r = c.post("/api/agent/ask/stream", json={"text": "1000 L lactose-free milk", "requested_date": REQ.isoformat()},
+               headers={"X-Agent-Key": "agent-lk"})
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
+    ev = _events(r.text)
+    phases = [d["phase"] for k, d in ev if k == "phase"]
+    assert phases == ["understanding", "searching", "stock", "judging", "ordering"]
+    assert all(d["text"].endswith("…") for k, d in ev if k == "phase")
+    kind, body = ev[-1]
+    assert kind == "result" and body["order"]["status"] == "confirmed" and body["intent"] == "order"
+    assert set(body["timings_ms"]) == {"understand", "total"}
+    plain = post("1000 L lactose-free milk")  # the JSON route is unchanged (no phases leak into it)
+    assert plain["order"]["status"] == "confirmed" and "timings_ms" in plain
+
+
+def test_ask_stream_question_and_auth(shop1, monkeypatch):  # noqa: F811
+    route(monkeypatch, "menu", covers=None)
+    r = c.post("/api/agent/ask/stream", json={"text": "Menu: reindeer stew", "requested_date": REQ.isoformat()},
+               headers={"X-Agent-Key": "agent-lk"})
+    assert _events(r.text)[-1][1]["question"] == "For how many guests?"
+    assert c.post("/api/agent/ask/stream", json={"text": "milk"}).status_code == 401
