@@ -11,7 +11,7 @@ audit log.
 | `get_quotes(product_ids, requested_date)` | `POST /api/quotes` | none |
 | `resolve_quantity(product_id, amount, unit)` | `POST /api/quantity/resolve` | none |
 | `place_order(requested_date, lines)` | `POST /api/orders` | `FRONT_DOOR_AGENT_KEY` |
-| `get_order(order_id)` | `GET /api/orders/{id}` | `FRONT_DOOR_AGENT_KEY` (see below) |
+| `get_order(order_id)` | `GET /api/orders/{id}` (read-only, own buyer only) | `FRONT_DOOR_AGENT_KEY` |
 
 There is deliberately **no approve tool**. When the door answers `pending_approval`, a human signs off with an
 approver key in the web UI. An agent never can.
@@ -65,8 +65,9 @@ Or in one command: `claude mcp add valio-front-door -e FRONT_DOOR_URL=... -e FRO
 
 Then ask, for example: "Order 1000 L of lactose-free milk from Valio for Monday."
 
-## Known gap
+## Retries
 
-`GET /api/orders/{id}` accepts only an approver key today, so `get_order` with an agent key answers 401. The
-backend needs to let an agent read its own buyer's orders (read-only). We won't give this server an approver key:
-that key can approve orders, and approval must stay with a person.
+`place_order` sends a fresh `Idempotency-Key` (a UUID) on every call. If the door is unreachable, or answers 429 or
+a gateway error, the server retries up to twice with the same key, waiting for `Retry-After` when the door sends
+it. So a retried order can never be placed twice. The door replays the original answer and marks it
+`Idempotent-Replayed: true`. Agents calling the REST API directly should do the same.

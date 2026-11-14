@@ -1,4 +1,4 @@
-import type { AgentRun, AuditEntry, Health, OrderInput, OrderResponse, RunInput } from './types'
+import type { AgentRun, AuditEntry, Health, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
 
@@ -93,6 +93,11 @@ export const runAgent = (input: RunInput) =>
   MOCK
     ? mock().then((m) => m.run(input))
     : api<AgentRun>('/api/agent/run', { ...post(input), headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')
+
+export const planMenu = (input: MenuInput) =>
+  MOCK
+    ? mock().then((m) => m.menu(input))
+    : api<MenuRun>('/api/agent/menu', { ...post(input), headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')
 
 // The human picked a proposal (e.g. the split order): the agent's key places it, the front door re-checks it.
 export const placeOrder = (input: OrderInput) =>

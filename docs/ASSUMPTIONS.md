@@ -229,42 +229,46 @@ gate still re-checks every line with fresh quotes.
 Files: `backend/app/main.py`, `backend/app/auth.py`, `backend/app/agent.py`,
 `backend/app/mandates.py`, `backend/app/orders.py`.
 
-### 12. Orders and audits are JSON files on ephemeral disk
+### 12. State lives in JSON files under `DATA_DIR`
 
-**Data / behaviour.** Orders use `data/orders.json`. Audits append to
-`data/audit.jsonl`. Render disk is ephemeral, and the files can grow without a
-retention policy.
+**Data / behaviour.** All state (orders, the audit trail, idempotency keys and
+saved buyer mandates) lives in JSON files under `DATA_DIR` (default: the repo's
+`data/`, `backend/app/config.py`).
 
-**Assumption.** File storage is acceptable for the demo only. Orders and audit
-history may disappear when the instance is replaced or redeployed. This is
-not durable production storage.
+**Assumption.** Without a persistent disk, that state is lost on every
+redeploy: Render redeploys on each push to `main`. It is also lost on a
+restart. A persistent disk needs only `DATA_DIR` set (for example
+`/var/data`), with no code change. Retries are safe: orders, approvals and
+rejections accept an `Idempotency-Key`, and the same key and body within 24 h
+returns the original response instead of acting twice.
 
-**Code / human path.** `backend/app/orders.py` loads an in-process order cache,
-writes orders through a temporary file and `os.replace`, and appends audit
-entries under a file lock. The audit keeps the reasons and rejected options
-while the file exists. There is no database transaction, retention job, or
-cross-instance store. The decision and audit are visible to the human, but
-durability is not guaranteed.
+**Code / human path.** `backend/app/orders.py` writes orders through a temporary
+file and `os.replace`, appends audit entries under a file lock, and keeps
+idempotency records for 24 hours (`IDEM_TTL`). There is no database
+transaction or retention job. Postgres is next (NEXT-STEPS #1).
 
-Files: `backend/app/orders.py`, `backend/app/catalogue.py`,
-`docs/DECISIONS.md`.
+Files: `backend/app/config.py`, `backend/app/orders.py`, `backend/app/mandates.py`, `backend/app/main.py`.
 
-### 13. The storage and lock assume one worker
+### 13. Rate limits, the lock and storage assume one worker
 
-**Data / behaviour.** The order store and its `asyncio.Lock` are process-local.
-The app comments require one Uvicorn worker. `dev.sh` starts one Uvicorn
-command and does not configure multiple workers.
+**Data / behaviour.** The limits are 30 requests per minute per agent key, 120
+requests per minute per human key, and 120 per minute per IP. Over the limit,
+the door answers `429` with `Retry-After` (`backend/app/ratelimit.py`). Per-IP
+limits use the client address from `X-Forwarded-For` only when
+`TRUST_X_FORWARDED_FOR=1` (set on Render, behind its proxy). These
+token buckets, the order lock and the order cache all live in process memory.
 
-**Assumption.** One application process owns the order state. Multiple workers
-or instances are not a supported consistency model.
+**Assumption.** The API runs as exactly one uvicorn worker (`dev.sh` starts
+one). With more workers or instances, each would keep its own limits and lock,
+so budgets and approvals could race.
 
-**Code / human path.** `backend/app/orders.py` serializes decisions and retries
-when the in-process spend state changes. That does not coordinate separate
-workers. Running more than one worker could make budget and approval state
-stale. A database transaction is the documented next step before scaling.
+**Code / human path.** `backend/app/orders.py` decides without holding the
+lock, then commits under it only if nothing it relied on changed, and decides
+again otherwise. That works within one process only. Postgres (row locks,
+transactions) and Redis (shared rate limits) are the next step for scaling
+out.
 
-Files: `backend/app/main.py`, `backend/app/orders.py`, `dev.sh`,
-`docs/DECISIONS.md`.
+Files: `backend/app/ratelimit.py`, `backend/app/orders.py`, `backend/app/main.py`, `dev.sh`.
 
 ### 14. The reliability floor is a sign-off rule, not a hard rule
 

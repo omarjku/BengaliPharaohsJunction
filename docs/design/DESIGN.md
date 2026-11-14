@@ -4,9 +4,9 @@ Design system for "Front Door", the approval console where a restaurant chef sup
 
 ## Overview
 - **Personality:** calm, exact, trustworthy. An operations console for a working kitchen, not a chatbot and not a marketing page.
-- **Feel:** Nordic and quiet. Lots of white space, thin borders, one blue accent. Colour is reserved for meaning: green, amber and red only ever signal an order's status.
+- **Feel:** Nordic and quiet. Lots of white space, few borders, one blue accent. Colour is reserved for meaning: green, amber and red only ever signal an order's status.
 - **Density:** comfortable. The chef reads it at a glance between tasks, so the decision is always the largest thing on screen.
-- **Platform:** desktop web first (1280px wide content area, max 1120px), fully usable at 375px on a phone.
+- **Platform:** phone first (390px, thumb-zone actions, safe areas), the same single 640px column on desktop. Rationale: `docs/design/RATIONALE.md`.
 
 ## Colors
 | Token | Hex | Use |
@@ -24,30 +24,29 @@ Design system for "Front Door", the approval console where a restaurant chef sup
 
 Rules:
 - Status colours always appear as a pair: dark text on its pale background, plus an icon or word. Never colour alone.
-- No gradients, no dark mode, no brand colours other than the accent.
+- No gradients, no dark mode, no brand colours other than the accent. The accent appears only on the one primary action, links and focus.
 
 ## Typography
-- **Font:** Inter (fallback: system-ui, sans-serif). Numbers use tabular figures so prices and quantities line up.
-- **Scale:** 28/34 semibold for the decision headline; 20/28 semibold for card titles; 16/24 regular for body; 14/20 for labels, table cells and pills; 12/16 medium, uppercase with 0.04em tracking, for small section labels.
-- **Money and quantities:** semibold, right-aligned in tables, always with the unit ("€1,560.00", "1,000 × 1 L").
-- Sentence case everywhere. No all-caps buttons.
+- **Font:** the platform UI face (`-apple-system`, Segoe UI, system-ui): SF on the chef's iPhone. Native, instant, tabular figures for money.
+- **Scale:** answer sentence 40/46 semibold (28px on a phone); titles 22/29 semibold; body 17/26; secondary 15/22; tiny 13/18. No uppercase labels.
+- **Money and quantities:** tabular figures, always with the unit in words ("1,000 × unit", "€1,560.00 before VAT").
+- Sentence case everywhere.
 
 ## Shape, spacing and elevation
-- **Radius:** 8px on cards, inputs and buttons; 999px on pills and status chips.
-- **Spacing:** 4px base grid. 24px card padding on desktop, 16px on phone. 16px gaps between cards.
-- **Elevation:** flat. Cards have a 1px `border` and no shadow. Only the keys modal has a soft shadow (0 8px 24px rgba(28,31,35,0.12)).
+- **Layout:** one left-aligned column, 640px max, centred. Whitespace separates sections; hairlines (`#E7E9EC`) only where rows need dividing.
+- **Spacing:** 4px base scale (4, 8, 12, 16, 24, 32, 48, 72).
+- **Radius:** 12px on fields and buttons. No cards, no shadows (only the Keys dialog has one).
+- **Touch:** every target is at least 48px tall.
 
 ## Components
-- **Status chip:** large pill with an icon and a word: "Ordered" (good), "Needs your OK" (warn), "Refused" (bad). It is the first thing in the decision card.
-- **Decision card:** the hero. Status chip, one plain sentence on why, a short list of reasons each with an icon and a suggested fix, then the actions. A 4px left edge in the status colour.
-- **Buttons:** primary is solid `accent` with white text; secondary is white with a `border`; the destructive "Reject" is white with `bad` text and border. Height 40px, 16px horizontal padding. One primary button per card.
-- **Confidence pill:** "Gemini 0.96" in a small pill. `good` pair at or above 0.80, `warn` pair below. A one-line reason sits beside or under it.
-- **Product row / card:** product name and brand on the left; quantity and line total on the right; under the name, an availability line ("In stock, order by Sun 17:00", "Cut-off passed", "Stock unknown") and small fact tags ("on time 97%", "origin FI", "1.2 kg CO₂/kg"). The chosen row has an `accent-soft` background, an `accent` left edge and a "Chosen" tag. Rejected rows are muted, with the reason in one line.
-- **Substitute cards:** three cards in a row labelled "Best", "Better", "Good" (stacked on phone), each with a "Why it's safe" line, price and reliability.
-- **Split-order proposal:** a bordered card with a compact table of lines, the total, and one primary button, "Use this order".
-- **Audit timeline:** a vertical line with dots; each entry shows the time, the actor ("Buyer agent", "Valio front door", "Chef Aino"), a small status chip and a summary; reasons expand on click.
-- **Inputs:** 40px high, 1px `border`, 8px radius, visible label above (never placeholder-only), 2px `accent` focus ring.
-- **Fact tags:** small grey pills (`background` fill, `muted` text). Not interactive.
+- **Answer:** status word with a small dot in the status colour, then the decision as one sentence, the amount and one primary action. It's the only large element on the page.
+- **Buttons:** primary is solid accent with white text; "Reject" is plain text in `bad`. Pressed state scales to 0.97. One primary per screen.
+- **Phone action bar:** when approval is needed, Approve (with the amount) and Reject sit fixed at the bottom, respecting the safe area.
+- **Disclosure:** native `<details>` rows ("Why this …", "Other options (n)"), a hairline between them, a rotating chevron.
+- **Confidence:** a plain sentence plus the number ("Sure this is what you meant · 0.95"); when unsure, Gemini's own reason in `warn`.
+- **Substitutes / split order:** plain rows, name on the left, price on the right; the split has a total and one "Use this order".
+- **History:** an activity feed grouped by day: time, a status dot, one line of who did what, details on tap.
+- **Inputs:** labelled above, 48px tall, 1px `#8D949C` outline (3:1), 2px accent focus ring.
 
 ## Do
 - Put the decision and its reason above everything else after a run.
