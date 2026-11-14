@@ -23,3 +23,4 @@ The limits are written as `ponytail:` comments in the code and in `docs/ASSUMPTI
 | 7 | **CI on CRACI** | CI (PR #34, built by Codex) isn't merged yet | Merge #34, switch its runner to CRACI, gate merges on the 434 backend tests and the eval |
 | 8 | **Larger evals** | 33 judge cases, 3 photo checks, none for spare amounts | Borderline judge cases (0.4–0.8), 20–30 photos, a spare-amounts set; re-measure the threshold per buyer |
 | 9 | **Peppol BIS Order / UBL export** | A standard order document for procurement systems | The mapping is in `docs/STANDARDS.md`; implement it and validate against the Peppol rules |
+- Spending from the kitchen's bank via PSD2 account access (not built), and real door-counter and POS integrations in place of the simulated seed.

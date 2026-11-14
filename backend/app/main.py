@@ -17,8 +17,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import (agent, ask, auth, catalogue, config, gate, httpsig, live, mandates, menu, orders, profile, progress,
-               quantity, ratelimit, rules, signing, valio, vision, voice)
+from . import (agent, ask, auth, catalogue, config, gate, httpsig, kitchen, live, mandates, menu, orders, profile,
+               progress, quantity, ratelimit, rules, signing, valio, vision, voice)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -52,6 +52,7 @@ def health() -> dict:
 
 ProductId = Annotated[str, StringConstraints(pattern=r"^\d{1,12}$")]  # Valio product codes are short digit strings
 DATE_WINDOW_DAYS = 60
+KitchenDate = date
 
 
 class QuoteRequest(BaseModel):
@@ -342,6 +343,7 @@ async def demo_reset(who: Annotated[auth.Principal, Depends(auth.valio_admin)], 
     done = (await orders.demo_reset_buyer(who.name, body.buyer_id, restore) if body and body.buyer_id
             else await orders.demo_reset(who.name, restore))
     profile.reset(body.buyer_id if body and body.buyer_id else None)  # remembered preferences back to the seeds
+    kitchen.reset(body.buyer_id if body and body.buyer_id else None)
     return {**done, **_demo_status()}
 
 
@@ -574,6 +576,27 @@ def get_profile(who: Agent) -> dict:
     """The calling buyer's profile, read-only (guidance, never rules): standing dietary needs with the reason, usual
     product ids, the remembered items with why each is used, open questions, recent confirmed orders."""
     return profile.context(who.buyer_id)
+
+
+class KitchenLogRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=2000)
+    date: KitchenDate | None = None
+
+    @field_validator("text")
+    @classmethod
+    def utf8(cls, t: str) -> str:
+        return AgentRunRequest.utf8(t)
+
+
+@app.post("/api/kitchen/log")
+async def post_kitchen_log(req: KitchenLogRequest, who: Agent) -> dict:
+    return await kitchen.log_from_text(who.buyer_id, req.text, req.date)
+
+
+@app.get("/api/kitchen/context")
+def get_kitchen_context(who: Agent) -> dict:
+    return kitchen.kitchen_context(who.buyer_id)
 
 
 @app.get("/api/mandate")
