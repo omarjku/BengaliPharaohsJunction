@@ -1,5 +1,7 @@
 /* The memory panel: each remembered preference with its scope tag and Revoke. Shared tokens only. */
 .mem-row { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s3); }
 .mem-main { min-width: 0; }
+.mem-fact { display: grid; gap: var(--s1); }
+.mem-source { margin-block-start: var(--s1); }
 .mem-tag { display: inline-block; margin-inline-start: var(--s1); padding: 1px var(--s2); border-radius: 999px; background: var(--wash); color: var(--ink-2); font: var(--t-tiny); font-weight: 600; vertical-align: 1px; }
 .btn.mem-revoke { color: var(--bad); flex: none; }

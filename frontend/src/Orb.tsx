@@ -1,44 +1,59 @@
-import type { Ref } from 'react'
-import { Warp } from '@paper-design/shaders-react'
+import { useRef, type PointerEvent, type Ref } from 'react'
 import type { LiveState } from './useLive'
 import './Orb.css'
 
-// The voice orb: big in the middle (voice only) or small, docked above the bar (voice + text). Its state comes from
-// the live events; its size follows the voice level (--level, set by useLive). Tapping it switches the layout.
-// A soft warped blob (Paper's Warp shader). The state sets its pace; the voice level scales it (--level, in Orb.css).
-const CALM = ['#00607a', '#4cc3e3', '#0b5cad', '#a5e6f4']
-const RED = ['#b3261e', '#ff8a80', '#7a1712', '#ffc2bb']
-const PACE: Record<LiveState, { speed: number; distortion: number; swirl: number }> = {
-  connecting: { speed: 0.15, distortion: 0.15, swirl: 0.4 },
-  listening: { speed: 0.5, distortion: 0.2, swirl: 0.6 },
-  thinking: { speed: 1.4, distortion: 0.35, swirl: 0.9 },
-  speaking: { speed: 1.0, distortion: 0.3, swirl: 0.8 },
-  error: { speed: 0, distortion: 0.15, swirl: 0.4 },
-}
+const SWIPE_PX = 40 // a drag at least this long, mostly vertical, is a swipe; anything shorter is a tap
 
-export function Orb({ state, size, label, onToggle, orbRef }: {
+// The voice orb: big in the middle (voice only) or small, docked above the bar (voice + text). Its state comes from
+// the live events; its size follows the voice level (--level, set by useLive). A tap (or Enter/Space) toggles the
+// layout; a swipe up = voice only, a swipe down = voice + text (pointer events: a mouse drag works too).
+export function Orb({ state, size, label, onToggle, onSwipe, orbRef }: {
   state: LiveState
   size: 'big' | 'small'
   label: string // what tapping does, e.g. "Show the conversation"
   onToggle: () => void
+  onSwipe: (dir: 'up' | 'down') => void
   orbRef: Ref<HTMLButtonElement>
 }) {
-  const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+  const start = useRef<{ x: number; y: number } | null>(null)
+  const swiped = useRef(false) // the click that follows a swipe must not also toggle
+
+  function down(e: PointerEvent<HTMLButtonElement>) {
+    start.current = { x: e.clientX, y: e.clientY }
+    swiped.current = false
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId) // keep the drag even if the finger leaves the orb
+    } catch {
+      // not capturable: the swipe still ends on pointerup elsewhere
+    }
+  }
+  function up(e: PointerEvent<HTMLButtonElement>) {
+    const s = start.current
+    start.current = null
+    if (!s) return
+    const dx = e.clientX - s.x
+    const dy = e.clientY - s.y
+    if (Math.abs(dy) >= SWIPE_PX && Math.abs(dy) > Math.abs(dx)) {
+      swiped.current = true
+      onSwipe(dy < 0 ? 'up' : 'down')
+    }
+  }
   return (
-    <button ref={orbRef} type="button" className={`orb orb-${size} orb-${state}`} onClick={onToggle} aria-label={label} title={label}>
-      <span className="orb-core" aria-hidden="true">
-        <Warp
-          colors={state === 'error' ? RED : CALM}
-          proportion={0.5}
-          softness={1}
-          shape="edge"
-          shapeScale={0.35}
-          scale={1.1}
-          {...PACE[state]}
-          speed={reduced ? 0 : PACE[state].speed}
-          style={{ width: '100%', height: '100%' }}
-        />
-      </span>
+    <button
+      ref={orbRef}
+      type="button"
+      className={`orb orb-${size} orb-${state}`}
+      onPointerDown={down}
+      onPointerUp={up}
+      onPointerCancel={() => (start.current = null)}
+      onClick={() => {
+        if (swiped.current) swiped.current = false
+        else onToggle()
+      }}
+      aria-label={label}
+      title={label}
+    >
+      <span className="orb-core" aria-hidden="true" />
     </button>
   )
 }

@@ -19,6 +19,7 @@ import { PhotoButton } from './PhotoButton'
 import { Composer } from './Composer'
 import { Onboarding } from './Onboarding'
 import { useOnboarded } from './onboardingApi'
+import { Kitchen } from './Kitchen'
 import { KitchenChip } from './KitchenChip'
 import { onboardingSkippedFor, skipOnboardingFor, useKitchen } from './useKitchen'
 import { Conversation, type VoiceLayout } from './Conversation'
@@ -27,7 +28,7 @@ import { useLive } from './useLive'
 import { useLiveWarm } from './liveWarm'
 import { useTalk, useTalkPhotoAvailable } from './useTalk'
 
-type View = 'order' | 'rules' | 'history' | 'valio'
+type View = 'order' | 'kitchen' | 'rules' | 'history' | 'valio'
 // The conversation thread: the chef's messages, the agent's lines (partial while voice is still forming them), the
 // responses (decision cards and questions) and errors (with "Ask again" when a question expired).
 type Item =
@@ -134,10 +135,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const onboarding = useOnboarded()
   const [, bumpSkip] = useState(0)
   const onboardingSkipped = kitchen ? onboardingSkippedFor(kitchen) : true
-  const [onboardingAsked, setOnboardingAsked] = useState(false) // opened from the memory panel
-  const onboardingOpen = onboardingAsked || (onboarding.onboarded === false && !onboardingSkipped)
+  const onboardingOpen = onboarding.onboarded === false && !onboardingSkipped // first run only; later it lives on the Kitchen tab
   function closeOnboarding() {
-    setOnboardingAsked(false)
     if (kitchen) skipOnboardingFor(kitchen)
     bumpSkip((n) => n + 1)
   }
@@ -153,7 +152,10 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     }
   })
   function toggleLayout() {
-    const next = layout === 'orb' ? 'thread' : 'orb'
+    chooseLayout(layout === 'orb' ? 'thread' : 'orb')
+  }
+  // Swipe up on the orb = voice only (big orb, thread hidden); swipe down = voice + text (thread, small orb).
+  function chooseLayout(next: VoiceLayout) {
     setLayout(next)
     try {
       localStorage.setItem('valio-aimo-voice-layout', next)
@@ -419,7 +421,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         <div className="top-nav">
           <nav aria-label={u.nav.main}>
             {!needsSetup &&
-              (['order', 'history', 'rules'] as const).map((v) => (
+              (['order', 'history', 'kitchen', 'rules'] as const).map((v) => (
                 <button key={v} type="button" className="link" aria-current={view === v ? 'page' : undefined} onClick={() => setView(v)}>
                   {u.nav[v]}
                 </button>
@@ -530,8 +532,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                   voiceOn={!!talk.session}
                   layout={layout}
                   onToggle={toggleLayout}
-                  bigOrb={<Orb state={live.state} size="big" label={u.conv.orbToThread} onToggle={toggleLayout} orbRef={orbRef} />}
-                  smallOrb={<Orb state={live.state} size="small" label={u.conv.orbToBig} onToggle={toggleLayout} orbRef={orbRef} />}
+                  bigOrb={<Orb state={live.state} size="big" label={u.conv.orbToThread} onToggle={toggleLayout} onSwipe={(dir) => chooseLayout(dir === 'up' ? 'orb' : 'thread')} orbRef={orbRef} />}
+                  smallOrb={<Orb state={live.state} size="small" label={u.conv.orbToBig} onToggle={toggleLayout} onSwipe={(dir) => chooseLayout(dir === 'up' ? 'orb' : 'thread')} orbRef={orbRef} />}
                   status={
                     <p role="status" className={live.state === 'error' ? 'bad' : undefined}>
                       {live.muted ? u.conv.muted : live.state === 'connecting' ? u.talk.connecting : (live.tool ?? u.talk.state[live.state])}
@@ -631,11 +633,12 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                 refreshKey={auditKey}
                 onAction={refreshAudit}
                 onAnnounce={setAnnounce}
-                onUpdateKitchen={() => {
-                  setOnboardingAsked(true)
-                  setView('order')
-                }}
               />
+            </section>
+
+            {/* HOOK: the Kitchen tab (Kitchen.tsx): onboarding on demand, what I know with sources, the kitchen's history */}
+            <section hidden={view !== 'kitchen'} aria-label={u.nav.kitchen}>
+              {view === 'kitchen' && <Kitchen refreshKey={auditKey} />}
             </section>
 
             <section hidden={view !== 'history'} aria-label={u.nav.history}>

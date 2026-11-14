@@ -6,6 +6,8 @@
   --orb-color: var(--accent);
   position: relative; display: grid; place-items: center; border: 0; padding: 0; background: none; cursor: pointer; border-radius: 50%;
   -webkit-tap-highlight-color: transparent;
+  touch-action: none; /* a swipe on the orb must never scroll the page */
+  user-select: none; -webkit-user-select: none;
 }
 .orb:focus-visible { outline: 3px solid var(--orb-color); outline-offset: 6px; }
 .orb-big { width: min(52vw, 220px); height: min(52vw, 220px); }
