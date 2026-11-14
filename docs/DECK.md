@@ -107,7 +107,7 @@ Sugar sachets for baking: **below 0.4** (eval). Coffee milk for "milk": a trap o
 > - If Gemini is down, the agent asks the chef: it loses autonomy, not safety.
 
 ### 9. Codex as our adversary
-**9 reviews · 62 findings · 43 fixed, each with a test.**
+**28 runs · 112 findings · 79 fixed, most with a test.**
 It caught prompt-injection bypasses, unvalidated confidence and stale approvals.
 
 > **Notes:**

@@ -11,7 +11,7 @@ testing" rule, nothing was run against the live API in this audit; the "live" it
 | Draft submitted on the platform | 👤 | Can't be seen from the repo. Omar or Zoha confirm on the Junction platform |
 | PR #67 (chat bubbles, Valio palette, landing transition) | ❌ | `gh pr view 67`: **OPEN**, not merged. Merge it, or close it if the redesign landed another way |
 | PR #34 (CI, built by Codex, ready for CRACI) | ❌ | `gh pr view 34`: **OPEN**. CI isn't running on main, so **don't tick CRACI** |
-| `scripts/release_check.py` after the last merges | ❌ | The script exists. Not run in this audit (no testing). Run it once after the 16:00 backend freeze and paste the summary here |
+| `scripts/release_check.py` after the last merges | ✅ (earlier commit) | **30/30 PASS on the live API at commit 82177d8** (Sat 14 Nov, about 14:25 Helsinki), per the control room. Re-run once after the 16:00 backend freeze, since later merges aren't covered |
 | Backend tests | ✅ (reported) | 434 pass, per the control room after PR #70. Not re-run here |
 | Credits form | 👤 | Human |
 | Challenges ticked, draft switched to FINAL before Sun 10:00 | 👤 | Tick Valio + Gemini + Codex. Not CRACI unless #34 merges and CI runs |
@@ -39,7 +39,7 @@ testing" rule, nothing was run against the live API in this audit; the "live" it
 | **J4** substitutes | ✅ | `gate._alternatives` (allergen-safe, same category, claims kept) |
 | **J4** Helsinki urgent | ✅ | `backend/app/urgent.py`, Helsinki only, suggestions only |
 | **J5** README correct | ⚠️ | Mostly current. Gaps: the photo, profile and onboarding routes are missing from the export (next row) |
-| **J5** OpenAPI export | ❌ | `docs/schemas/openapi.json` is stale. It's missing `/api/profile`, `/api/profile/memories`, `/api/profile/memories/{memory_id}`, `/api/profile/onboarding` and `/api/vision/read`. Re-run `backend/.venv/bin/python docs/export_schemas.py` after the backend freeze. The live `/openapi.json` on Render is generated, so it's current. `/api/live` is a WebSocket, so it's never in OpenAPI |
+| **J5** OpenAPI export | ✅ (regenerated in `room1-gaps`) | `docs/schemas/openapi.json` was stale (no profile, onboarding or vision routes). It now has 27 paths. Re-run `backend/.venv/bin/python docs/export_schemas.py` after the freeze. `/api/live` is a WebSocket, so OpenAPI never lists it |
 | **J5** ASSUMPTIONS, NEXT-STEPS | ✅ | NEXT-STEPS tightened in this branch |
 | **J5** `decision/` described honestly | ✅ | README J3: "the standalone reference decision engine … live decisions in `agent.py` and `gate.py`" |
 
@@ -49,7 +49,7 @@ testing" rule, nothing was run against the live API in this audit; the "live" it
 |---|---|---|
 | Gemini submission text answers the four questions | ✅ (this branch) | `docs/SUBMISSION.md` → "Best Use of Gemini: the four answers", rewritten from the code |
 | GEMINI.md and GEMINI-evidence.md match the live app | 👤 | Code facts checked. Live numbers are from Sat–Sun runs and not re-run (no testing). Re-check the milk line once tonight |
-| Codex claims in SUBMISSION.md match `docs/codex-log` | ⚠️ | SUBMISSION now says "over 100 review findings" (this branch). **CODEX.md still says 62 findings, 43 fixed.** The logs now also hold Room 2 runs #5 (3 findings) and #6 (5), and Room 3 runs #8 (6), #9 (9) and #11 (17): **about 40 more findings** after CODEX.md was written. Recount the fixed ones and update CODEX.md's table |
+| Codex claims in SUBMISSION.md match `docs/codex-log` | ✅ (`room1-gaps`) | Recounted from the logs: **28 runs, 112 findings, 79 kept/fixed**, 12 rejected, 10 deferred, 2 forwarded, 6 already fixed (statuses overlap). SUBMISSION, CODEX.md, PITCH, DECK, VIDEO and the deck HTML now say this. The deck PDF needs its re-export after the frontend freeze |
 | CRACI | ❌ | Only if #34 merges and CI really runs there. Not today |
 
 ## Submission assets

@@ -83,7 +83,7 @@ written down, and the path to production is concrete: Postgres, then AP2-style s
 "Gemini isn't decoration here.
 - It reads the chef. Its Decisions confidence decides when the agent may act alone, and below 0.70 it asks the chef.
 - If Gemini is down, the agent falls back and asks the chef instead of ordering.
-- Codex was our adversary: 9 reviews, 62 findings, 43 fixed, each with a test."
+- Codex was our adversary: 28 runs, 112 findings, 79 fixed, most with a test."
 
 **2:55 Close (5 s).** "Any agent can visit. Only the right orders get in."
 

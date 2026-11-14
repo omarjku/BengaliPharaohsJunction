@@ -60,7 +60,8 @@ Valio's side and never sent by the agent. It uses fresh quotes.
 - Every assumption is documented: Valio's API is the challenge mock, and cut-offs and delivery days are demo
   assumptions.
 
-Codex was our adversary: over 100 review findings across the rooms, most fixed with a test (exact count: docs/CODEX.md).
+Codex was our adversary: 112 numbered review findings across the rooms—79 kept/fixed, 12 rejected, 10 deferred,
+2 explicitly forwarded, and 6 already fixed (with status overlaps; see `docs/CODEX.md`).
 
 ## Best Use of Gemini: the four answers
 
