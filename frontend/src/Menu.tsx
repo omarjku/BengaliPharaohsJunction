@@ -1,30 +1,26 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { placeOrder, planMenu } from './api'
+import { useEffect, useRef, useState } from 'react'
+import { placeOrder } from './api'
 import { amountOf, headline, humanize, tidyName } from './copy'
-import { errorText, formatCents, formatDay, nextMonday } from './format'
+import { errorText, formatCents, formatDay } from './format'
 import { RunResult } from './RunResult'
 import type { Line, MenuRun, OrderResponse } from './types'
 
 type Props = {
+  plan: MenuRun
+  covers: number | null // from the ask response, when the backend reports it
+  requestedDate: string
   onAction: () => void // something was ordered (refresh the history)
   onBusy: (busy: boolean) => void
   onAnnounce: (text: string) => void
 }
 
-const MENU_EXAMPLE = 'Creamy salmon soup; lingonberry quark pie'
-const PLANNING = 'Reading the menu, estimating amounts per cover, then checking Valio stock and prices…'
 const productName = (l: Line) => tidyName(l.product.name_en ?? l.product.name_fi ?? l.product.id)
 const amount = (n: number | null, unit: string | null) => [n?.toLocaleString('en-US'), unit].filter(Boolean).join(' ')
 const and = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`)
 
-// Menu → cart: the agent proposes, the chef checks the amounts, then orders the cart as one order.
-export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
-  const [text, setText] = useState('')
-  const [covers, setCovers] = useState('80')
-  const [date, setDate] = useState(nextMonday)
-  const [plan, setPlan] = useState<MenuRun | null>(null)
-  const [planFor, setPlanFor] = useState({ covers: 0, date }) // what the shown plan was made for
-  const [running, setRunning] = useState(false)
+// A menu became a proposed cart: the chef checks the portions, then orders the cart as one order.
+export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAnnounce }: Props) {
+  const planFor = { covers, date: requestedDate }
   const [ordering, setOrdering] = useState(false)
   const [ordered, setOrdered] = useState<OrderResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -41,37 +37,15 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
   })
   // The decision's reasons about a product in the cart (not the generic 'amounts are estimates' one).
   const concerns = (l: Line) =>
-    plan?.decision.reasons.filter((r) => r.product_id === l.product.id && r.severity !== 'INFO' && r.code !== 'MENU_ASSUMPTIONS') ?? []
-  const n = Number(covers)
-  const coversOk = Number.isInteger(n) && n >= 1 && n <= 2000
+    plan.decision.reasons.filter((r) => r.product_id === l.product.id && r.severity !== 'INFO' && r.code !== 'MENU_ASSUMPTIONS')
+  const forWhom = covers ? `for ${covers.toLocaleString('en-US')} guests` : 'for your menu'
 
   useEffect(() => {
-    if (!plan) return
-    onAnnounce(`Ready to order. A cart for ${planFor.covers} covers, ${formatCents(plan.cart_total_cents)}.`)
+    onAnnounce(`Ready to order. A cart ${forWhom}, ${formatCents(plan.cart_total_cents)}.`)
     heading.current?.focus()
-  }, [plan, planFor.covers, onAnnounce])
-
-  async function submit(e: FormEvent) {
-    e.preventDefault()
-    setRunning(true)
-    setError(null)
-    setPlan(null)
-    setTotalSeen(false)
-    setOrdered(null)
-    onAnnounce('Planning the cart…')
-    try {
-      setPlan(await planMenu({ menu_text: text.trim(), covers: n, requested_date: date }))
-      setPlanFor({ covers: n, date })
-    } catch (err) {
-      setError(errorText(err))
-    } finally {
-      setRunning(false)
-      onAction()
-    }
-  }
+  }, [plan, forWhom, onAnnounce])
 
   async function orderCart() {
-    if (!plan) return
     setOrdering(true)
     onBusy(true)
     setError(null)
@@ -88,64 +62,6 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
 
   return (
     <>
-      <form className="ask" onSubmit={submit}>
-        <label className="ask-label" htmlFor="menu-text">
-          What’s on the menu?
-        </label>
-        <textarea
-          id="menu-text"
-          className="ask-field"
-          rows={3}
-          maxLength={4000}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault()
-              e.currentTarget.form?.requestSubmit()
-            }
-          }}
-          placeholder={MENU_EXAMPLE}
-          required
-        />
-        <div className="ask-row">
-          <div className="ask-inputs">
-            <label className="covers">
-              Covers
-              <input
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={2000}
-                value={covers}
-                onChange={(e) => setCovers(e.target.value)}
-                required
-              />
-            </label>
-            <label className="date-pick">
-              Delivery <strong className="num">{formatDay(date)}</strong>
-              <input
-                type="date"
-                aria-label="Delivery date"
-                value={date}
-                onChange={(e) => e.target.value && setDate(e.target.value)}
-                onClick={(e) => e.currentTarget.showPicker?.()}
-                required
-              />
-            </label>
-          </div>
-          <button type="submit" className="btn" disabled={running || ordering || !text.trim() || !coversOk}>
-            {running ? 'Planning…' : 'Plan the cart'}
-          </button>
-        </div>
-      </form>
-
-      {running && (
-        <div className="working">
-          <p>{PLANNING}</p>
-          <div className="working-bar" aria-hidden="true" />
-        </div>
-      )}
       {error && (
         <div className="problem" role="alert">
           <strong>That didn’t go through.</strong>
@@ -153,11 +69,11 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
         </div>
       )}
 
-      {plan && ordered && (
+      {ordered && (
         <RunResult
           key={ordered.audit_id}
           run={{
-            request: { summary: `Menu for ${planFor.covers} covers`, items: plan.ingredients },
+            request: { summary: `Menu ${forWhom}`, items: plan.ingredients },
             lines: plan.lines,
             decision: plan.decision,
             order: ordered,
@@ -170,12 +86,12 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
         />
       )}
 
-      {plan && !ordered && (
+      {!ordered && (
         <>
           <section className="answer" aria-label="Proposed cart">
             <p className="status neutral">Ready to order</p>
             <h2 ref={heading} tabIndex={-1} className="answer-text">
-              A cart for {planFor.covers.toLocaleString('en-US')} covers, {formatCents(plan.cart_total_cents)}.
+              A cart {forWhom}, {formatCents(plan.cart_total_cents)}.
             </h2>
             <p className="answer-sub">
               Portions are estimates. Check them before you order. Delivery {formatDay(planFor.date)}, prices excl. VAT.

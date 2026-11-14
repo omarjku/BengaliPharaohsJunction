@@ -199,6 +199,16 @@ export type CompileResult = {
 }
 export type SaveResult = { mandate: Mandate; changes: RuleChange[]; audit_id: string }
 
+// POST /api/agent/ask: one box for everything. The intent says which body came back.
+// Assumed until Room 3 sends the final shape: requested_date = the date used (from the text or the override);
+// a menu without a guest count comes back with `question` and no cart; 'unclear' comes back with `question`.
+export type AskInput = { text: string; requested_date?: string }
+export type AskResponse =
+  | ({ intent: 'order'; requested_date?: string } & AgentRun)
+  | ({ intent: 'menu'; requested_date?: string; covers?: number; question?: undefined } & MenuRun)
+  | { intent: 'menu'; requested_date?: string; question: string; audit_id?: string }
+  | { intent: 'unclear'; question: string; requested_date?: string; audit_id?: string }
+
 export type RunInput = { text: string; requested_date: string; buyer_id?: string }
 export type OrderInput = { requested_date: string; lines: { product_id: string; quantity: number }[] }
 

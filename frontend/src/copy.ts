@@ -85,7 +85,13 @@ export function tidyName(name: string): string {
 
 export const RUNNING = 'Reading your request, then checking the catalogue, Valio stock and prices…'
 export const EXAMPLE = '1000 L lactose-free milk for Monday'
-export const TRY = ['1000 L lactose-free milk for Monday', '200 L milk drink', '1000 packs of unsalted butter']
+// One box for everyone: a milk order, a kebab shop's meat, a whole menu. Shown as cycling grey examples and as Try links.
+export const EXAMPLES = [
+  '1000 L lactose-free milk for Monday',
+  '20 kg döner kebab meat for the rotisserie, Friday',
+  'Menu for 80 guests: reindeer stew, mashed potatoes, lingonberry cheesecake',
+]
+export const TRY = EXAMPLES
 export const HISTORY_INTRO = 'What was ordered, held or refused.'
 
 // Valio's sales-unit codes in words. Unknown codes are shown as they are.
