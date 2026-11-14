@@ -1,0 +1,177 @@
+{
+  "$defs": {
+    "HardRule": {
+      "additionalProperties": false,
+      "description": "A check that is either met or not. Breaking one justifies DECLINE\n(except AUTO_APPROVE_LIMIT_EUR, which only decides who signs off).",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/RuleKind"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "description": "Allergen/claim name, or a number, depending on kind.",
+          "title": "Value"
+        },
+        "scope": {
+          "$ref": "#/$defs/PreferenceScope",
+          "default": "always"
+        },
+        "source_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The buyer's own words.",
+          "title": "Source Text"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "title": "HardRule",
+      "type": "object"
+    },
+    "OpenQuestion": {
+      "additionalProperties": false,
+      "description": "Something the compiler could not resolve; asked, not guessed.",
+      "properties": {
+        "question": {
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        },
+        "why": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Why"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "title": "OpenQuestion",
+      "type": "object"
+    },
+    "Preference": {
+      "additionalProperties": false,
+      "description": "Soft guidance that is not a clean check; shapes ranking, never blocks.",
+      "properties": {
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/PreferenceScope"
+        }
+      },
+      "required": [
+        "text",
+        "scope"
+      ],
+      "title": "Preference",
+      "type": "object"
+    },
+    "PreferenceScope": {
+      "description": "How long a preference lasts (D5: don't over-generalise).",
+      "enum": [
+        "this_order",
+        "always"
+      ],
+      "title": "PreferenceScope",
+      "type": "string"
+    },
+    "RuleKind": {
+      "description": "Closed list of checks a hard rule may express.",
+      "enum": [
+        "excluded_allergen",
+        "required_claim",
+        "max_unit_price_eur",
+        "min_delivery_reliability",
+        "auto_approve_limit_eur"
+      ],
+      "title": "RuleKind",
+      "type": "string"
+    },
+    "UncertaintyPolicy": {
+      "description": "What the agent does when it cannot verify something.",
+      "enum": [
+        "ask",
+        "decline",
+        "approve"
+      ],
+      "title": "UncertaintyPolicy",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "buyer_id": {
+      "minLength": 1,
+      "title": "Buyer Id",
+      "type": "string"
+    },
+    "hard_rules": {
+      "items": {
+        "$ref": "#/$defs/HardRule"
+      },
+      "title": "Hard Rules",
+      "type": "array"
+    },
+    "uncertainty_policy": {
+      "$ref": "#/$defs/UncertaintyPolicy",
+      "default": "ask"
+    },
+    "guidance": {
+      "items": {
+        "$ref": "#/$defs/Preference"
+      },
+      "title": "Guidance",
+      "type": "array"
+    },
+    "open_questions": {
+      "items": {
+        "$ref": "#/$defs/OpenQuestion"
+      },
+      "title": "Open Questions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "buyer_id"
+  ],
+  "title": "Mandate",
+  "type": "object"
+}

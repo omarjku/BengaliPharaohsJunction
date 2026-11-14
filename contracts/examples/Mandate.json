@@ -1,0 +1,35 @@
+{
+  "contract_version": "0.1",
+  "id": "mandate-001",
+  "buyer_id": "hotel-demo",
+  "hard_rules": [
+    {
+      "kind": "required_claim",
+      "value": "FREE_FROM_LACTOSE",
+      "scope": "this_order",
+      "source_text": "it has to be lactose-free"
+    },
+    {
+      "kind": "auto_approve_limit_eur",
+      "value": 500,
+      "scope": "always",
+      "source_text": "anything over 500 euros needs the manager"
+    },
+    {
+      "kind": "min_delivery_reliability",
+      "value": 0.9,
+      "scope": "always",
+      "source_text": "delivery has to be reliable"
+    }
+  ],
+  "uncertainty_policy": "ask",
+  "guidance": [
+    { "text": "Prefer Finnish origin when the price is close.", "scope": "always" }
+  ],
+  "open_questions": [
+    {
+      "question": "Does 1,000 L mean 1,000 one-litre cartons?",
+      "why": "Pack sizes differ (1 L carton vs 10 L novobox)."
+    }
+  ]
+}

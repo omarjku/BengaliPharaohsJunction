@@ -1,0 +1,14 @@
+{
+  "contract_version": "0.1",
+  "product_id": "463335",
+  "product_name": "Valio Eila 3% milk drink 1 L",
+  "unit_price_eur": 1.4,
+  "unit": "1 L carton",
+  "availability": "available",
+  "quantity": { "known": true, "value": 5000 },
+  "available_date": "2026-11-16",
+  "source": "valio_api",
+  "fetched_at": "2026-11-14T09:00:05+02:00",
+  "valid_until": "2026-11-14T09:15:05+02:00",
+  "cut_off": { "closing_time": "2026-11-15T17:00:00+02:00", "passed": false }
+}
