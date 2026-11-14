@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { ApiError, askAgentStream, DROPPED, getAdminKey, getHealth, getKeys, KEYS_FROM_LINK, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
+import { ApiError, askAgentStream, DROPPED, getAdminKey, getHealth, getKeys, KEYS_FROM_LINK, applyLinkKeys, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
 import { buyerLabel, errorText, nextMonday } from './format'
 import { groupHistory } from './history'
@@ -95,13 +95,15 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const [auditKey, setAuditKey] = useState(0)
   const [deciding, setDeciding] = useState(false) // approve/reject in flight
   const [announce, setAnnounce] = useState('')
-  // Opened from a setup link: say once, quietly, that the keys were saved (api.ts read and removed the link).
+  // Opened from a setup link (api.ts read and removed it): say quietly that the keys were saved, or, when other keys
+  // were already saved here, ask before replacing them.
+  // The notice stays until dismissed, so keys that changed are always noticed.
   const [fromLink, setFromLink] = useState(KEYS_FROM_LINK)
-  useEffect(() => {
-    if (!fromLink) return
-    const t = setTimeout(() => setFromLink(false), 6000)
-    return () => clearTimeout(t)
-  }, [fromLink])
+  function answerLink(replace: boolean) {
+    applyLinkKeys(replace)
+    setFromLink(replace ? 'saved' : null)
+    if (replace) keysSaved()
+  }
   const phaseLine = usePhaseLine(400)
   const refreshAudit = () => setAuditKey((k) => k + 1)
   const offline = useBackendDown()
@@ -321,10 +323,26 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
             <strong>{u.mock.title}</strong> {u.mock.body}
           </p>
         )}
-        {fromLink && (
+        {fromLink === 'saved' && (
           <p className="note banner" role="status">
-            {u.keys.fromLink}
+            {u.keys.fromLink}{' '}
+            <button type="button" className="link accent inline" onClick={() => setFromLink(null)}>
+              {u.keys.ok}
+            </button>
           </p>
+        )}
+        {fromLink === 'confirm' && (
+          <div className="banner" role="alertdialog" aria-labelledby="link-keys-q">
+            <p id="link-keys-q">{u.keys.replaceQ}</p>
+            <div className="actions">
+              <button type="button" className="btn" onClick={() => answerLink(true)}>
+                {u.keys.replace}
+              </button>
+              <button type="button" className="btn plain" onClick={() => answerLink(false)}>
+                {u.keys.keepMine}
+              </button>
+            </div>
+          </div>
         )}
         {offline && (
           <div className="problem banner" role="status">
