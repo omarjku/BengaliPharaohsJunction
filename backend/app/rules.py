@@ -13,7 +13,7 @@ import httpx
 from fastapi import HTTPException
 from trade_compiler import compile_mandate
 from trade_compiler.safety import DEFAULT_ORDER_LIMIT_CENTS
-from trade_contracts import AuditEntry, AuditInput, Decision, HardRule, Mandate, PurchaseRequest
+from trade_contracts import AuditEntry, AuditInput, Decision, HardRule, Mandate, OpenQuestion, PurchaseRequest
 from trade_contracts import ReasonCode as C
 from trade_contracts.common import PreferenceScope, RuleKind, UncertaintyPolicy
 
@@ -136,11 +136,61 @@ def with_default_limit(m: Mandate) -> Mandate:
 
 
 # --- routes' logic
+MAX_RULE_CHECKS = 20
+FAITHFUL_MIN = 0.5  # P(rule reflects the chef's text) below this → an open question (backend/eval/guards_eval.py)
+
+
+def rule_texts(m: Mandate) -> list[str]:
+    """The compiled rules in plain words, for the faithfulness check (the added default limit is not the chef's)."""
+    out = []
+    for r in m.hard_rules:
+        if r.source_text and r.source_text.startswith("Default:"):
+            continue
+        v = gate._num(r.value)
+        if r.kind is RuleKind.EXCLUDED_ALLERGEN:
+            out.append(f"Never order anything containing {r.value}.")
+        elif r.kind is RuleKind.REQUIRED_CLAIM:
+            out.append(f"Only order products labelled {r.value}.")
+        elif r.kind is RuleKind.AUTO_APPROVE_LIMIT_CENTS and v is not None:
+            out.append(f"Auto-approve up to {_eur(v)} per order.")
+        elif r.kind is RuleKind.MAX_UNIT_PRICE_CENTS and v is not None:
+            out.append(f"Never pay more than {_eur(v)} per unit.")
+        elif r.kind is RuleKind.MIN_DELIVERY_RELIABILITY and v is not None:
+            out.append(f"Only products delivered on time at least {v:.0%} of the time.")
+        else:
+            out.append(f"{r.kind.value}: {r.value}")
+    if m.weekly_budget_cents:
+        out.append(f"Spend at most {_eur(m.weekly_budget_cents)} in any 7 days.")
+    return out
+
+
+async def faithful(chef_text: str, rule: str) -> float | None:
+    """Gemini Decisions guard: does this compiled rule say what the chef wrote? Only ever adds an open question."""
+    answers = await agent._decisions(f"{agent.UNTRUSTED}\nA chef wrote their purchasing rules:\n"
+                                     f"{agent._wrap(chef_text)}\nCompiled rule: {rule}", {"faithful": {
+        # "covers ONE of them" matters: asked plainly, partial (but faithful) rules scored 0.12-0.56 (eval)
+        "type": "noul", "instructions": "The chef's text contains several rules; the compiled rule covers ONE of them. "
+                                        "Does the chef's text say this (same meaning, same numbers)?",
+        "criteria": {"true_description": "Yes: the text states this rule (it may state other rules too).",
+                     "false_description": "No: the text does not say this, or says a different number or item."}}})
+    return agent._yes(answers["faithful"]) if answers else None
+
+
 async def compile_rules(text: str, who: Principal) -> dict:
     res = await asyncio.to_thread(compile_mandate, text, PreferenceScope.ALWAYS, llm=RestLLM(),
                                   buyer_id=who.buyer_id, mandate_id=f"{who.buyer_id}-draft")
     current, proposed = mandates.get(who.buyer_id), with_default_limit(res.mandate)
     defaulted = proposed is not res.mandate
+    texts = rule_texts(proposed)
+    doubts = [OpenQuestion(question=f"Did you mean: \"{t}\"?", why=f"A check found this may not match your words "
+                           f"(Gemini Decisions: {agent._pct(y)}).")
+              for t, y in zip(texts, await asyncio.gather(*(faithful(text, t) for t in texts[:MAX_RULE_CHECKS])))
+              if y is not None and y < FAITHFUL_MIN]
+    if len(texts) > MAX_RULE_CHECKS:  # bounded paid fan-out; the unchecked rest still can't be saved unreviewed
+        doubts.append(OpenQuestion(question=f"{len(texts) - MAX_RULE_CHECKS} more rules weren't checked "
+                                   "automatically; please review them before saving.", why="Too many rules at once."))
+    if doubts:  # a doubtful rule is never saved silently: saving needs every open question answered
+        proposed = proposed.model_copy(update={"open_questions": [*proposed.open_questions, *doubts]})
     return {"proposed_mandate": proposed.model_dump(mode="json"),
             "diff_from_current": diff(current, proposed),
             "open_questions": [q.model_dump(mode="json") for q in proposed.open_questions],

@@ -6,6 +6,7 @@ pipeline as /api/agent/run (catalogue, Gemini rank, live Valio quotes, quantity,
 mandate limits, reliability floor, Finnish preference). Recipe quantities are guesses, so the Decision is always
 ASK_HUMAN with MENU_ASSUMPTIONS; the chef confirms by posting `order_lines` to POST /api/orders, which re-checks it.
 """
+import asyncio
 import math
 import re
 from datetime import date, datetime, timezone
@@ -20,6 +21,7 @@ from trade_contracts.common import Channel, RuleKind
 from . import agent, catalogue, gate, mandates, orders, quantity, valio
 
 MAX_INGREDIENTS = 20
+MAX_DISHES, MAX_PER_DISH = 12, 15  # bound what a (possibly steered) menu parse can make the agent check and price
 # Per-cover amounts above these are flagged, not trusted: 1 kg of potato per plate is a misread, not a recipe.
 PER_COVER_MAX = {"volume": 1.0, "weight": 1.0, "count": 6}  # L, kg, pieces
 BASE_UNIT = {"volume": "L", "weight": "kg", "count": "pcs"}
@@ -123,13 +125,34 @@ def scale(dishes: list[dict], covers: int) -> tuple[list[dict], list[dict], list
     return ingredients, assumptions, problems
 
 
+ASSUMPTION_MIN = 0.5  # weaker of 'needed' / 'amount reasonable' below this → flagged (backend/eval/guards_eval.py)
+
+
+async def check_assumption(dish: str, ingredient: str, per_cover, unit, text: str) -> float | None:
+    """Gemini Decisions guard per (dish, ingredient): is it needed, and is the per-portion amount reasonable?
+    One call, two questions about the same assumption; the weaker answer. A low score only flags it for the chef."""
+    answers = await agent._decisions(
+        f"{agent.UNTRUSTED}\nA professional restaurant kitchen plans a dish.\n"
+        f"{agent._wrap(f'Dish: {dish}. Ingredient: {ingredient}, {per_cover} {unit} per portion. {text}')}", {
+            "needed": {"type": "noul", "instructions": "Is this ingredient normally needed for this dish?",
+                       "criteria": {"true_description": "Yes, a usual ingredient of this dish.",
+                                    "false_description": "No, it doesn't belong in this dish."}},
+            "amount": {"type": "noul", "instructions": "Is this per-portion amount reasonable for this dish?",
+                       "criteria": {"true_description": "Yes, a normal restaurant portion amount.",
+                                    "false_description": "No, clearly too much or too little for one portion."}}})
+    if not answers:
+        return None
+    ys = [agent._yes(answers[k]) for k in ("needed", "amount")]
+    return None if None in ys else min(ys)
+
+
 async def parse_menu(menu_text: str) -> list[dict] | None:
     out = await agent._gemini(MENU_PROMPT, agent._wrap(menu_text), _MENU_SCHEMA)
     if not out or not isinstance(out.get("dishes"), list):
         return None
     return [{"name": str(d.get("name") or "").strip(), "ingredients": [dict(i) for i in d.get("ingredients") or []
-                                                                         if isinstance(i, dict)]}
-            for d in out["dishes"] if isinstance(d, dict) and str(d.get("name") or "").strip()]
+                                                                         if isinstance(i, dict)][:MAX_PER_DISH]}
+            for d in out["dishes"] if isinstance(d, dict) and str(d.get("name") or "").strip()][:MAX_DISHES]
 
 
 async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -> dict:
@@ -149,7 +172,12 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -
                                "Check where the menu came from before ordering anything from this cart."))
     excluded = set().union(*(gate._allergen_codes(str(v)) for v in gate._rules(m, RuleKind.EXCLUDED_ALLERGEN)))
 
-    dishes = await parse_menu(menu_text)
+    dishes, steer = await asyncio.gather(parse_menu(menu_text), agent.steering(menu_text))
+    if steer is not None and steer >= agent.INJECTION_MAX:
+        reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, "This menu seems to try to change limits, delivery, invoicing or "
+                               f"approvals, or claims special authority (Gemini Decisions: {agent._pct(steer)}).", None,
+                               "Check where the menu came from before ordering anything from this cart.",
+                               steering=steer))
     if dishes is None:  # no fallback: turning dishes into ingredients is the language job itself
         reasons.append(gate._r(C.ENGINE_ERROR, ASK, "Gemini couldn't read the menu, so no cart was proposed.", None,
                                "Retry in a moment, or order the ingredients with a normal request."))
@@ -177,7 +205,17 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -
         ingredients = ingredients[:MAX_INGREDIENTS]
     items = ingredients  # agent.canonical() tells the judge which dishes each ingredient is for
 
-    res = await agent._pipeline(menu_text, items, requested, buyer_id, m, excluded, now, reasons, True)
+    res, checks = await asyncio.gather(  # pricing and the assumption checks run side by side
+        agent._pipeline(menu_text, items, requested, buyer_id, m, excluded, now, reasons, True),
+        asyncio.gather(*(check_assumption(a["dish"], a["ingredient"], a["per_cover"], a["unit"], a["text"])
+                         for a in assumptions[:MAX_DISHES * MAX_PER_DISH])))
+    for a, y in zip(assumptions, checks):
+        a["check"], a["flagged"] = y, y is not None and y < ASSUMPTION_MIN
+        if a["flagged"]:
+            reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"Check this assumption: {a['per_cover']} {a['unit']} of "
+                                   f"{a['ingredient']} per portion for {a['dish']} (Gemini Decisions: {agent._pct(y)} "
+                                   "that it belongs and the amount is reasonable).", None,
+                                   "Correct the amount or remove the ingredient before ordering.", check=y))
     lines, chosen = res["lines"], res["chosen"]
     for ln in lines:
         ln["dishes"] = ingredients[ln["item"]]["dishes"]
