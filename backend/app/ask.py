@@ -732,8 +732,15 @@ def _parsed_action(action: dict, source: str, text: str) -> tuple[dict, bool]:
     for item in slots.get("items") or []:
         if not item.get("name"):
             continue
-        parsed = agent._item(item["name"], item.get("amount"), item.get("unit"), agent._diet_tags(item, tags),
-                             source=item.get("source") or item["name"])
+        source = item.get("source") or item.get("_standing_text") or item["name"]
+        stated_item = {"query": item["name"]}
+        if item.get("_standing_text"):
+            source_items = agent.fallback_parse(item["_standing_text"])
+            if source_items:
+                stated_item = source_items[0]
+        unit = agent.stated_unit(text, stated_item) or agent.stated_unit(source, stated_item) \
+            or item.get("unit")
+        parsed = agent._item(item["name"], item.get("amount"), unit, agent._diet_tags(item, tags), source=source)
         if item.get("_standing_order"):
             parsed["standing_order"] = True
             parsed["standing_order_day"] = item.get("_standing_order_day") or action.get("_standing_order_day")

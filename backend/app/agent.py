@@ -1021,6 +1021,28 @@ def _unit_ok(unit: str | None) -> bool:
     return bool(unit) and (unit.lower() in quantity.MEASURES or bool(re.fullmatch(r"[A-Z]{2,4}", unit)))
 
 
+def stated_unit(text: str, item: dict) -> str | None:
+    """Return the weight/volume unit stated next to an item's product, if any.
+
+    Understanding may carry a corrected amount with a stale count unit.  The line builders use this deterministic
+    fact before grounding and before ``quantity.resolve``; a stated piece count remains a piece count.
+    """
+    words = re.findall(r"[\wäöå]+", str(item.get("query") or item.get("name") or "").lower())
+    if not words or not text:
+        return None
+    aliases = {alias: canonical for canonical, names in _UNIT_WORDS.items() for alias in names}
+    aliases.update({name: "pcs" for name in ("pcs", "pc", "piece", "pieces", "kpl")})
+    measure = re.compile(r"\d[\d,. ]*\s*(" + "|".join(sorted(aliases, key=len, reverse=True)) + r")\b", re.I)
+    for clause in re.split(_SPLIT, str(text)):
+        if not _words_in(words, clause):
+            continue
+        matches = list(measure.finditer(clause))
+        if matches:
+            unit = aliases[matches[-1].group(1).lower()]
+            return "L" if unit == "l" else unit
+    return None
+
+
 def _decision(request_id: str, reasons: list[Reason], alternatives: list[Alternative], now: datetime,
               confidence: float | None = None) -> Decision:
     rs = gate._sorted(reasons)
@@ -1145,6 +1167,9 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
     gate checks, Gemini Decisions confidence, the choice (safety, confidence, limits, concerns, Finnish preference,
     price), substitutes. Appends the problems it finds to `reasons`. The Decisions judge reads `canonical(item)`
     (parsed fields only; menu items add their dishes), never raw text."""
+    for item in items:
+        if unit := stated_unit(text, item):
+            item["unit"] = unit
     standing = profile.dietary(buyer_id)
     low = text.lower()
     stated = {t for w, t in _WORDS.items() if w in low}
