@@ -18,13 +18,14 @@ from zoneinfo import ZoneInfo
 
 from trade_contracts import ReasonCode as C
 
-from . import agent, conversation, gate, menu, progress, urgent
+from . import agent, catalogue, conversation, gate, menu, progress, urgent
 
 TZ = ZoneInfo("Europe/Helsinki")
 log = logging.getLogger(__name__)
 INTENT_PROMPT = agent.UNTRUSTED + """
 You route a food buyer's message for a wholesaler's ordering agent. Classify it:
-- "order": a list of products to buy (e.g. "20 kg döner kebab meat", "milk and 30 croissants for tomorrow").
+- "order": one or more products to buy, WITH OR WITHOUT an amount (e.g. "20 kg döner kebab meat", "milk and 30
+  croissants for tomorrow", "gluten-free pizza", "cream"). A product name alone is an order; the agent asks how much.
 - "menu": dishes to cook, usually for a number of guests (e.g. "Menu for 80 guests: reindeer stew, cheesecake").
 - "unclear": neither, or you can't tell.
 covers: the number of guests/people/portions if the message states one, else null. Never estimate it."""
@@ -87,7 +88,10 @@ async def classify(text: str) -> tuple[str, int | None, bool]:
     covers = int(m[1]) if m and 1 <= int(m[1]) <= 2000 else None
     if covers or re.search(r"\b(menu|ruokalista)\b", text, re.I):
         return "menu", covers, False
-    return ("order" if re.search(r"\d", text) else "unclear"), None, False
+    # a product the catalogue knows, even without a number, is an order that asks the amount (black-box B3: Gemini
+    # timed out and "lactose-free milk for Monday" was called off-topic)
+    known = any(catalogue.search(it["query"], [], [], False, None, 1) for it in agent.fallback_parse(text) if it["query"])
+    return ("order" if re.search(r"\d", text) or known else "unclear"), None, False
 
 
 def _ask(intent: str, covers, when, source, question: str, code: C, fix: str, kind: str | None = None) -> dict:
@@ -125,12 +129,32 @@ def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict
         elif again:
             kind = "confirm"
             out["question"] = again["message"].split(". Nothing")[0]
+        elif not out.get("order") and (out.get("decision") or {}).get("outcome") == "ASK_HUMAN":
+            # Never a dead end (black-box #8): an unsure order with nothing placed asks which product was meant, and
+            # the answer continues the same request (every check re-runs).
+            if names := _options(out.get("lines", [])):
+                kind, state = "clarify", {"options": names}
+                out["question"] = ("Which one did you mean: " + "; ".join(f"{n}) {x}" for n, x in enumerate(names, 1))
+                                   + "? Or say it more precisely.")
     out["conversation_id"] = None
     if kind and out.get("question"):
         out["conversation_id"] = conversation.save(buyer_id, kind, {
             "text": text, "requested": out.get("requested_date") or (requested and requested.isoformat()), **state})
     out["speak"] = conversation.speak(out, conversation.language(text))
     return out
+
+
+_PACK = re.compile(r"\b\d[\d,.]*\s*(?:x\s*\d[\d,.]*\s*)?(?:l|dl|cl|ml|kg|g|pcs|kpl)\b|\b\d+\s*x\b", re.I)
+_ORDINAL = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3, "ensimmäinen": 1, "toinen": 2,
+            "kolmas": 3}
+
+
+def _options(lines: list[dict]) -> list[str]:
+    """Up to 3 product names to choose from, most likely first, pack sizes removed (so they never become amounts)."""
+    ranked = sorted((ln for ln in lines if ln.get("product")), key=lambda ln: (not ln.get("chosen"),
+                                                                                -(ln.get("confidence") or 0)))
+    names = [re.sub(r"\s+", " ", _PACK.sub(" ", ln["product"].get("name_en") or "")).strip(" ,") for ln in ranked]
+    return list(dict.fromkeys(n for n in names if n))[:3]
 
 
 async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, date | None]:
@@ -144,7 +168,7 @@ async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, d
 
     def again(question: str, fix: str) -> dict:  # couldn't read the answer: ask the same thing again
         out = _ask("order", entry.get("covers"), requested, None, question, C.QTY_AMBIGUOUS, fix, kind)
-        out["_state"] = {k: entry[k] for k in ("request", "item") if k in entry}
+        out["_state"] = {k: entry[k] for k in ("request", "item", "options") if k in entry}
         return out
 
     today = datetime.now(TZ).date()
@@ -168,6 +192,17 @@ async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, d
         if not conversation.YES.search(answer):
             return again("Order it again?", "Say yes or no."), text, requested
         return await _flow(text + " (again)", requested, buyer_id), text, requested
+    if kind == "clarify":  # "the second", "2", or the chef's own words: added to the request, every check re-runs
+        low = answer.lower().strip()
+        pick = next((v for w, v in _ORDINAL.items() if re.search(rf"\b{w}\b", low)), None)
+        if pick is None and re.fullmatch(r"\D*([1-3])\D*", low):
+            pick = int(re.fullmatch(r"\D*([1-3])\D*", low)[1])
+        options = entry.get("options") or []
+        choice = options[pick - 1] if pick and pick <= len(options) else answer.strip()
+        if not choice:
+            return again("Which one did you mean?", "Say the number of the option, or the product."), text, requested
+        merged = f"{text} ({choice})"  # same clause: the amount the chef gave stays with the product
+        return await _flow(merged, requested, buyer_id), merged, requested
     # amount: only the asked item's amount and unit change; the stored parse, buyer and mandate stay
     request, n_item = entry["request"], entry["item"]
     item = request["items"][n_item]
@@ -193,7 +228,7 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
     # Menu markers always route to the menu path (classify), so its parse starts now and the order parse is skipped
     # (room3-menu-speed: the unused order parse used to block the menu parse for ~8 s).
     menu_first = given_parse is None and bool(given_covers is not None or _COVERS.search(text) or _MENU_WORD.search(text))
-    dishes = asyncio.create_task(menu.parse_menu(text)) if menu_first else None
+    dishes = asyncio.create_task(menu.parse_menu(text, buyer_id)) if menu_first else None
     try:
         return await _route(text, requested, buyer_id, today, stated, guess, t0, given_covers, given_parse, dishes)
     finally:

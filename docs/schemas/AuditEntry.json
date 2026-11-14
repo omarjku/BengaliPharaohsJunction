@@ -695,7 +695,8 @@
         "ENGINE_ERROR",
         "MENU_ASSUMPTIONS",
         "CONFIDENCE_OK",
-        "FRONT_DOOR"
+        "FRONT_DOOR",
+        "PROFILE_DEFAULT"
       ],
       "title": "ReasonCode",
       "type": "string"

@@ -1,0 +1,11 @@
+{
+  "helsinki-bistro": [
+    {"kind": "business_type", "key": "kitchen", "text": "Our kitchen is gluten-free",
+     "value": {"dietary": ["gluten_free"]}},
+    {"kind": "usual_product", "key": "butter", "text": "Valio butter 500 g unsalted", "value": {"product_id": "464411"}},
+    {"kind": "usual_product", "key": "gluten-free flour", "text": "Sunnuntai 1 kg gluten-free flour mix",
+     "value": {"product_id": "475852"}},
+    {"kind": "usual_product", "key": "mozzarella", "text": "Galbani mozzarella grated 2 kg",
+     "value": {"product_id": "471650"}}
+  ]
+}
