@@ -32,6 +32,8 @@ _INTENT_SCHEMA = {"type": "object", "required": ["intent", "covers"], "propertie
     "intent": {"type": "string", "enum": ["order", "menu", "unclear"]},
     "covers": {"type": "integer", "nullable": True}}}
 
+_MENU_WORD = re.compile(r"\b(menu|ruokalista|lounaslista)\b", re.I)
+_COMPOUND_DATE = re.compile(r"\b(after next|week after|following|viikon päästä|ensi viikon jälkeen)\b", re.I)
 _WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6,
              "maanantai": 0, "tiistai": 1, "keskiviikko": 2, "torstai": 3, "perjantai": 4, "lauantai": 5,
              "sunnuntai": 6}
@@ -43,6 +45,8 @@ def date_from_text(text: str, today: date) -> date | None:
     """The delivery date the text states, deterministically: ISO, d.m.(yyyy), today/tomorrow (Finnish too), a
     weekday (the next one; the same weekday as today means next week). None if no date is stated."""
     low = text.lower()
+    if _COMPOUND_DATE.search(low):  # "the Monday after next": never guess which Monday (Codex #4)
+        return None
     if m := re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", low):
         try:
             return date(int(m[1]), int(m[2]), int(m[3]))
@@ -71,9 +75,13 @@ async def classify(text: str) -> tuple[str, int | None, bool]:
     out = await agent._gemini(INTENT_PROMPT, agent._wrap(text), _INTENT_SCHEMA)
     if out and out.get("intent") in ("order", "menu", "unclear"):
         covers = out.get("covers")
+        # covers only when the text writes that number AS a guest count ("80 kg flour" is not 80 guests; Codex #6)
         ok = isinstance(covers, int) and not isinstance(covers, bool) and 1 <= covers <= 2000 \
-            and float(covers) in agent._numbers(text)
-        return out["intent"], covers if ok else None, True
+            and any(int(m[1]) == covers for m in _COVERS.finditer(text))
+        intent = out["intent"]
+        if intent == "order" and (_COVERS.search(text) or _MENU_WORD.search(text)):
+            intent = "menu"  # menu markers route to the proposal-only path whatever the model said (Codex #5)
+        return intent, covers if ok else None, True
     # fallback without Gemini: a guest count or the word menu → menu; an amount → order
     m = _COVERS.search(text)
     covers = int(m[1]) if m and 1 <= int(m[1]) <= 2000 else None
@@ -94,6 +102,7 @@ async def ask(text: str, requested: date | None, buyer_id: str, follow_up: dict 
     """One input box, plus conversational follow-ups: with `follow_up` {to, answer} the chef's answer continues the
     request that asked (conversation.py). Every response gets `speak` and, when it asks something an answer can
     continue, `conversation_id`."""
+    agent.start_budget(agent.DECISIONS_PER_MENU)  # before the preflight calls (Codex #17); run/menu reuse it
     if follow_up:
         entry = conversation.take(follow_up["to"], buyer_id)
         out, text, requested = await _answer(entry, follow_up["answer"], buyer_id)

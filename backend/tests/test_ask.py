@@ -103,7 +103,8 @@ SAT_10 = datetime(2026, 11, 14, 10, 0, tzinfo=ask.TZ)  # Saturday 10:00, Helsink
 
 
 def _q(avail="2026-11-16", flags=()):
-    return {"quote": {"available_date": avail, "order_cutoff": "2026-11-15T17:00:00+0200", "flags": list(flags)}}
+    return {"quote": {"available_date": avail, "order_cutoff": "2099-11-15T17:00:00+0200", "flags": list(flags),
+                      "orderable": not flags}}
 
 
 def test_helsinki_urgency_suggests_walk_in_and_click_and_collect_never_orders():
@@ -119,7 +120,7 @@ def test_helsinki_urgency_suggests_walk_in_and_click_and_collect_never_orders():
 
 def test_lapland_urgency_gets_the_honest_next_delivery():
     [opt] = urgent.urgent_options("20 kg butter right now", "lapland-kitchen", SAT_10.date(), SAT_10, [_q()])
-    assert opt["kind"] == "next_delivery" and "2026-11-16 if ordered before 2026-11-15T17:00:00+0200" in opt["text"]
+    assert opt["kind"] == "next_delivery" and "2026-11-16 if ordered before 2099-11-15T17:00:00+0200" in opt["text"]
 
 
 def test_urgent_options_need_urgency_and_a_late_delivery():
@@ -282,3 +283,19 @@ def test_speak_for_a_doubtful_pick():
             "lines": [{"chosen": True, "line_total_cents": 2885, "product": {"name_en": "Arla Pro Whipping cream 1 L"},
                        "quantity": {"requested": {"amount": 5, "unit": "L"}}}]}
     assert conversation.speak(body, "en") == "Please check: Arla Pro Whipping cream 1 L, 28.85 euros. I'm not sure it's what you meant."
+
+
+def test_codex4_5_6_dates_menus_and_covers(shop1, monkeypatch):  # noqa: F811
+    from datetime import date as d
+    assert ask.date_from_text("milk for the Monday after next", d(2026, 11, 14)) is None  # asks, never guesses
+    route(monkeypatch, "order", covers=10)  # the model says "order" for a menu
+    body = post("Menu for 10 guests: porridge with milk")
+    assert body["intent"] == "menu" and "order" not in body  # proposal only, never ordered
+    route(monkeypatch, "menu", covers=80)
+    assert post("Menu: 80 kg flour")["question"] == "For how many guests?"  # 80 is kg here, not guests
+
+
+def test_codex14_absurd_content_length_is_413():
+    r = c.post("/api/agent/ask", content=b"{}", headers={"Content-Type": "application/json", "Content-Length": "9" * 5000,
+                                                          "X-Agent-Key": "agent-lk"})
+    assert r.status_code == 413
