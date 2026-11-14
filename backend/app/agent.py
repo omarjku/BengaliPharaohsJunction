@@ -414,10 +414,6 @@ def _numbers(text: str) -> set[float]:
         for part in raw.split():  # "16 1000" is two numbers
             if re.fullmatch(r"\d+(?:[,.]\d+)?", part):  # "1.2.3" is no number
                 out.add(float(part.replace(",", ".")))
-    # Spoken numbers come back as words from voice ("Kymmenen kiloa voita"): read single-word numbers too (Render
-    # live check: the Finnish voice order was refused because "10" wasn't written as digits).
-    low = text.lower()
-    out |= {float(v) for w, v in conversation.NUMBER_WORDS.items() if re.search(rf"(?<![\wäöå]){w}(?![\wäöå])", low)}
     return out
 
 
