@@ -1,7 +1,0 @@
-trade-contracts
-pyyaml
-tzdata
-
-[dev]
-pytest
-ruff
