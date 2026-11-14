@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react'
 import { decideOrder, getKeys, getOrder, MOCK, placeOrder } from './api'
 import { CONFIDENT_AT, tidyName } from './copy'
 import { errorText, type Tone } from './format'
 import { useCopy, type Copy } from './i18n'
 import type { AgentRun, AlternativeOrder, Line, OrderInput, OrderResponse, Substitute } from './types'
+import './RunResult.css'
 
 type Props = {
   run: AgentRun
@@ -55,6 +56,9 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   const [error, setError] = useState<string | null>(null)
   const [signOff, setSignOff] = useState<string | null>(null) // "Chef Aino approved · 04:52"
   const [justDone, setJustDone] = useState(false) // Approve briefly turns into "Ordered ✓"
+  const [selected, setSelected] = useState<string | null>(null) // the option card picked (default: the agent's pick)
+  const [changing, setChanging] = useState(false) // "Change quantity" open
+  const [amount, setAmount] = useState('')
   const heading = useRef<HTMLHeadingElement>(null)
   const [reasonsRef, reasonsSeen] = useSeen<HTMLParagraphElement>()
   const c = useCopy()
@@ -177,109 +181,281 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
     .slice(1)
     .filter((r) => r.code !== 'CONFIDENCE_OK' && r.code !== 'FRONT_DOOR' && !(r.code === 'PROFILE_DEFAULT' && r.severity === 'INFO'))
   const sentToDoor = run.decision.reasons.some((r) => r.code === 'FRONT_DOOR') && order ? order.status : null
+
+  // Which rule decided, in words (from primary_reason; "within every limit" when it went through on its own).
+  const ruleKey = decision.outcome === 'AUTO' ? 'AUTO' : decision.primary_reason?.code
+  const ruleWords = ruleKey ? t.ruleWords[ruleKey] : undefined
+
+  // The lines as a table: the front door's (what was ordered or held) or the agent's pick.
+  const rows = order
+    ? order.lines.map((l) => ({
+        key: l.product_id, name: tidyName(l.name), qty: l.quantity != null ? c.amountOf(l.quantity, l.unit) : '—',
+        price: l.unit_price_cents != null ? c.money(l.unit_price_cents) : '—', total: l.line_total_cents != null ? c.money(l.line_total_cents) : '—',
+      }))
+    : chosen.map((l) => ({
+        key: l.product.id, name: productName(l), qty: l.quantity?.quantity != null ? c.amountOf(l.quantity.quantity, l.quantity.sales_unit) : '—',
+        price: l.quote?.price != null ? c.price(l.quote.price) : '—', total: l.line_total_cents != null ? c.money(l.line_total_cents) : '—',
+      }))
+
+  // "Needs your OK" with more than one deliverable option: they become cards; pick one, then approve it.
+  // Labels come from the data only: Best match = the agent's pick, Cheaper = a lower total, Local = origin FI.
+  const held = awaitingApproval ? (chosen[0] ?? null) : guess
+  const pickable = held ? [held, ...others.filter(orderable)] : []
+  const sel = pickable.find((l) => l.product.id === (selected ?? held?.product.id)) ?? null
+  const tags = (l: Line) =>
+    [
+      l === held && t.tagBest,
+      held?.line_total_cents != null && l !== held && l.line_total_cents != null && l.line_total_cents < held.line_total_cents && t.tagCheaper,
+      l.facts?.origin?.toUpperCase() === 'FI' && t.tagLocal,
+    ].filter((x): x is string => !!x)
+  function approveSelected() {
+    if (!sel) return
+    if (awaitingApproval && sel === held) return decide('approve')
+    if (awaitingApproval) {
+      // another option instead of the held order: the held one is rejected, the chosen one goes to the front door
+      setPlacing(sel.product.id)
+      return run_('place', async () => {
+        await decideOrder(order!.order_id!, 'reject')
+        return placeOrder({ requested_date: requestedDate, lines: [lineOrder(sel)] })
+      })
+    }
+    return place([lineOrder(sel)], sel.product.id)
+  }
+  // Change quantity: the same request with the new amount, asked again (same delivery day).
+  const asked = held?.quantity?.requested ?? null
+  function changeQuantity(e: FormEvent) {
+    e.preventDefault()
+    const n = amount.trim()
+    if (!n || !held || !onAskFor) return
+    onAskFor(`${n} ${asked?.unit ?? ''} ${query ?? productName(held)}`.replace(/\s+/g, ' ').trim())
+  }
+  const decline = awaitingApproval ? () => decide('reject') : onRetry
   const query = run.request.items.length === 1 ? run.request.items[0].query : null
 
   return (
     <>
-      <section className="answer" aria-label={t.aria}>
-        <p className={`status ${tone}`}>{status}</p>
-        <h2 ref={heading} tabIndex={-1} className="answer-text num">
-          {head}
-        </h2>
-        {signOff && <p className="signoff">{signOff}</p>}
-        <p className="answer-sub" ref={reasonsRef}>
-          {more && <>{more} </>}
-          {what && <>{what}. </>}
-          {total > 0 && (
-            <>
-              <strong>{c.money(split ? split.total_cents : total)}</strong> {t.exclVat}
-              {split ? t.forBoth : ''}.
-            </>
-          )}
-          {order?.status === 'confirmed' && <> {arrives(requestedDate, c)}</>}
-          {!awaitingApproval && !split && !guess && order?.status !== 'confirmed' && order?.status !== 'rejected' && lead?.suggested_fix && (
-            <> {lead.suggested_fix}</>
-          )}
-        </p>
-        {confidence != null && (
-          <p className={`sure num${confidence < CONFIDENT_AT ? ' unsure' : ''}`}>
-            {c.matched(confidence)}
-            {confidence < CONFIDENT_AT && chosen[0]?.confidence_reason && <span className="quiet">. {chosen[0].confidence_reason}</span>}
+      <section className={`answer dc dc-${tone}`} aria-label={t.aria}>
+        <header className="dc-strip">
+          <p className={`status ${tone}`}>{status}</p>
+          <p className="dc-when num">
+            {t.delivery} {c.day(requestedDate)}
           </p>
-        )}
-        {profileNote && (
-          <p className="quiet small">
-            {c.humanize(profileNote.message.split(': only')[0])}.{' '}
-            {onPlain && canChoose && (
-              <button type="button" className="link accent inline" onClick={() => onPlain(need)} disabled={busy !== null}>
-                {t.plainInstead(need)}
-              </button>
-            )}
-          </p>
-        )}
-        {chosen.length === 1 && chosen[0].usual && <p className="quiet small">{t.usual}.</p>}
-        {sentToDoor && (
-          <p className="quiet small">
-            {t.frontDoor(sentToDoor)}{' '}
-            {onHistory && (
-              <button type="button" className="link accent inline" onClick={onHistory}>
-                {t.seeHistory}
-              </button>
-            )}
-          </p>
-        )}
-
-        {(awaitingApproval || justDone) && (
-          <div className={`decide${reasonsSeen ? ' floating' : ''}`}>
-            {justDone ? (
-              <button type="button" className="btn done" disabled>
-                {t.done}
-              </button>
-            ) : (
+        </header>
+        <div className="dc-body">
+          <h2 ref={heading} tabIndex={-1} className="answer-text num">
+            {head}
+          </h2>
+          {ruleWords && <p className="dc-rule">{t.decidedBy(ruleWords)}</p>}
+          {signOff && <p className="signoff">{signOff}</p>}
+          <p className="answer-sub" ref={reasonsRef}>
+            {more && <>{more} </>}
+            {what && <>{what}. </>}
+            {total > 0 && (
               <>
-                <button type="button" className="btn" onClick={() => decide('approve')} disabled={busy !== null || !canDecide}>
-                  {busy === 'approve' ? t.approving : t.approve(c.money(total))}
-                </button>
-                <button type="button" className="btn plain" onClick={() => decide('reject')} disabled={busy !== null || !canDecide}>
-                  {busy === 'reject' ? t.rejecting : t.reject}
-                </button>
-                {!canDecide && <p className="hint note">{t.needKey}</p>}
+                <strong>{c.money(split ? split.total_cents : total)}</strong> {t.exclVat}
+                {split ? t.forBoth : ''}.
               </>
             )}
-          </div>
-        )}
-        {split && (
-          <div className={`decide${reasonsSeen ? ' floating' : ''}`}>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => place(split.order_lines ?? split.lines.filter((l) => l.quantity != null).map((l) => ({ product_id: l.product_id, quantity: l.quantity! })))}
-              disabled={busy !== null}
-            >
-              {placing === 'main' ? t.ordering : t.orderBoth(split.lines.length === 2, c.money(split.total_cents))}
-            </button>
-          </div>
-        )}
-        {(guess || (!order && run.decision.outcome === 'ASK_HUMAN')) && (
-          <div className={`decide${reasonsSeen ? ' floating' : ''}`}>
-            {guess && (
-              <button type="button" className="btn" onClick={() => place([lineOrder(guess)])} disabled={busy !== null}>
-                {placing === 'main' ? t.ordering : t.orderIt(c.money(guess.line_total_cents!))}
-              </button>
+            {order?.status === 'confirmed' && <> {arrives(requestedDate, c)}</>}
+            {!awaitingApproval && !split && !guess && order?.status !== 'confirmed' && order?.status !== 'rejected' && lead?.suggested_fix && (
+              <> {lead.suggested_fix}</>
             )}
-            {onRetry && (
-              <button type="button" className="btn plain" onClick={onRetry} disabled={busy !== null}>
-                {t.notThis}
+          </p>
+          {confidence != null && (
+            <p className={`sure num${confidence < CONFIDENT_AT ? ' unsure' : ''}`}>
+              {c.matched(confidence)}
+              {confidence < CONFIDENT_AT && chosen[0]?.confidence_reason && <span className="quiet">. {chosen[0].confidence_reason}</span>}
+            </p>
+          )}
+
+          {!split && rows.length > 0 && pickable.length < 2 && (
+            <table className="dc-table num">
+              <thead>
+                <tr>
+                  <th scope="col">{t.colProduct}</th>
+                  <th scope="col">{t.colAmount}</th>
+                  <th scope="col">{t.colPrice}</th>
+                  <th scope="col">{t.colTotal}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.key}>
+                    <th scope="row">{r.name}</th>
+                    <td data-label={t.colAmount}>{r.qty}</td>
+                    <td data-label={t.colPrice}>{r.price}</td>
+                    <td data-label={t.colTotal}>{r.total}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          {profileNote && (
+            <p className="quiet small">
+              {c.humanize(profileNote.message.split(': only')[0])}.{' '}
+              {onPlain && canChoose && (
+                <button type="button" className="link accent inline" onClick={() => onPlain(need)} disabled={busy !== null}>
+                  {t.plainInstead(need)}
+                </button>
+              )}
+            </p>
+          )}
+          {chosen.length === 1 && chosen[0].usual && <p className="quiet small">{t.usual}.</p>}
+          {sentToDoor && (
+            <p className="quiet small">
+              {t.frontDoor(sentToDoor)}{' '}
+              {onHistory && (
+                <button type="button" className="link accent inline" onClick={onHistory}>
+                  {t.seeHistory}
+                </button>
+              )}
+            </p>
+          )}
+
+          {pickable.length >= 2 && !justDone && (
+            <fieldset className="dc-options">
+              <legend className="dc-legend">{t.pickOne}</legend>
+              {pickable.map((l) => {
+                const [, avail] = availability(l, c)
+                return (
+                  <label key={l.product.id} className={`dc-option${sel === l ? ' on' : ''}`}>
+                    <input type="radio" name={`pick-${run.audit_id}`} checked={sel === l} onChange={() => setSelected(l.product.id)} disabled={busy !== null} />
+                    <span className="dc-option-main">
+                      {tags(l).length > 0 && (
+                        <span className="dc-tags">
+                          {tags(l).map((tag) => (
+                            <span key={tag} className="dc-tag">
+                              {tag}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                      <span className="dc-option-name">{productName(l)}</span>
+                      <span className="quiet small">
+                        {l.quantity?.quantity != null && `${c.amountOf(l.quantity.quantity, l.quantity.sales_unit)} · `}
+                        {avail}
+                      </span>
+                    </span>
+                    <span className="dc-option-price num">{l.line_total_cents != null ? c.money(l.line_total_cents) : '—'}</span>
+                  </label>
+                )
+              })}
+            </fieldset>
+          )}
+
+          {pickable.length >= 2 && !justDone && sel && (
+            <div className={`decide${reasonsSeen ? ' floating' : ''}`}>
+              <button type="button" className="btn" onClick={() => void approveSelected()} disabled={busy !== null || (awaitingApproval && !canDecide)}>
+                {busy === 'approve'
+                  ? t.approving
+                  : busy === 'place'
+                    ? t.ordering
+                    : awaitingApproval
+                    ? t.approveSelected(c.money(sel === held ? total : (sel.line_total_cents ?? 0)))
+                    : t.orderSelected(c.money(sel.line_total_cents ?? 0))}
               </button>
-            )}
-          </div>
-        )}
-        {error && (
-          <div className="problem" role="alert" ref={errorRef}>
-            <strong>{c.UI.failed}</strong>
-            {error}
-          </div>
-        )}
+              {onAskFor && (
+                <button type="button" className="btn plain" aria-expanded={changing} onClick={() => setChanging((v) => !v)} disabled={busy !== null}>
+                  {t.changeQty}
+                </button>
+              )}
+              {decline && (
+                <button type="button" className="btn plain dc-decline" onClick={decline} disabled={busy !== null || (awaitingApproval && !canDecide)}>
+                  {busy === 'reject' ? t.rejecting : t.decline}
+                </button>
+              )}
+              {awaitingApproval && !canDecide && <p className="hint note">{t.needKey}</p>}
+            </div>
+          )}
+
+          {pickable.length < 2 && (awaitingApproval || justDone) && (
+            <div className={`decide${reasonsSeen ? ' floating' : ''}`}>
+              {justDone ? (
+                <button type="button" className="btn done" disabled>
+                  {t.done}
+                </button>
+              ) : (
+                <>
+                  <button type="button" className="btn" onClick={() => decide('approve')} disabled={busy !== null || !canDecide}>
+                    {busy === 'approve' ? t.approving : t.approve(c.money(total))}
+                  </button>
+                  {onAskFor && held && (
+                    <button type="button" className="btn plain" aria-expanded={changing} onClick={() => setChanging((v) => !v)} disabled={busy !== null}>
+                      {t.changeQty}
+                    </button>
+                  )}
+                  <button type="button" className="btn plain dc-decline" onClick={() => decide('reject')} disabled={busy !== null || !canDecide}>
+                    {busy === 'reject' ? t.rejecting : t.decline}
+                  </button>
+                  {!canDecide && <p className="hint note">{t.needKey}</p>}
+                </>
+              )}
+            </div>
+          )}
+          {split && (
+            <div className={`decide${reasonsSeen ? ' floating' : ''}`}>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => place(split.order_lines ?? split.lines.filter((l) => l.quantity != null).map((l) => ({ product_id: l.product_id, quantity: l.quantity! })))}
+                disabled={busy !== null}
+              >
+                {placing === 'main' ? t.ordering : t.orderBoth(split.lines.length === 2, c.money(split.total_cents))}
+              </button>
+            </div>
+          )}
+          {pickable.length < 2 && (guess || (!order && run.decision.outcome === 'ASK_HUMAN')) && (
+            <div className={`decide${reasonsSeen ? ' floating' : ''}`}>
+              {guess && (
+                <button type="button" className="btn" onClick={() => place([lineOrder(guess)])} disabled={busy !== null}>
+                  {placing === 'main' ? t.ordering : t.orderIt(c.money(guess.line_total_cents!))}
+                </button>
+              )}
+              {onAskFor && guess && (
+                <button type="button" className="btn plain" aria-expanded={changing} onClick={() => setChanging((v) => !v)} disabled={busy !== null}>
+                  {t.changeQty}
+                </button>
+              )}
+              {onRetry && (
+                <button type="button" className="btn plain" onClick={onRetry} disabled={busy !== null}>
+                  {t.notThis}
+                </button>
+              )}
+            </div>
+          )}
+
+          {changing && held && onAskFor && (
+            <form className="dc-qty" onSubmit={changeQuantity}>
+              <label htmlFor={`qty-${run.audit_id}`}>{t.newAmount}</label>
+              <div className="dc-qty-row">
+                <input
+                  id={`qty-${run.audit_id}`}
+                  className="guests-input num"
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  step="any"
+                  value={amount}
+                  placeholder={asked ? String(asked.amount) : ''}
+                  onChange={(e) => setAmount(e.target.value)}
+                  autoFocus
+                />
+                {asked?.unit && <span className="quiet">{asked.unit}</span>}
+                <button type="submit" className="btn" disabled={!amount.trim()}>
+                  {t.askAgain}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {error && (
+            <div className="problem" role="alert" ref={errorRef}>
+              <strong>{c.UI.failed}</strong>
+              {error}
+            </div>
+          )}
+        </div>
       </section>
 
       {after}
@@ -308,7 +484,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
             </ul>
           </details>
         )}
-        {others.length > 0 && (
+        {others.length > 0 && pickable.length < 2 && (
           <details>
             <summary>{t.other(others.length)}</summary>
             <ul className="more-body">
