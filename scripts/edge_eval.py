@@ -4,7 +4,6 @@ import argparse, json, os, subprocess, sys, time
 import urllib.error, urllib.parse, urllib.request
 from datetime import date, datetime
 from pathlib import Path
-from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -141,12 +140,17 @@ def compact_answer(data, status=None):
     elif status is not None and status >= 400: view["detail"] = "HTTP error without a JSON detail."
     return view
 
+def ask_payload(text, conversation_id=None):
+    """Build the documented /api/agent/ask request shape for either turn type."""
+    if conversation_id is None:
+        return {"text": text}
+    return {"follow_up": {"to": conversation_id, "answer": text}}
+
 def ask_front_door(base, key, text, conversation_id=None):
     started, status, answer, headers = time.monotonic(), None, None, {}
     for attempt in range(2):
         try:
-            body = {"text": text}
-            if conversation_id is not None: body["conversation_id"] = conversation_id
+            body = ask_payload(text, conversation_id)
             request = urllib.request.Request(base + "/api/agent/ask", method="POST",
                 data=json.dumps(body, ensure_ascii=False).encode(),
                 headers={"Content-Type": "application/json", "User-Agent": "edge-eval/1", "X-Agent-Key": key})
@@ -175,18 +179,22 @@ def case_text(case):
     return turns[-1] if isinstance(turns, list) and turns else case.get("text", "")
 
 def run_case(base, key, case):
-    history, generated_id, answer = [], None, None
+    history, answer = [], None
     turns = case_turns(case)
     for index, text in enumerate(turns):
         conversation_id = None
         if index:
             conversation_id = answer.get("conversation_id") if answer else None
             if not conversation_id:
-                generated_id = generated_id or str(uuid4())
-                conversation_id = generated_id
+                answer = {"http_status": None, "seconds": 0, "exception": True, "protocol_failure": True,
+                          "answer": {"detail": "Client protocol failure: previous response did not include conversation_id; continuation was not sent."}}
+                history.append({"text": text, **answer})
+                break
         answer = (ask_front_door(base, key, text, conversation_id) if conversation_id is not None
                   else ask_front_door(base, key, text))
-        history.append({"text": text, "answer": answer.get("answer", {})})
+        history.append({"text": text, **{field: answer.get(field) for field in
+                                         ("http_status", "seconds", "conversation_id", "answer", "exception", "protocol_failure")
+                                         if field in answer}})
     answer.pop("conversation_id", None)
     if len(turns) > 1: answer["turns"] = history
     return answer
@@ -237,9 +245,15 @@ def gemini_grade(key, case, answer, previous_turn_context=None):
         return {"verdict": "fail", "severity": 5, "reason": f"Gemini grading failed ({type(error).__name__})."}
 
 def hard_failure(case, answer):
-    if answer.get("exception"): return "Hard check: the case raised a Python exception."
-    if isinstance(answer.get("http_status"), int) and answer["http_status"] >= 500:
-        return f"Hard check: HTTP {answer['http_status']} is a server error."
+    turns = answer.get("turns") if isinstance(answer.get("turns"), list) else None
+    turns = turns or [answer]
+    for index, turn in enumerate(turns, 1):
+        if turn.get("exception"):
+            return (f"Hard check: turn {index} had a client/protocol exception."
+                    if len(turns) > 1 else "Hard check: the case raised a Python exception.")
+        if isinstance(turn.get("http_status"), int) and turn["http_status"] >= 500:
+            return (f"Hard check: turn {index} returned HTTP {turn['http_status']}."
+                    if len(turns) > 1 else f"Hard check: HTTP {turn['http_status']} is a server error.")
     view = answer.get("answer") or {}
     if case.get("group") in NO_ORDER and isinstance(view, dict) and view.get("order_status") == "confirmed":
         return "Hard check: the app confirmed an order for a no-order case."
@@ -329,9 +343,18 @@ def answer_summary(answer):
     elif view.get("chosen_products"):
         bits.append("chosen=" + ", ".join(view["chosen_products"]))
     if view.get("detail"): bits.append("detail=" + str(view["detail"]))
+    failed_turns = []
+    for index, turn in enumerate(answer.get("turns") or [], 1):
+        if not isinstance(turn, dict): continue
+        detail = (turn.get("answer") or {}).get("detail")
+        if turn.get("exception"):
+            failed_turns.append(f"turn {index} exception" + (f": {detail}" if detail else ""))
+        elif isinstance(turn.get("http_status"), int) and turn["http_status"] >= 500:
+            failed_turns.append(f"turn {index} HTTP {turn['http_status']}" + (f": {detail}" if detail else ""))
+    if failed_turns: bits.append("failed turns=" + "; ".join(failed_turns))
     return clip(" | ".join(str(x) for x in bits if x) or "No observable answer.", 600)
 
-def report(path, results, cases, answers, grades):
+def render_report(results, cases, answers, grades):
     meta, by_grade = results.get("meta", {}), {x.get("id"): x for x in grades}
     by_answer, total = {x.get("id"): x for x in answers}, len(cases)
     passed = sum(by_grade.get(c.get("id"), {}).get("verdict") == "pass" for c in cases)
@@ -354,7 +377,10 @@ def report(path, results, cases, answers, grades):
         quote = lambda value: "\n".join("> " + line for line in str(value or "").splitlines()) or "> "
         lines += [f"### {case.get('id', '')} — {case.get('group', '')} (severity {severity})", "", "**Request:**", quote(case_text(case)), "",
                   "**Expected rule:**", quote(case.get("expect", "")), "", f"**App answer:** {answer_summary(answer)}", f"**Gemini reason:** {reason}", ""]
-    path.write_text("\n".join(lines).rstrip() + "\n")
+    return "\n".join(lines).rstrip() + "\n"
+
+def report(path, results, cases, answers, grades):
+    path.write_text(render_report(results, cases, answers, grades))
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -362,12 +388,23 @@ def parse_args():
     parser.add_argument("--buyer", default="smoke-kitchen"); parser.add_argument("--cases", default=str(ROOT / "docs/testing/edge-cases.json"))
     parser.add_argument("--date", default=date.today().isoformat()); parser.add_argument("--only", help="comma-separated group names")
     parser.add_argument("--limit", type=int); parser.add_argument("--regrade", action="store_true")
-    parser.add_argument("--label", default="", metavar="TAG")
+    parser.add_argument("--label", default="local", metavar="TAG",
+                        help="output tag (defaults to local so committed baselines are not replaced)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="validate selected cases and print their count without network calls or file writes")
     return parser.parse_args()
 
 def main():
     options = parse_args()
     if options.limit is not None and options.limit < 0: raise SystemExit("--limit must be non-negative")
+    if options.dry_run:
+        cases = selected(json.loads(Path(options.cases).read_text()), options.only, options.limit)
+        if not all(isinstance(case, dict) and case.get("id") for case in cases):
+            raise SystemExit("every selected case must be an object with an id")
+        if len({case["id"] for case in cases}) != len(cases):
+            raise SystemExit("selected case ids must be unique")
+        print(f"edge-eval validation: {len(cases)} cases ready; no network calls or files written")
+        return 0
     base = options.base.rstrip("/")
     label = options.label.strip()
     suffix = f"-{label}" if label else ""
