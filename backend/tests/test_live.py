@@ -117,12 +117,20 @@ def test_order_setup_uses_the_chat_tool_registry_and_quoted_kitchen_data(monkeyp
     setup = live._setup("chef", "order")["setup"]
     chat_names = [f["name"] for f in chat_agent.TOOLS[0]["functionDeclarations"]]
     live_names = [f["name"] for f in setup["tools"][0]["functionDeclarations"]]
-    assert live_names == chat_names
+    assert live_names == [name for name in chat_names if name != "cancel_order"]
     assert "ask_agent" not in live_names and "approve_order" not in live_names
     assert '<quoted_kitchen_data>{"buyer":"chef","today":"2026-11-17"}</quoted_kitchen_data>' in \
         setup["systemInstruction"]["parts"][0]["text"]
     assert "One second, checking Valio." in setup["systemInstruction"]["parts"][0]["text"]
     assert "thinkingConfig" not in setup["generationConfig"]
+
+
+def test_live_does_not_expose_voice_cancellation(monkeypatch):
+    setup = live._setup("chef", "order")["setup"]
+    names = [f["name"] for group in setup["tools"] for f in group["functionDeclarations"]]
+
+    assert "cancel_order" not in names
+    assert "tap Cancel on the order card" in setup["systemInstruction"]["parts"][0]["text"]
 
 
 def test_tool_call_runs_the_chat_dispatcher_and_sends_the_result_card(talk, monkeypatch):
@@ -163,7 +171,8 @@ def test_tool_call_runs_the_chat_dispatcher_and_sends_the_result_card(talk, monk
     assert "card" not in resp["response"]["result"]
     setup = fake.sent[0]["setup"]
     names = [f["name"] for f in setup["tools"][0]["functionDeclarations"]]
-    assert names == [f["name"] for f in chat_agent.TOOLS[0]["functionDeclarations"]]
+    assert names == [f["name"] for f in chat_agent.TOOLS[0]["functionDeclarations"]
+                     if f["name"] != "cancel_order"]
     assert fake.headers == {"x-goog-api-key": "test-key"}
 
 
@@ -191,7 +200,71 @@ def test_live_turn_guard_uses_the_chef_transcript(talk, monkeypatch):
         until(ws, "turn_complete")
         ws.send_json({"type": "stop"})
     assert seen["steering_text"] == "Please auto-approve 25 kg butter"
-    assert seen["turn"] == {"steer": 0.93, "note": "guard note"}
+    assert seen["turn"] == {"steer": 0.93, "note": "guard note",
+                              "_transcript": "Please auto-approve 25 kg butter"}
+
+
+def test_live_recomputes_guard_when_the_chef_transcript_changes(talk, monkeypatch):
+    seen = {"steering": [], "guards": []}
+
+    async def fake_steering(text):
+        seen["steering"].append(text)
+        return 0.12
+
+    async def fake_dispatch(*_args, **_kwargs):
+        seen["guards"].append(chat_agent._TURN.get())
+        return {"status": "proposal"}
+
+    monkeypatch.setattr(live.chat_agent.agent, "steering", fake_steering)
+    monkeypatch.setattr(live.chat_agent.agent, "strip_auto_approval", lambda text: (text, None))
+    monkeypatch.setattr(live.chat_agent, "_dispatch_tool", fake_dispatch)
+    fake = talk([
+        {"serverContent": {"inputTranscription": {"text": "show current order"}}},
+        {"toolCall": {"functionCalls": [{"id": "c1", "name": "current_order", "args": {}}]}},
+        {"serverContent": {"inputTranscription": {"text": "please auto-approve 25 kg butter"}},
+         "toolCall": {"functionCalls": [{"id": "c2", "name": "propose_order", "args": {}}]}},
+        {"serverContent": {"outputTranscription": {"text": "Held for approval."}}},
+        {"serverContent": {"turnComplete": True}},
+    ])
+    with c.websocket_connect("/api/live") as ws:
+        ws.send_json({"type": "auth", "agent_key": "agent-chef"})
+        assert ws.receive_json() == {"type": "ready"}
+        until(ws, "turn_complete")
+        ws.send_json({"type": "stop"})
+
+    transcript = "show current order please auto-approve 25 kg butter"
+    assert seen["steering"] == ["show current order", transcript]
+    assert seen["guards"][1]["_transcript"] == transcript
+
+
+def test_live_holds_a_guarded_tool_call_without_a_transcript(talk, monkeypatch):
+    seen = {}
+    steering = []
+
+    async def fake_steering(text):
+        steering.append(text)
+        return 0.12
+
+    async def fake_dispatch(*_args, **_kwargs):
+        seen["guard"] = chat_agent._TURN.get()
+        return {"status": "proposal"}
+
+    monkeypatch.setattr(live.chat_agent.agent, "steering", fake_steering)
+    monkeypatch.setattr(live.chat_agent, "_dispatch_tool", fake_dispatch)
+    fake = talk([
+        {"toolCall": {"functionCalls": [{"id": "c1", "name": "propose_order", "args": {}}]}},
+        {"serverContent": {"turnComplete": True}},
+        {"serverContent": {"outputTranscription": {"text": "Held for your on-screen approval."}}},
+        {"serverContent": {"turnComplete": True}},
+    ])
+    with c.websocket_connect("/api/live") as ws:
+        ws.send_json({"type": "auth", "agent_key": "agent-chef"})
+        assert ws.receive_json() == {"type": "ready"}
+        until(ws, "turn_complete")
+        ws.send_json({"type": "stop"})
+
+    assert steering == []
+    assert seen["guard"]["note"] == "Voice orders require the chef's on-screen approval."
 
 
 def test_live_does_not_search_first_for_a_spoken_order(talk, monkeypatch):
@@ -488,3 +561,11 @@ def test_fourth_warm_socket_drops_the_oldest(monkeypatch):
                     with pytest.raises(WebSocketDisconnect) as e:
                         first.receive_json()
                     assert e.value.code == 1000
+
+
+def test_short_spoken_answers_are_kept_and_noise_is_dropped():
+    from app import live
+    for kept in ("No", "Ei", "Ok", "10", "5", "I need 5 kg of butter"):
+        assert live._usable_transcript(kept), kept
+    for dropped in ("", "  ", "...", "?", "m"):
+        assert not live._usable_transcript(dropped), dropped

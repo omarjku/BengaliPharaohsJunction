@@ -20,6 +20,7 @@ HELSINKI = ZoneInfo("Europe/Helsinki")
 GEMINI_TIMEOUT_S = 19
 MAX_TOOL_CALLS = 6
 ASSUMPTION_MAX = 40
+VOICE_HOLD_NOTE = "Voice orders require the chef's on-screen approval."
 
 
 class ProviderCallError(RuntimeError):
@@ -465,7 +466,7 @@ async def _propose_order(args: dict, buyer_id: str, requested_date: date | None,
     token = ask._DUPLICATE_GUARD_BYPASS.set(follow_up)
     try:
         guard = await _turn_guard(text)
-        request_note = guard.get("note") or ("Voice orders require the chef's on-screen approval." if via == "voice" else None)
+        request_note = guard.get("note") or (VOICE_HOLD_NOTE if via == "voice" else None)
         body = await agent.run(ask._duplicate_safe_text(text), delivery, buyer_id,
                                pre={"parsed": (parsed, True), "steer": guard.get("steer"), "steer_checked": True,
                                     "meant": 1.0, "meant_checked": True,
@@ -477,7 +478,7 @@ async def _propose_order(args: dict, buyer_id: str, requested_date: date | None,
 
 
 async def _change_order(args: dict, buyer_id: str, requested_date: date | None, follow_up: bool = False,
-                        **_kwargs) -> dict:
+                        via: str | None = None, **_kwargs) -> dict:
     order_id, old = _owned_order(str(args.get("order_id") or ""), buyer_id)
     if not old or old.get("buyer_id") != buyer_id:
         return {"status": "needs_info", "hold_reasons": ["I could not find that order for this kitchen."], "order_id": order_id}
@@ -512,8 +513,9 @@ async def _change_order(args: dict, buyer_id: str, requested_date: date | None, 
     token = ask._DUPLICATE_GUARD_BYPASS.set(follow_up)
     try:
         guard = await _turn_guard(text)
+        request_note = guard.get("note") or (VOICE_HOLD_NOTE if via == "voice" else None)
         body = await ask._execute_action(action, text, when, buyer_id, datetime.now(HELSINKI).date(), "gemini",
-                                          guard.get("steer"), last_card, 1.0, request_note=guard.get("note"))
+                                          guard.get("steer"), last_card, 1.0, request_note=request_note)
     finally:
         ask._DUPLICATE_GUARD_BYPASS.reset(token)
     if body.get("intent") != "order" or "lines" not in body:

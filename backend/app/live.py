@@ -84,9 +84,13 @@ colleague, in whatever language the chef uses; language choice is unrestricted.
 - Voice orders are always held for the chef's on-screen approval. A spoken "yes" is never approval: never say a voice
   order is confirmed, placed, or approved; say it remains held for the chef's on-screen approval. Never approve
   anything yourself.
+- If the chef asks to cancel an order by voice, do not call a tool; say exactly: "tap Cancel on the order card".
 - You can't approve orders: if an order needs approval, say the chef approves it on screen."""
 
-TOOLS = chat_agent.TOOLS
+TOOLS = [{**group, "functionDeclarations": [function for function in group["functionDeclarations"]
+                                             if function["name"] != "cancel_order"]}
+         for group in chat_agent.TOOLS]
+GUARDED_TOOL_NAMES = {"search_products", "propose_order", "change_order", "plan_menu"}
 LABELS = {"search_products": "Checking Valio prices and stock…", "propose_order": "Preparing the order…",
           "change_order": "Updating the order…", "cancel_order": "Cancelling the order…",
           "current_order": "Reading the current order…", "kitchen_profile": "Reading the kitchen profile…",
@@ -104,8 +108,11 @@ def _clean_transcript(value: str) -> str:
 
 
 def _usable_transcript(value: str) -> bool:
-    return bool(value and len(value) > 2 and re.search(r"[\w]", value, re.UNICODE)
-                and not re.fullmatch(r"[\W_]+", value, re.UNICODE))
+    """Short answers count ("No", "Ei", "Ok", "10", "5"): keep any digit or at least two letters; drop pure noise."""
+    value = (value or "").strip()
+    if not value or re.fullmatch(r"[\W_]+", value, re.UNICODE):
+        return False
+    return bool(re.search(r"\d", value)) or len(re.findall(r"[^\W\d_]", value, re.UNICODE)) >= 2
 
 
 async def ask_agent(buyer_id: str, args: dict) -> tuple[dict, dict | None]:
@@ -281,7 +288,7 @@ async def _handle_live_tool_call(ws: WebSocket, live, call: dict, buyer_id: str,
             else:
                 out = res
         elif mode != "interview" and name in {
-            function["name"] for function in chat_agent.TOOLS[0]["functionDeclarations"]
+            function["name"] for function in TOOLS[0]["functionDeclarations"]
         }:
             chef_words = _clean_transcript(said["user"])
             if name == "search_products" and _standing_order_request(chef_words):
@@ -291,9 +298,13 @@ async def _handle_live_tool_call(ws: WebSocket, live, call: dict, buyer_id: str,
             elif name == "search_products" and chat_agent._orderish(chef_words):
                 out = {"error": "This is an order request; call propose_order now instead of searching first."}
             else:
-                if turn_guard is None:
+                guard_text = turn_guard.get("_transcript") if isinstance(turn_guard, dict) else None
+                if name in GUARDED_TOOL_NAMES and not chef_words:
+                    turn_guard = {"steer": 0.0, "note": chat_agent.VOICE_HOLD_NOTE, "_transcript": ""}
+                elif turn_guard is None or guard_text != chef_words:
                     _, note = chat_agent.agent.strip_auto_approval(chef_words)
-                    turn_guard = {"steer": await chat_agent.agent.steering(chef_words), "note": note}
+                    turn_guard = {"steer": await chat_agent.agent.steering(chef_words), "note": note,
+                                  "_transcript": chef_words}
                 token = chat_agent._TURN.set(turn_guard)
                 try:
                     job = asyncio.create_task(chat_agent._dispatch_tool(name, args, buyer_id, None, via="voice"))
@@ -349,8 +360,7 @@ async def _live_to_client(ws: WebSocket, live, buyer_id: str, bucket: str, mode:
                 if event := add_transcript("user", text):
                     await ws.send_json(event)
             pending_call = call
-            guarded_names = {"search_products", "propose_order", "change_order", "cancel_order", "plan_menu"}
-            immediate = mode == "interview" or not any(fc.get("name") in guarded_names
+            immediate = mode == "interview" or not any(fc.get("name") in GUARDED_TOOL_NAMES
                                                        for fc in call.get("functionCalls", []))
             if _clean_transcript(said["user"]) or immediate:
                 turn_guard, calls = await _handle_live_tool_call(ws, live, call, buyer_id, bucket, mode,
