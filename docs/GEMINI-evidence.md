@@ -71,6 +71,15 @@ This is the one place for exact live scores. Other docs say ≈0.9 or below 0.5.
 
 ## Is 0.80 the right threshold? A small labelled evaluation
 
+> **Update, Sun 15 Nov:** the eval now has **33 cases** (the coffee-milk and coffee-cream traps were added), and
+> **0.70 is the threshold in force.** Current numbers, from `backend/eval/results.json`:
+> - at 0.70: 14 handled alone, 0 wrong, 93 % recall;
+> - at 0.80: 11 handled alone, 73 % recall;
+> - at 0.90: 6 handled alone, 40 % recall;
+> - traps ≤ 0.26, correct ≥ 0.67.
+>
+> The 30-case run below is kept as history.
+
 `backend/eval/gemini_eval.py`: 30 hand-labelled cases, each a chef's request plus a **real Valio product**:
 - 12 clear matches;
 - 13 traps: chocolate milk drink for milk, semi-skimmed milk drink for whole milk, 500 × 5 g sugar sachets for baking, lactose-free milk for a *milk allergy*, salted for unsalted butter, peanut butter for butter, ice cream for cream, a reindeer ready meal for reindeer meat, regular cream cheese for lactose-free;
