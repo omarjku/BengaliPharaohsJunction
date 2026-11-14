@@ -52,6 +52,12 @@ Nothing moves on its own except the thin progress line while the agent works. Un
 - **Names and copy.** Catalogue names are tidied (no ®, "1 L", no "Suomesta", no SHOUTING). "excl. VAT", "640 packs", "Stock not confirmed", "Also works". Thresholds read "below the 80% it needs to order on its own".
 - **Phone header.** The brand gets its own line and the five destinations sit on the next, so nothing wraps.
 
+## One box for everyone
+A kebab shop ordering döner meat shouldn't be asked "for how many guests". So there's one field. Its grey placeholder cycles slowly through three real examples: a milk order, döner meat for the rotisserie, and a menu for 80 guests. It stays still under reduced motion, and it's never real text. The same examples are the "Try:" links.
+- **The date.** It comes from the words ("Friday") when the backend finds one. The small "Delivery Mon 16 Nov" control shows the date that will be or was used, and only overrides it if the chef picks one.
+- **What happens next depends on what was asked.** An order shows the usual answer. A menu shows "A cart for 80 guests, €…". A menu without a guest count asks one thing: "For how many guests?", with the number field right there. The answer goes into the box and the agent reads it again. An unclear request asks for more in plain words.
+- **Navigation is Order · History · Rules · Keys.** There's no separate Menu tab.
+
 ## Known gaps
 - Product names come straight from Valio's catalogue ("Valio Eila® 3 % milk drink 1 l lactose free"). Cleaning them up would need a naming pass in the data.
 - History can't tell "Valio held for your OK" apart from "Valio refused" when the front door's outcome was an ask, because the audit entry doesn't store the order status. The opening screen's waiting count avoids this by checking each order's real status.

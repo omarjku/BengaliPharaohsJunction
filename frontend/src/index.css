@@ -280,6 +280,16 @@ main.roomy { padding-block-start: 96px; }
   .answer { margin-block-start: var(--s6); }
 }
 
+/* --- One box: a menu without a guest count asks one question, answered right there. */
+.guests { display: grid; gap: var(--s4); }
+.guests-input {
+  width: 8rem; min-height: 56px; padding: 0 var(--s4); border: 1px solid var(--field-line); border-radius: var(--radius);
+  background: var(--surface); font-size: 1.375rem; font-weight: 600;
+}
+.guests-input, .covers input { appearance: textfield; -moz-appearance: textfield; }
+.guests-input::-webkit-inner-spin-button, .guests-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.guests-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+
 /* --- Messages. */
 .banner { margin-block: 0 var(--s6); }
 .empty { margin-block-start: var(--s6); }

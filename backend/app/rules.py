@@ -222,7 +222,7 @@ def invalid(m: Mandate) -> list[str]:
     return bad
 
 
-def save(proposed: Mandate, confirm_large_change: bool, who: Principal) -> dict:
+def save(proposed: Mandate, confirm_large_change: bool, who: Principal, if_version: str | None = None) -> dict:
     proposed = with_default_limit(proposed)
     if problems := invalid(proposed):
         raise HTTPException(422, detail={"error": "These rules can't be saved as they are.", "problems": problems})
@@ -231,6 +231,7 @@ def save(proposed: Mandate, confirm_large_change: bool, who: Principal) -> dict:
     if proposed.open_questions:
         raise HTTPException(422, detail={"error": "Answer the open questions first (or remove them), then save.",
                                          "open_questions": [q.question for q in proposed.open_questions]})
+    mandates.check_version(who.buyer_id, if_version)  # early, clear 412; put() re-checks atomically
     current = mandates.get(who.buyer_id)
     changes = diff(current, proposed)
     big = [c for c in changes if c["needs_confirmation"]]
@@ -239,7 +240,7 @@ def save(proposed: Mandate, confirm_large_change: bool, who: Principal) -> dict:
                                          "confirm_large_change=true if you mean them.", "changes": big})
     now = datetime.now(timezone.utc)
     saved = proposed.model_copy(update={"id": f"{who.buyer_id}-{now:%Y%m%dT%H%M%SZ}-{uuid4().hex[:6]}"})
-    previous = mandates.put(saved)
+    previous = mandates.put(saved, if_version)
     summary = "; ".join(c["text"] for c in changes) or "no changes"
     reasons = [gate._r(C.LIMIT_CHANGE_ATTEMPT, gate.INFO, f"{who.name} changed the rules: {c['text']} ({c['change']}).",
                        None, None, field=c["field"], change=c["change"],
@@ -256,4 +257,5 @@ def save(proposed: Mandate, confirm_large_change: bool, who: Principal) -> dict:
     except Exception:  # noqa: BLE001 - no rule change without its audit entry
         mandates.restore(who.buyer_id, previous)
         raise HTTPException(503, detail="The change couldn't be audited, so it was not saved. Retry shortly.") from None
-    return {"mandate": saved.model_dump(mode="json"), "changes": changes, "audit_id": entry.id}
+    return {"mandate": saved.model_dump(mode="json"), "changes": changes, "audit_id": entry.id,
+            "version": mandates.version(saved)}

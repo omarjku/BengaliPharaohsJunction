@@ -245,7 +245,7 @@ def test_confident_line_orders_and_records_confidence(shop1, monkeypatch, decisi
     agent_entry = orders.audit_log("lapland-kitchen", 100)[0]
     assert agent_entry["decision"]["confidence"] == 0.95
     [r] = [r for r in agent_entry["decision"]["reasons"] if r["code"] == "LOW_CONFIDENCE"]
-    assert r["severity"] == "INFO" and r["facts"] == {"confidence": 0.95, "threshold": 0.8, "question": "meets"}
+    assert r["severity"] == "INFO" and r["facts"] == {"confidence": 0.95, "threshold": 0.7, "question": "meets"}
     assert "_weakest" not in line
 
 

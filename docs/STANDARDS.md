@@ -189,7 +189,8 @@ Every order response (`POST /api/orders`, approve, reject, and the order inside 
 manual check.
 
 - **What is signed.** `signed_statement` = `{v: 1, iss: "valio-front-door", order_id, status, audit_id,
-  total_cents, decision, quotes, lines}`. `lines` are the order lines `{product_id, quantity, unit,
+  total_cents, decision, mandate_version, quotes, lines}`. `mandate_version` is the id of the buyer's mandate the
+  decision was judged under (also the ETag of `GET /api/mandate`; every save mints a new one). `lines` are the order lines `{product_id, quantity, unit,
   unit_price_cents, line_total_cents}`. Act only on the verified `signed_statement`; the response's top-level copies are
   unsigned conveniences. `decision` is the contract `Decision`. Each entry in `quotes` is what Valio's
   API reported at `fetched_at`: `product_id, unit_price_cents, unit, availability, available_quantity, cut_off,

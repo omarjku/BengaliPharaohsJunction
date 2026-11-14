@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import agent, auth, catalogue, config, gate, mandates, menu, orders, quantity, ratelimit, rules, signing, valio
+from . import ask, agent, auth, catalogue, config, gate, mandates, menu, orders, quantity, ratelimit, rules, signing, valio
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -432,15 +432,48 @@ async def compile_mandate_route(req: CompileRequest, who: Approver) -> dict:
     return await rules.compile_rules(req.text, who)
 
 
+def _if_match(value: str | None) -> str | None:
+    return value.removeprefix("W/").strip().strip('"') if value else None
+
+
 @app.get("/api/mandate")
-def get_mandate(who: Approver) -> dict | None:
-    """The mandate in force for the approver's buyer (saved, else the seeded default). Needs X-Approver-Key."""
+def get_mandate(who: Approver, response: Response) -> dict | None:
+    """The mandate in force for the approver's buyer (saved, else the seeded default); its version is the ETag
+    header (send it back as If-Match when saving). Needs X-Approver-Key."""
     m = mandates.get(who.buyer_id)
+    if m:
+        response.headers["ETag"] = f'"{mandates.version(m)}"'
     return m.model_dump(mode="json") if m else None
 
 
 @app.put("/api/mandate")
-def save_mandate(req: SaveMandateRequest, who: Approver) -> dict:
-    """Save the confirmed mandate for the approver's buyer → {mandate, changes, audit_id}. 422 while open questions
-    remain; 409 for big loosenings unless confirm_large_change=true. Audited. Needs X-Approver-Key."""
-    return rules.save(req.mandate, req.confirm_large_change, who)
+def save_mandate(req: SaveMandateRequest, who: Approver, response: Response,
+                 if_match: Annotated[str | None, Header(max_length=200)] = None) -> dict:
+    """Save the confirmed mandate for the approver's buyer → {mandate, changes, audit_id, version}. With If-Match
+    (the ETag from GET), a save over rules someone else changed meanwhile is 412, never a silent overwrite. 422 while
+    open questions remain; 409 for big loosenings unless confirm_large_change=true. Audited. Needs X-Approver-Key."""
+    out = rules.save(req.mandate, req.confirm_large_change, who, _if_match(if_match))
+    response.headers["ETag"] = f'"{out["version"]}"'
+    return out
+
+
+# --- One input for everyone: order, menu or unclear, routed by Gemini; date and guests read from the text.
+class AskRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=4000, examples=["milk and 30 croissants for tomorrow"])
+    requested_date: date | None = Field(default=None, description="Optional when the text states a day.")
+
+    @field_validator("text")
+    @classmethod
+    def utf8(cls, t: str) -> str:
+        return AgentRunRequest.utf8(t)
+
+
+@app.post("/api/agent/ask")
+async def agent_ask(req: AskRequest, who: Agent) -> dict:
+    """Free text → {intent: order|menu|unclear, covers, requested_date, date_source: request|text|null,
+    question: str|null, ...the /api/agent/run body (order) or the /api/agent/menu body (menu)}. When a question is
+    asked (no date, menu without guests, unclear, conflicting dates), only `decision` (ASK_HUMAN) follows and nothing
+    runs. Needs X-Agent-Key."""
+    _catalogue_ready()
+    return await ask.ask(req.text, req.requested_date, who.buyer_id)
