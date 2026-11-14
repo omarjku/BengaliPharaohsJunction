@@ -341,6 +341,7 @@ async def demo_reset(who: Annotated[auth.Principal, Depends(auth.valio_admin)], 
     restore = bool(body and body.restore_mandate)
     done = (await orders.demo_reset_buyer(who.name, body.buyer_id, restore) if body and body.buyer_id
             else await orders.demo_reset(who.name, restore))
+    profile.reset(body.buyer_id if body and body.buyer_id else None)  # remembered preferences back to the seeds
     return {**done, **_demo_status()}
 
 
@@ -389,12 +390,22 @@ async def agent_run(req: AgentRunRequest, who: Agent) -> dict:
 
 
 # --- T15 menu → cart: a proposal only (always ASK_HUMAN); the chef orders it by posting order_lines to /api/orders.
+class PortionOverride(BaseModel):
+    """The chef's own portion for one ingredient (the menu screen's editable grams per portion)."""
+    model_config = ConfigDict(extra="forbid")
+    ingredient: str = Field(min_length=1, max_length=80, examples=["butter"])
+    per_cover: float = Field(gt=0, le=5000, examples=[25])
+    unit: Literal["L", "dl", "cl", "ml", "kg", "g", "pcs"] = Field(examples=["g"])
+    dish: str | None = Field(default=None, max_length=120, description="Only in this dish; default: every dish.")
+
+
 class MenuRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     menu_text: str = Field(min_length=1, max_length=4000,
                            examples=["Reindeer stew with mashed potatoes; lingonberry cheesecake"])
     covers: int = Field(ge=1, le=2000, examples=[80])
     requested_date: date = Field(examples=["2026-11-16"])
+    overrides: list[PortionOverride] = Field(default_factory=list, max_length=40)
 
     @field_validator("menu_text")
     @classmethod
@@ -408,12 +419,25 @@ class MenuRequest(BaseModel):
 
 
 @app.post("/api/agent/menu")
-async def agent_menu(req: MenuRequest, who: Agent) -> dict:
+async def agent_menu(req: MenuRequest, who: Agent, request: Request,
+                     x_approver_key: Annotated[str | None, Header()] = None) -> dict:
     """Menu + covers → a proposed cart. Needs X-Agent-Key (the buyer comes from the key; mandate server-side).
     Returns {menu, assumptions, ingredients, lines, cart_total_cents, order_lines, decision, audit_id}; the decision is
     always ASK_HUMAN (MENU_ASSUMPTIONS) and nothing is ordered here."""
     _catalogue_ready()
-    return await menu.propose(req.menu_text, req.covers, req.requested_date, who.buyer_id)
+    # Portions count as "set by the chef" (not doubted) only with the same buyer's approver key too; an agent-only
+    # request's overrides are marked "agent" and still checked by Gemini Decisions (security review).
+    chef = False
+    if req.overrides and x_approver_key:  # the guarded check audits a refused key and keeps its 401/403
+        chef_key = auth._guarded(request, "X-Approver-Key", x_approver_key, auth._approver)
+        if chef_key.buyer_id != who.buyer_id:  # another kitchen's approver: refused and audited, never downgraded
+            orders.security_event("key_used_outside_its_role", f"{request.method} {request.url.path}",
+                                  ratelimit.client_ip(request), buyer_id=chef_key.buyer_id, header="X-Approver-Key",
+                                  key_role="approver", http_status=403)
+            raise HTTPException(403, detail="That approver key belongs to another kitchen.")
+        chef = True
+    return await menu.propose(req.menu_text, req.covers, req.requested_date, who.buyer_id,
+                              overrides=[o.model_dump() for o in req.overrides], by_chef=chef)
 
 
 # --- The chef's rules in plain language (T09 compiler). Human acts: X-Approver-Key only; an agent key can never
@@ -454,6 +478,44 @@ async def compile_mandate_route(req: CompileRequest, who: Approver) -> dict:
 
 def _if_match(value: str | None) -> str | None:
     return value.removeprefix("W/").strip().strip('"') if value else None
+
+
+MemoryId = Annotated[str, StringConstraints(pattern=r"^mem_[0-9a-f]{12}$")]
+
+
+class RememberRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["usual_product"] = "usual_product"
+    product_id: ProductId
+    scope: Literal["this_order", "always"] = "always"
+    text: str | None = Field(default=None, max_length=200)
+
+
+@app.delete("/api/profile/memories/{memory_id}")
+def forget_memory(memory_id: MemoryId, who: Approver) -> dict:
+    """Forget one remembered preference (the memory panel's revoke button). Needs X-Approver-Key: forgetting a
+    kitchen preference is the human's call, never the agent's. 404 for an unknown id, one already forgotten, or
+    another buyer's. A forgotten seeded memory stays forgotten across restarts; the demo reset restores it.
+    → the updated profile (same shape as GET /api/profile)."""
+    try:
+        profile.revoke(who.buyer_id, memory_id)
+    except KeyError:
+        raise HTTPException(404, detail="No such remembered preference for this kitchen.") from None
+    return profile.context(who.buyer_id)
+
+
+@app.post("/api/profile/memories")
+def remember(req: RememberRequest, who: Approver) -> dict:
+    """'Remember this': the chef keeps a product they chose (e.g. a pricier option guests like), for this order only
+    (today's orders) or always. Needs X-Approver-Key. It only breaks near-ties between equally good matches: never past
+    the confidence threshold or the front door's limits. 422 if the product isn't in the catalogue.
+    → {memory, profile}."""
+    _catalogue_ready()
+    try:
+        memory = profile.remember(who.buyer_id, req.product_id, req.scope, req.text)
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e)) from None
+    return {"memory": memory, "profile": profile.context(who.buyer_id)}
 
 
 @app.get("/api/profile")
