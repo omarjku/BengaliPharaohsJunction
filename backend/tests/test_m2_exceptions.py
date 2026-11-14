@@ -141,6 +141,17 @@ def test_zero_price_substitute_is_not_offered(shop):
     assert res.substitutes == [] and "476240" in {ro.product_id for ro in res.rejected_options}
 
 
+def test_alternatives_reject_cross_food_types_and_profile_avoided_allergens(shop):
+    shop.products["102"].update(name_en="Butter block", category="butter", substitutes=["peanut-butter", "ham"])
+    shop.products["peanut-butter"] = product("peanut-butter", "Peanut butter", category="butter", claims=(), contains=("AP",))
+    shop.products["ham"] = product("ham", "Ham", category="butter", claims=(), contains=("AM",))
+    shop.quotes["peanut-butter"] = quote("peanut-butter")
+    shop.quotes["ham"] = quote("ham")
+    mandate = Mandate(id="m1", buyer_id="chef", per_line_cap_cents=10**9)
+    alternatives = asyncio.run(gate._alternatives(["102"], set(), REQ, mandate, {"AM"}, NOW))
+    assert alternatives[2] == []
+
+
 def test_split_that_breaks_route_limits_is_not_proposed(shop):
     shop.products["462775"]["lot_size"] = 0.01
     shop.products["476240"]["lot_size"] = 3.0

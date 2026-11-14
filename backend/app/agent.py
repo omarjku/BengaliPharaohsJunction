@@ -617,7 +617,7 @@ _UNIT_WORDS = {"l": {"l", "litre", "litres", "liter", "liters", "litra", "litraa
                "ml": {"ml"}, "kg": {"kg", "kgs", "kilo", "kilos", "kiloa", "kilogram", "kilograms"},
                "g": {"g", "gram", "grams", "grammaa"}}
 _MEASURE_WORDS = set().union(*_UNIT_WORDS.values())
-_SPLIT = r",(?!\d)|;|\n|\band\b"
+_SPLIT = r",(?!\d)|;|\n|\b(?:and|ja)\b"
 
 
 def _numbers(text: str) -> set[float]:
@@ -646,16 +646,34 @@ def _singular(w: str) -> str:
     return w[:-1] if lw.endswith("s") and not lw.endswith(("ss", "us", "is")) and len(lw) > 3 else w
 
 
+_FINNISH_CASE_ENDINGS = ("sta", "stä", "lla", "llä", "lle", "lta", "ltä", "ksi", "ssa", "ssä", "tta", "ttä",
+                         "ta", "tä", "n", "a", "ä")
+
+
 def _stem(w: str) -> str:
-    return w.lower().rstrip("s")
+    """Reduce English plurals and common Finnish case endings for grounding only."""
+    word = w.lower()
+    for ending in _FINNISH_CASE_ENDINGS:
+        if word.endswith(ending) and len(word) - len(ending) >= 3:
+            word = word[:-len(ending)]
+            break
+    if word.endswith("ies") and len(word) > 4:
+        return word[:-3] + "y"
+    if word.endswith("oes"):
+        return word[:-2]
+    return word[:-1] if word.endswith("s") and not word.endswith(("ss", "us", "is")) and len(word) > 3 else word
 
 
 def _words_in(words: list[str], text: str) -> bool:
-    """Every word is a whole word of the text (case-insensitive, plural-tolerant: 'eggs' ~ 'egg'). No prefixes:
-    'milkshake' must not ground 'milk'. No words at all grounds nothing."""
-    have = {_stem(t) for t in re.findall(r"[\wäöå]+", text.lower())}
-    stems = [q for q in map(_stem, words) if q]
-    return bool(stems) and all(q in have for q in stems)
+    """Every product word must be present as a whole word, allowing inflected Finnish forms."""
+    have = {form for token in re.findall(r"[\wäöå]+", text.lower()) for form in (token, _stem(token))}
+    stems = [(token, _stem(token)) for token in words if token]
+    return bool(stems) and all(
+        any(form in have or (len(form) >= 4 and any(
+            len(other) >= 4 and abs(len(form) - len(other)) <= 2 and
+            (form.startswith(other) or other.startswith(form)) for other in have))
+            for form in (token.lower(), stem))
+        for token, stem in stems)
 
 
 def _unit_in(unit: str, clause: str) -> bool:
@@ -665,16 +683,29 @@ def _unit_in(unit: str, clause: str) -> bool:
     return bool(tokens & _UNIT_WORDS.get(unit, set()))
 
 
+_CORRECTION = re.compile(r"\b(?:no\s+wait|actually|make\s+it|change\s+it|instead|eikun|ei\s+vaan|muuta)\b", re.I)
+
+
 def grounding(text: str, item: dict) -> tuple[str | None, set[int]]:
     """Deterministic injection / hallucination guard → (what in a Gemini-parsed item is NOT in the chef's own text,
-    indices of the clauses that ground it). Product, amount and unit must all be in the SAME clause, so
-    '12 kg butter and 1 L milk' can't become 12 L milk."""
+    indices of the clauses that ground it). Product, amount and unit must all be in the SAME clause, except for an
+    explicit self-correction, so '12 kg butter and 1 L milk' can't become 12 L milk."""
     words = re.findall(r"[\wäöå]+", conversation.spoken_to_digits(item["query"]).lower())  # like the text below
     unit = (item["unit"] or "").lower()
     if unit and unit not in quantity.MEASURES:
         return f"the unit {item['unit']}", set()  # catalogue codes like KI multiply quantities; plain units only
     text = conversation.spoken_to_digits(text)  # before splitting: "two hundred and fifty" is one amount
-    clauses = {i: c for i, c in enumerate(re.split(_SPLIT, text)) if _words_in(words, c)}
+    parts = re.split(_SPLIT, text)
+    clauses = {i: c for i, c in enumerate(parts) if _words_in(words, c)}
+    if item["amount"] is not None and clauses:
+        # A self-correction may put the final amount in a short clause that refers back to the product:
+        # "5 L cream, no wait, make it 8 L". It is still grounded by the buyer's own product clause, but the
+        # correction clause owns the final amount and unit.
+        corrections = {i: c for i, c in enumerate(parts)
+                       if _CORRECTION.search(c) and item["amount"] in _numbers(c) and
+                       (not unit or _unit_in(unit, c))}
+        if corrections:
+            clauses = corrections
     if not clauses:
         return f"the product '{item['query']}'", set()
     if item["amount"] is not None:
@@ -765,18 +796,22 @@ _QTY_LIKE = re.compile(r"\d[\d,. ]*\s*(l|dl|cl|ml|kg|g|pcs|kpl|x|litra\w*|kilo\w
 
 
 def unparsed_clauses(text: str, items: list[dict]) -> list[str]:
-    """Clauses with no grounded item, including a product named without a quantity: never silently drop speech."""
+    """Clauses with an order signal but no grounded item, never conversational filler alone."""
     covered = set().union(*(grounding(text, anchored(text, it))[1] for it in items)) if items else set()
     stop = {"and", "or", "plus", "also", "please", "i", "we", "need", "want", "to", "for", "on", "by",
-            "delivered", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-            "maanantai", "tiistai", "keskiviikko", "torstai", "perjantai", "lauantai", "sunnuntai"}
+            "delivered", "hi", "hello", "hey", "okay", "ok", "so", "thanks", "thank", "good", "morning",
+            "afternoon", "evening", "asap", "today", "tonight", "tomorrow", "week", "weekend", "monday",
+            "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "huomenna", "ylihuomenna",
+            "ensi", "viikolla", "maanantai", "tiistai", "keskiviikko", "torstai", "perjantai", "lauantai",
+            "sunnuntai", "heti", "kiitos", "joo", "kyllä"}
     out = []
     for i, clause in enumerate(re.split(_SPLIT, text)):
         clean = clause.strip(" .")
         if i in covered or not clean:
             continue
         words = set(re.findall(r"[\wäöå]+", clean.lower()))
-        if _QTY_LIKE.search(clean) or words - stop:
+        catalogue_words = " ".join(sorted(words - stop))
+        if _QTY_LIKE.search(clean) or (catalogue_words and catalogue.search(catalogue_words)):
             out.append(clean)
     return out
 
@@ -1391,7 +1426,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                                            "Confirm the quantity in sales units."))
                 reasons += best_asks
                 try:  # J4: substitutes from the front door's own finder (same category + dietary claims, re-quoted)
-                    subs = (await gate._alternatives(cands, set(ids), requested, m, excluded, now))[0]
+                    alternative_excluded = set(excluded) | set(it.get("exclude_allergens") or [])
+                    subs = (await gate._alternatives(cands, set(ids), requested, m, alternative_excluded, now))[0]
                 except Exception:  # noqa: BLE001 - no substitutes is still a valid answer
                     log.exception("substitute search failed")
                     subs = []
@@ -1433,10 +1469,16 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                     details.append(approval.get("assumption") or "From your saved standing order: approve to place.")
                 if approval.get("product_from") and approval.get("product_to"):
                     details.append(f"Changed the product from {approval['product_from']} to {approval['product_to']}.")
-                if approval.get("amount_assumed") and approval.get("amount") is not None:
+                if it.get("amount_assumed") and it.get("amount_assumption"):
+                    details.append(
+                        f"The amount was proposed as {gate._qty(it['amount'])} {it.get('unit')}.")
+                    details.append(it["amount_assumption"])
+                elif approval.get("amount_assumed") and approval.get("amount") is not None:
                     details.append(
                         f"The amount was proposed as {gate._qty(approval['amount'])} {approval.get('unit') or it['unit']}."
                         + (f" {approval['assumption']}" if approval.get("assumption") else ""))
+                if approval.get("delivery_assumption"):
+                    details.append(f"Delivery was assumed as {approval['delivery_assumption']}.")
                 if it.get("product_assumed"):
                     details.append(f"The product was selected using the kitchen profile ("
                                    f"{it.get('product_assumption') or 'a profile preference'}).")

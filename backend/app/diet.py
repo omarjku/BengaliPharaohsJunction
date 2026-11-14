@@ -92,6 +92,12 @@ def _verified_basis(product: dict, diet: str) -> str | None:
     if targets and targets <= free_from:
         return f"allergen data shows no {_allergen_word(diet)}"
 
+    # A non-empty CONTAINS declaration is complete evidence for the allergens it names. It need not enumerate
+    # unrelated allergens in FREE_FROM: e.g. butter containing milk is still verifiable for a gluten-free kitchen.
+    contains = _contains(product)
+    if contains and not contains & targets:
+        return f"allergen data declares no {_allergen_word(diet)}"
+
     return None
 
 

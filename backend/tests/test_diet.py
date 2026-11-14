@@ -117,6 +117,11 @@ def test_partial_free_from_evidence_is_not_verified():
     assert diet.check(gluten, "gluten_free", True)["level"] == "unverifiable"
 
 
+def test_complete_contains_declaration_verifies_unrelated_diet():
+    assert diet.check({"claims": [], "allergens": {"contains": ["AM"], "may_contain": [], "free_from": []}},
+                      "gluten_free", True)["level"] == "verified"
+
+
 def test_model_safe_assertion_cannot_make_selected_blended_oil_safe():
     product = {"name_en": "Olive oil blend", "name_fi": None, "claims": [],
                "allergens": {"contains": [], "may_contain": [], "free_from": []}}
