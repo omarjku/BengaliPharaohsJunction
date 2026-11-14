@@ -39,6 +39,29 @@ NUMERIC_RULES = (RuleKind.MAX_UNIT_PRICE_CENTS, RuleKind.MIN_DELIVERY_RELIABILIT
 DIETARY_CLAIMS = {"FREE_FROM_LACTOSE", "FREE_FROM_GLUTEN", "VEGAN", "VEGETARIAN", "FREE_FROM_MILK"}
 MAX_ALTERNATIVES = 3
 TIERS = ("best", "better", "good")
+# Sales units counted by weight or volume may be fractional; every other Valio unit (ST, KI, PAK, BAG, …) is a piece.
+MEASURE_UNITS = {"KG", "KGM", "G", "GRM", "L", "LTR", "DL", "CL", "ML"}
+# When allergen data doesn't settle an excluded allergen, the product NAME (en + fi) is checked for these words.
+# Kept small on purpose: a hit refuses. "…free", "…vapaa" and Finnish -ton/-tön/-ttom-/-ttöm- forms are negations;
+# plant "milks" (coconut, oat, soy, almond, rice) and buckwheat are excluded.
+ALLERGEN_WORDS = {
+    "AP": (r"pea ?nut", r"ground ?nut", r"maapähkin"),
+    "AN": (r"hazelnut", r"walnut", r"cashew", r"pecan", r"pistachio", r"macadamia", r"almond", r"\bnuts?\b",
+           r"pähkinä", r"manteli"),
+    "AM": (r"(?<!coconut )(?<!oat )(?<!soy )(?<!almond )(?<!rice )\bmilk", r"\bcheese", r"yog(h)?urt",
+           r"(?<!kookos)(?<!kaura)(?<!soija)(?<!manteli)maito", r"juusto", r"jogurt"),
+    "AW": (r"(?<!buck)wheat", r"gluten", r"\brye\b", r"barley", r"spelt", r"vehnä", r"gluteeni", r"\bruis", r"ohra"),
+    "AE": (r"\beggs?\b", r"kananmun"),
+    "AF": (r"\bfish", r"salmon", r"\btuna", r"\blohi", r"\bkala"),
+    "AY": (r"\bsoy", r"soija"),
+    "AS": (r"sesam", r"seesam"),
+}
+# What a product IS beyond allergen safety (SU-02): a substitute lacking one of these that the original has is
+# offered only as a demoted "good" option that says what differs, never "best", and never used to fill a split.
+NUTRITION_CLAIMS = {"FREE_FROM_FAT", "LOW_FAT", "LOW_LACTOSE", "FREE_FROM_EGGS", "FREE_FROM_SOY", "FREE_FROM_WHEAT",
+                    "NO_ADDED_SUGARS", "FREE_FROM_SWEETENERS", "FREE_FROM_ARTIFICIAL_SWEETENERS", "LOW_SODIUM_SALT",
+                    "FREE_FROM_SODIUM_SALT", "HIGH_PROTEIN", "HIGH_FIBRE"}
+ORGANIC_LABELS = {"EU_ORGANIC_FARMING", "KRAV_MARK", "SOIL_ASSOCIATION_ORGANIC_SYMBOL"}
 MAX_ORDER_LINES, MAX_LINE_QTY = 50, 100_000  # = the /api/orders route limits (main.py), so a proposal can be re-posted
 
 
@@ -106,6 +129,19 @@ def _nums(m: Mandate, kind: RuleKind) -> list[float]:
     return [f for v in _rules(m, kind) if (f := _num(v)) is not None]
 
 
+def _name_says(cat: dict, code: str) -> str | None:
+    """The allergen word a product's name carries (en or fi), unless negated ("peanut-free", "gluteeniton")."""
+    name = " ".join(filter(None, (cat.get("name_en"), cat.get("name_fi")))).lower()
+    for pattern in ALLERGEN_WORDS.get(code, ()):
+        for m in re.finditer(pattern, name):
+            rest = name[m.end():]
+            word_end = re.match(r"\w*", rest).group(0)
+            if re.search(r"t(o|ö)n|tt(o|ö)m", word_end) or re.match(r"\w*(\s+(and|&|ja)\s+\w+)?[\s-]*(free|vapaa)", rest):
+                continue
+            return m.group(0).strip()
+    return None
+
+
 def _cutoff_passed(q: dict, now: datetime) -> bool:
     # Re-check against the clock: quotes are cached up to valio.CACHE_TTL_S, the flag may be that old.
     return "cutoff_passed" in q["flags"] or bool(q["order_cutoff"] and datetime.fromisoformat(q["order_cutoff"]) <= now)
@@ -155,7 +191,15 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
                      f"{cat['sales_unit']}; the quantity is counted in {q['sales_unit']}.", pid,
                      "Confirm the quantity in the sales unit.", api_unit=q["sales_unit"], catalogue_unit=cat["sales_unit"]))
     lot = cat.get("lot_size")
-    if qty is not None and lot and Decimal(str(qty)) % Decimal(str(lot)) != 0:
+    if qty is not None and qty > MAX_LINE_QTY:  # every path (route, agent, menu, MCP) goes through here
+        rs.append(_r(C.QTY_INVALID, DECLINE, f"{_qty(qty)} {unit} of {name} is over the {_qty(MAX_LINE_QTY)} per-line "
+                     "maximum.", pid, "Check the quantity; split a genuinely huge order with Valio.",
+                     requested=qty, max_quantity=MAX_LINE_QTY))
+    elif qty is not None and info["unit"] and info["unit"].upper() not in MEASURE_UNITS and qty != int(qty):
+        rs.append(_r(C.QTY_INVALID, DECLINE, f"{name} is sold per {unit}, so it can't be ordered as {_qty(qty)}; "
+                     "only whole units are delivered.", pid, f"Round to {math.ceil(qty)}.", requested=qty,
+                     suggested_quantity=math.ceil(qty)))
+    elif qty is not None and lot and Decimal(str(qty)) % Decimal(str(lot)) != 0:
         rs.append(_r(C.QTY_INVALID, DECLINE, f"{name} is sold in multiples of {_qty(lot)} {unit}; {_qty(qty)} isn't one.",
                      pid, f"Order a multiple of {_qty(lot)}.", lot_size=lot, requested=qty))
 
@@ -193,10 +237,15 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
 
     al = cat.get("allergens") or {}
     for code in sorted(excluded):
+        word = _name_says(cat, code) if code not in al.get("contains", []) + al.get("free_from", []) else None
         if code in al.get("contains", []):
             rs.append(_r(C.ALLERGEN_CONTAINS, DECLINE, f"{name} contains {catalogue.ALLERGEN_NAMES.get(code, code)}, "
                          "which your mandate excludes.", pid, "Pick an alternative without it.", allergen=code))
-        elif code in al.get("may_contain", []):
+        elif word:  # allergen data doesn't list it, but the name does: refuse, no signature can override that
+            rs.append(_r(C.ALLERGEN_CONTAINS, DECLINE, f"Name says {word}; your rules exclude "
+                         f"{catalogue.ALLERGEN_NAMES.get(code, code)} ({name}).", pid,
+                         "Pick an alternative whose label rules it out.", allergen=code, source="product_name", word=word))
+        elif code in al.get("may_contain", []):  # (name hits were refused above)
             rs.append(_r(C.ALLERGEN_MAY_CONTAIN, ASK, f"{name} may contain {catalogue.ALLERGEN_NAMES.get(code, code)}.",
                          pid, "Approve if traces are acceptable, or pick an alternative.", allergen=code))
     if excluded and not any(al.get(k) for k in ("contains", "may_contain", "free_from")):
@@ -291,16 +340,19 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
         if [r for r in rs if r.severity is not INFO]:
             bad.append(RejectedOption(product_id=c, reasons=_sorted(rs)))
         else:
-            ok.setdefault(replaces, []).append((_score(q, cat), c, q))
+            ok.setdefault(replaces, []).append((bool(_differs(old, cat)), _score(q, cat), c, q))
     alts, subs = [], []
     for replaces, ranked in ok.items():
         old = catalogue.get(replaces)
-        for tier, (_, c, q) in zip(TIERS, sorted(ranked, key=lambda x: (x[0], x[1]))):
+        for i, (_, _, c, q) in enumerate(sorted(ranked, key=lambda x: (x[0], x[1], x[2]))[:len(TIERS)]):
             cat = catalogue.get(c)
+            differs = _differs(old, cat)
+            tier = "good" if differs else TIERS[i]  # full matches first; a product that differs is never "best"
             name = cat.get("name_en") or cat.get("name_fi") or c
             amount = "unknown amount" if not q["quantity_known"] else f"{_qty(q['available_amount'])} {q['sales_unit']} available"
-            why = _why_safe(cat, old, excluded, need)
+            why = _why_safe(cat, old, excluded, need) + (f" Differs: {'; '.join(differs)}." if differs else "")
             subs.append({"product_id": c, "replaces": replaces, "tier": tier, "why_safe": why, "name": name,
+                         "differs": differs,
                          "unit": q["sales_unit"], "unit_price_cents": eur_to_cents(q["price"]),
                          "reliability": cat.get("delivery_reliability"), "origin": cat.get("origin"),
                          "available": q["available_amount"] if q["quantity_known"] else None})
@@ -309,6 +361,21 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
                 f"{q['order_cutoff']}), {eur(eur_to_cents(q['price']))} per {q['sales_unit']} net, {amount}."))))
     alts.sort(key=lambda x: TIERS.index(x[0]))  # the contract allows 3: best first across refused lines
     return [a for _, a in alts[:MAX_ALTERNATIVES]], bad, subs, quotes
+
+
+def _differs(old: dict, cat: dict) -> list[str]:
+    """Nutrition claims / organic the original has and the candidate lacks, in words for the chef."""
+    lost = sorted((set(old.get("claims") or []) & NUTRITION_CLAIMS) - set(cat.get("claims") or []))
+    out = [f"not {c}" for c in lost]
+    if set(old.get("labels") or []) & ORGANIC_LABELS and not set(cat.get("labels") or []) & ORGANIC_LABELS:
+        out.append("not organic")
+    return out
+
+
+def _step(cat: dict, unit: str | None):
+    """Smallest orderable amount: the lot size, but at least one whole unit for piece-type sales units."""
+    lot = cat.get("lot_size")
+    return lot if unit and unit.upper() in MEASURE_UNITS else max(lot or 0, 1)
 
 
 def _lot(qty: Decimal, lot, rounding) -> Decimal:
@@ -323,14 +390,15 @@ def _split(pid: str, qty: float, quotes: dict, subs: list[dict], sub_quotes: dic
     """A line short on stock → what's there of it + the rest from the best same-unit substitute, each part passing
     check_line with nothing blocking. None when no such split exists."""
     q, cat = quotes.get(pid), catalogue.get(pid) or {}
-    have = _lot(Decimal(str(q["available_amount"] or 0)), cat.get("lot_size"), ROUND_FLOOR)
+    have = _lot(Decimal(str(q["available_amount"] or 0)), _step(cat, q["sales_unit"] or cat.get("sales_unit")), ROUND_FLOOR)
     if have <= 0 or have >= Decimal(str(qty)):
         return None
     a_rs, a = check_line(pid, float(have), q, requested, m, excluded, now)
     if any(_blocking(r) for r in a_rs):
         return None
-    for s in (s for s in subs if s["replaces"] == pid):
-        rest = _lot(Decimal(str(qty)) - have, (catalogue.get(s["product_id"]) or {}).get("lot_size"), ROUND_CEILING)
+    for s in (s for s in subs if s["replaces"] == pid and not s["differs"]):  # a split fill must keep the claims
+        scat = catalogue.get(s["product_id"]) or {}
+        rest = _lot(Decimal(str(qty)) - have, _step(scat, s["unit"] or scat.get("sales_unit")), ROUND_CEILING)
         if rest > MAX_LINE_QTY:
             continue
         b_rs, b = check_line(s["product_id"], float(rest), sub_quotes.get(s["product_id"]), requested, m, excluded, now)
@@ -366,8 +434,19 @@ def _alternative_order(lines: list, info: list[dict], rejected: list[str], quote
 
 def _no_mandate(lines: list, request_id: str, now: datetime) -> GateResult:
     """No stored mandate = nobody has said what this buyer may order: refuse without asking Valio anything."""
-    r = _r(C.MANDATE_MISSING, ASK, "No mandate is on file for this buyer, so nothing can be ordered on its behalf.",
-           None, "Set up the buyer's mandate with Valio, then order again.")
+    return _unanswered(lines, request_id, now, _r(
+        C.MANDATE_MISSING, ASK, "No mandate is on file for this buyer, so nothing can be ordered on its behalf.",
+        None, "Set up the buyer's mandate with Valio, then order again."))
+
+
+def engine_error(lines: list, request_id: str, now: datetime) -> GateResult:
+    """Valio couldn't be asked (down, timeout, 5xx, broken JSON): nothing decided, nothing ordered; for the audit."""
+    return _unanswered(lines, request_id, now, _r(
+        C.ENGINE_ERROR, ASK, "Valio's price and availability check failed, so nothing was decided or ordered.",
+        None, "Retry shortly."))
+
+
+def _unanswered(lines: list, request_id: str, now: datetime, r: Reason) -> GateResult:
     info = [{"product_id": ln.product_id, "name": (catalogue.get(ln.product_id) or {}).get("name_en") or ln.product_id,
              "quantity": ln.quantity, "unit": None, "unit_price_cents": None, "line_total_cents": None} for ln in lines]
     decision = Decision(request_id=request_id, outcome="ASK_HUMAN", reasons=[r], alternatives=[],

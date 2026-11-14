@@ -9,6 +9,7 @@ ASK_HUMAN with MENU_ASSUMPTIONS; the chef confirms by posting `order_lines` to P
 import math
 import re
 from datetime import date, datetime, timezone
+from decimal import ROUND_HALF_UP, Decimal
 from fractions import Fraction
 from uuid import uuid4
 
@@ -76,8 +77,8 @@ def apply_dietary(menu_text: str, dishes: list[dict]) -> list[Reason]:
 
 
 def _key(name: str) -> str:
-    """'Potatoes' and 'potato', 'cheeses' and 'cheese' merge; word order doesn't matter."""
-    return " ".join(sorted({re.sub(r"(es|s)$", "", w) for w in re.findall(r"[\wäöå]+", name.lower())}))
+    """'Potatoes' and 'potato', 'lingonberries' and 'lingonberry' merge; word order doesn't matter."""
+    return " ".join(sorted({agent._singular(w) for w in re.findall(r"[\wäöå]+", name.lower())}))
 
 
 def scale(dishes: list[dict], covers: int) -> tuple[list[dict], list[dict], list[Reason]]:
@@ -100,6 +101,11 @@ def scale(dishes: list[dict], covers: int) -> tuple[list[dict], list[dict], list
                 continue
             dim, size = quantity.MEASURES[unit]
             per_base = Fraction(str(per)) * size  # exact: 3 x 200 g is 0.6 kg, not 0.6000000000000001
+            if per_base > 10 * PER_COVER_MAX[dim]:  # absurd (e.g. 1e308): left out, never scaled into a crash
+                problems.append(gate._r(C.QTY_SUSPICIOUS, ASK, f"{per:g} {ing['unit']} of {name} per cover for "
+                                        f"{dish['name']} can't be right; it is left out of the cart.", None,
+                                        "Check the per-cover amount and add it by hand."))
+                continue
             if per_base > PER_COVER_MAX[dim]:
                 problems.append(gate._r(C.QTY_SUSPICIOUS, ASK, f"{per:g} {ing['unit']} of {name} per cover for "
                                         f"{dish['name']} looks too much.", None, "Check the per-cover amount.",
@@ -148,10 +154,16 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -
         reasons.append(gate._r(C.ENGINE_ERROR, ASK, "Gemini couldn't read the menu, so no cart was proposed.", None,
                                "Retry in a moment, or order the ingredients with a normal request."))
         dishes = []
-    kept = []
-    for d in dishes:  # injection guard: a dish must be on the menu the chef pasted
-        if agent._words_in(re.findall(r"[\wäöå]+", d["name"].lower()), menu_text):
+    kept, seen = [], set()
+    lines_ = re.split(r"[;\n]|\.\s", menu_text)
+    for d in dishes:  # injection guard: a dish must be on ONE line of the menu the chef pasted, and only once
+        words = re.findall(r"[\wäöå]+", d["name"].lower())
+        if _key(d["name"]) in seen:
+            reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, f"The dish '{d['name']}' came back twice; it is counted once.",
+                                   None, "Check the menu text."))
+        elif any(agent._words_in(words, line) for line in lines_):
             kept.append(d)
+            seen.add(_key(d["name"]))
         else:
             reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The dish '{d['name']}' isn't on the menu you sent; its "
                                    "ingredients were left out.", None, "Check the menu text."))
@@ -163,8 +175,7 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -
                                f"prices {MAX_INGREDIENTS} per proposal (the rest are left out).", None,
                                "Split the menu into smaller parts."))
         ingredients = ingredients[:MAX_INGREDIENTS]
-    items = [it | {"context": f"{it['query']} for {', '.join(it['dishes'])} on a restaurant menu ({covers} covers). "
-                              f"Menu: {menu_text}"} for it in ingredients]
+    items = ingredients  # agent.canonical() tells the judge which dishes each ingredient is for
 
     res = await agent._pipeline(menu_text, items, requested, buyer_id, m, excluded, now, reasons, True)
     lines, chosen = res["lines"], res["chosen"]
@@ -172,8 +183,15 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -
         ln["dishes"] = ingredients[ln["item"]]["dishes"]
         ln.pop("_weakest", None)
     qty: dict[str, float] = {}
+    price: dict[str, int] = {}
     for ln in chosen:  # the chef confirms the whole cart, so two ingredients on one product become one order line
         qty[ln["product"]["id"]] = qty.get(ln["product"]["id"], 0) + ln["quantity"]["quantity"]
+        price[ln["product"]["id"]] = gate.eur_to_cents(ln["quote"]["price"])
+    for pid in [p for p, q in qty.items() if q > gate.MAX_LINE_QTY]:  # never hand the UI a line the door rejects
+        reasons.append(gate._r(C.QTY_SUSPICIOUS, ASK, f"{gate._qty(qty.pop(pid))} units of "
+                               f"{agent._name(catalogue.get(pid) or {'id': pid})} is over the "
+                               f"{gate._qty(gate.MAX_LINE_QTY)} per-line limit; it is left out of the order lines.",
+                               pid, "Check the amounts for that ingredient."))
     confs = [ln["confidence"] for ln in chosen]
     confidence = min(confs) if confs and None not in confs else None
     decision = agent._decision(run_id, reasons, res["alternatives"], now, confidence)
@@ -192,6 +210,8 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -
                 {"name": i.get("name"), "per_cover": i.get("per_cover"), "unit": i.get("unit"),
                  "assumption": i.get("assumption")} for i in d["ingredients"]]} for d in kept]},
             "assumptions": assumptions, "ingredients": ingredients, "lines": lines,
-            "cart_total_cents": sum(ln["line_total_cents"] or 0 for ln in chosen),
+            # computed like the front door will (unit price x summed quantity), so the chef sees what they'll pay
+            "cart_total_cents": sum(int((Decimal(price[p]) * Decimal(str(q))).quantize(Decimal(1), ROUND_HALF_UP))
+                                    for p, q in qty.items()),
             "order_lines": [{"product_id": p, "quantity": q} for p, q in qty.items()],
             "decision": decision.model_dump(mode="json"), "audit_id": entry.id}

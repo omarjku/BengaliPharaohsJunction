@@ -5,10 +5,11 @@ ponytail: a JSON file read on every get (tiny, and always current for the agent 
 disk stops being enough (Render's disk is ephemeral, like the orders file).
 """
 import json
+import logging
 import os
 import threading
-from pathlib import Path
 
+from fastapi import HTTPException
 from trade_contracts import HardRule, Mandate, Preference
 from trade_contracts.common import PreferenceScope, RuleKind
 
@@ -38,27 +39,65 @@ _MANDATES = {m.buyer_id: m for m in [
 
 STORE = config.DATA_DIR / "mandates.json"  # all front-door state lives under DATA_DIR
 _lock = threading.Lock()
+log = logging.getLogger(__name__)
+
+
+def _read() -> dict[str, dict]:
+    """Fail closed: a corrupt store is a 503 for everyone (never 'no mandate', never overwritten by a save)."""
+    try:
+        data = json.loads(STORE.read_text()) if STORE.exists() else {}
+        if not isinstance(data, dict):
+            raise ValueError("not an object")
+        return data
+    except (OSError, ValueError) as e:
+        log.error("mandate store unreadable (%s)", type(e).__name__)
+        raise HTTPException(503, detail="The saved rules can't be read; nothing is ordered until data/mandates.json "
+                                        "is repaired.") from None
 
 
 def _stored() -> dict[str, dict]:
     with _lock:
-        return json.loads(STORE.read_text()) if STORE.exists() else {}
+        return _read()
 
 
 def get(buyer_id: str) -> Mandate | None:
     saved = _stored().get(buyer_id)
-    return Mandate.model_validate(saved) if saved else _MANDATES.get(buyer_id)
+    if not saved:
+        return _MANDATES.get(buyer_id)
+    try:
+        return Mandate.model_validate(saved)
+    except ValueError:
+        log.error("saved mandate for %s fails the contract", buyer_id)
+        raise HTTPException(503, detail="The saved rules for this buyer are invalid; nothing is ordered until they "
+                                        "are saved again.") from None
 
 
-def put(m: Mandate) -> None:
-    """Store the approver-confirmed mandate for m.buyer_id (atomic write)."""
+def _write(data: dict) -> None:
+    STORE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STORE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False))
+    os.replace(tmp, STORE)  # atomic
+
+
+def put(m: Mandate) -> dict | None:
+    """Store the approver-confirmed mandate for m.buyer_id; returns the previous stored entry (for restore)."""
     with _lock:
-        data = json.loads(STORE.read_text()) if STORE.exists() else {}
+        data = _read()
+        previous = data.get(m.buyer_id)
         data[m.buyer_id] = m.model_dump(mode="json")
-        STORE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = STORE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False))
-        os.replace(tmp, STORE)
+        _write(data)
+        return previous
+
+
+def restore(buyer_id: str, previous: dict | None) -> None:
+    """Undo a put() whose audit entry couldn't be written: no rule change without its audit."""
+    with _lock:
+        data = _read()
+        if previous is None:
+            data.pop(buyer_id, None)
+        else:
+            data[buyer_id] = previous
+        _write(data)
 
 
 # Gemini Decisions confidence below this → ask the chef. Kept beside the mandate because the v0.2 Mandate contract

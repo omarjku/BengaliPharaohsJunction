@@ -1,4 +1,5 @@
 """Valio Aimo front door: API entry point. OpenAPI spec is served at /openapi.json, docs at /docs."""
+import asyncio
 import hashlib
 import re
 import threading
@@ -61,7 +62,9 @@ class QuoteRequest(BaseModel):
 @app.post("/api/quotes")
 async def quotes(req: QuoteRequest) -> list[dict]:
     """Live price + availability from Valio for specific products, merged into one quote each,
-    with explicit trap flags (cutoff_passed, quantity_unknown, undeliverable, out_of_stock, unknown_product)."""
+    with explicit trap flags (cutoff_passed, quantity_unknown, quantity_unreported, undeliverable, out_of_stock,
+    unknown_product). Money: `unit_price_cents` (integer, net of VAT); `price` is the same in euros, kept for
+    compatibility."""
     return await valio.get_quotes(req.product_ids, req.requested_date.isoformat())
 
 
@@ -155,19 +158,26 @@ IdemKey = Annotated[str | None, Header(pattern=r"^[\x21-\x7e]{1,255}$",
 
 
 async def _once(response: Response, who: auth.Principal, scope: str, key: str | None, request: dict, run) -> dict:
-    """Run `run` once per Idempotency-Key (scope = caller + route); a replay says so in Idempotent-Replayed."""
+    """Run `run` once per Idempotency-Key, scoped to the credential + route; `request` = the effective action (so
+    equivalent bodies match). A replay says so in Idempotent-Replayed. Quota per buyer.
+    ponytail: a crash between the order write and the key write can still lose the key; one DB transaction fixes it."""
     if key is None:
         return await run()
-    body, replayed = await orders.idempotent(who.buyer_id, f"{scope}:{key}", hashlib.sha256(signing.canonical(request)).hexdigest(), run)
+    body, replayed = await orders.idempotent(who.buyer_id, f"{scope}:{who.key_id}:{key}", hashlib.sha256(signing.canonical(request)).hexdigest(), run)
     if replayed:
         response.headers["Idempotent-Replayed"] = "true"
     return body
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
+async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
     """422 without echoing the input back: a NaN in the body can't be JSON-encoded (it was a 500), and the
-    client already has what it sent."""
+    client already has what it sent. A client trying to send its own mandate is audited as a security event."""
+    if any(e.get("type") == "extra_forbidden" and "mandate" in e.get("loc", ()) for e in exc.errors()):
+        owner = auth._owner(k) if (k := request.headers.get("x-agent-key")) else None
+        await asyncio.to_thread(orders.security_event, "client_sent_mandate", f"{request.method} {request.url.path}",
+                                ratelimit.client_ip(request), buyer_id=owner[1] if owner else None,
+                                detail="the order is judged by the buyer's stored mandate; a mandate in the body is refused")
     return JSONResponse({"detail": [{k: e[k] for k in ("type", "loc", "msg") if k in e} for e in exc.errors()]},
                         status_code=422)
 
@@ -215,9 +225,12 @@ async def place_order(req: OrderRequest, who: Agent, response: Response, idempot
     ASK_HUMAN → pending_approval, a hard violation or something Valio can't deliver → refused (nothing stored),
     always with reasons, suggested fixes and alternatives. Every run is audited. Needs X-Agent-Key."""
     mandate = _mandate_for(who, req)
-    _catalogue_ready()
-    return await _once(response, who, f"agent:{who.buyer_id}:orders", idempotency_key, req.model_dump(mode="json"),
-                       lambda: orders.place(who.buyer_id, req.requested_date, req.lines, mandate))
+
+    async def act():  # readiness only matters for a new action; a stored replay is served during catalogue startup
+        _catalogue_ready()
+        return await orders.place(who.buyer_id, req.requested_date, req.lines, mandate)
+    effective = {"requested_date": req.requested_date.isoformat(), "lines": [ln.model_dump() for ln in req.lines]}
+    return await _once(response, who, f"agent:{who.buyer_id}:orders", idempotency_key, effective, act)
 
 
 @app.get("/api/orders/{order_id}")
@@ -238,10 +251,13 @@ async def approve_order(order_id: OrderId, who: Approver, response: Response, bo
                         idempotency_key: IdemKey = None) -> dict:
     """Human sign-off as the key's owner; re-runs the gate first (cut-offs pass, prices and stock change).
     Needs X-Approver-Key. The approver's name comes from the key, never the body."""
-    _catalogue_ready()
+    seen = body.decided_at if body else None
+
+    async def act():
+        _catalogue_ready()
+        return await orders.approve(order_id, who, seen)
     return await _once(response, who, f"approver:{who.buyer_id}:approve:{order_id}", idempotency_key,
-                       body.model_dump(mode="json") if body else {},
-                       lambda: orders.approve(order_id, who, body.decided_at if body else None))
+                       {"decided_at": seen.isoformat() if seen else None}, act)
 
 
 @app.post("/api/orders/{order_id}/reject")
@@ -285,10 +301,13 @@ def verify_statement(req: VerifyRequest) -> dict:
 @app.get("/api/admin/audit")
 def admin_audit(who: Annotated[auth.Principal, Depends(auth.valio_admin)], buyer_id: BuyerId | None = None,
                 outcome: Literal["AUTO", "ASK_HUMAN", "DECLINE"] | None = None,
+                status: Literal["confirmed", "pending_approval", "refused", "rejected"] | None = None,
                 limit: Annotated[int, Query(ge=1, le=1000)] = 100) -> list[dict]:
-    """Valio's side of the audit trail: every buyer's entries (contract AuditEntry objects), oldest first,
-    optionally for one buyer and/or one decision outcome. Needs X-Valio-Admin-Key; read-only."""
-    return orders.audit_log(buyer_id, limit, outcome)
+    """Valio's side of the audit trail: every buyer's entries (contract AuditEntry + `front_door` annotation:
+    action, status after the event, signed_off_by) and refused-access security events, oldest first. Filters: one
+    buyer, a decision outcome, and/or the order status (status=refused finds every refusal, whatever its outcome).
+    Needs X-Valio-Admin-Key; read-only."""
+    return orders.audit_log(buyer_id, limit, outcome, status)
 
 
 # --- Milestone 1 buyer agent: text -> catalogue -> Valio quote -> quantity -> decision -> front-door order -> audit.

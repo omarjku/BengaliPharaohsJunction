@@ -19,6 +19,9 @@ from . import config
 USER_AGENT = "BengaliPharaohs-Junction2026/0.1 (+https://github.com/omarjku/BengaliPharaohsJunction)"
 MAX_BATCH = 1000
 UNKNOWN_QTY = 999999.0
+# Stock products report 9999999999 ("effectively unlimited", unverified): not a real stock figure, so it is shown
+# and judged as "not reported" (never counted as stock). Unlike Terminal's 999999 it doesn't raise an ask.
+UNREPORTED_QTY = 9999999999.0
 CACHE_TTL_S = 60  # ponytail: in-process dict cache, fine for one Render instance; use Redis/Postgres if we scale out
 CACHE_MAX = 20_000  # bound memory: the route is public, so ids/dates come from anyone
 
@@ -58,6 +61,8 @@ def _merge(avail: dict, price: dict | None, now: datetime) -> dict:
         flags.append("sales_block")
     if amount == UNKNOWN_QTY:
         flags.append("quantity_unknown")
+    elif amount == UNREPORTED_QTY:
+        flags.append("quantity_unreported")
     elif amount == 0:
         flags.append("out_of_stock")
     if cutoff and datetime.fromisoformat(cutoff) < now:
@@ -67,12 +72,13 @@ def _merge(avail: dict, price: dict | None, now: datetime) -> dict:
     return {
         "product_id": avail["productId"],
         "logistic_model": model,
-        "available_amount": None if amount == UNKNOWN_QTY else amount,
-        "quantity_known": amount is not None and amount != UNKNOWN_QTY,
+        "available_amount": None if amount in (UNKNOWN_QTY, UNREPORTED_QTY) else amount,
+        "quantity_known": amount is not None and amount not in (UNKNOWN_QTY, UNREPORTED_QTY),
         "available_date": (line or {}).get("availableDate"),
         "order_cutoff": cutoff,
         "sales_unit": (line or {}).get("salesUnit"),
         "price": (p.get("catalogPrice") or {}).get("value"),
+        "unit_price_cents": eur_to_cents(v) if (v := (p.get("catalogPrice") or {}).get("value")) is not None else None,
         "price_with_tax": (p.get("priceWithTax") or {}).get("value"),
         "list_price": (p.get("listPrice") or {}).get("value"),
         "customer_net_price": bool(p.get("netPriceFound")),
@@ -127,8 +133,8 @@ def to_contract_quote(q: dict) -> "Quote | None":
         return None
     if {"undeliverable", "out_of_stock", "sales_block", "cutoff_passed"} & set(q["flags"]):
         availability = Availability.UNAVAILABLE
-    elif not q["quantity_known"]:
-        availability = Availability.UNKNOWN
+    elif "quantity_unknown" in q["flags"]:
+        availability = Availability.UNKNOWN  # Terminal; a Stock product's unreported amount is still AVAILABLE
     else:
         availability = Availability.AVAILABLE  # PARTIAL needs the requested qty: decided in T06, not here
     fetched = datetime.fromisoformat(q["fetched_at"])

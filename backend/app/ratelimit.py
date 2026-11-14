@@ -65,11 +65,15 @@ def caller(request: Request) -> tuple[str, str]:
                                ("x-valio-admin-key", config.VALIO_ADMIN_KEYS, "human")):
         if (k := h.get(header)) and _listed(spec, k):
             return kind, hashlib.sha256(k.encode()).hexdigest()  # never keep the key itself
-    # Behind Render's proxy every request comes from the proxy, which appends the real address LAST (earlier
-    # entries are client-supplied). Only trust that when TRUST_X_FORWARDED_FOR is set: without a proxy anyone
-    # could send the header and pick their own bucket.
-    xff = h.get("x-forwarded-for") if config.TRUST_X_FORWARDED_FOR else None
-    return "ip", _ip(xff.split(",")[-1].strip() if xff else (request.client.host if request.client else "unknown"))
+    return "ip", _ip(client_ip(request))
+
+
+def client_ip(request: Request) -> str:
+    """Behind Render's proxy every request comes from the proxy, which appends the real address LAST (earlier
+    entries are client-supplied). Only trust that when TRUST_X_FORWARDED_FOR is set: without a proxy anyone
+    could send the header and pick their own bucket."""
+    xff = request.headers.get("x-forwarded-for") if config.TRUST_X_FORWARDED_FOR else None
+    return xff.split(",")[-1].strip() if xff else (request.client.host if request.client else "unknown")
 
 
 async def middleware(request: Request, call_next):

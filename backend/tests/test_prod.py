@@ -86,13 +86,18 @@ def test_keys_survive_a_restart_and_expire_after_24h(shop, monkeypatch):
     assert post(10, key="persist").json()["order_id"] != first["order_id"]  # expired: a new order
 
 
+def kid(key: str) -> str:
+    """The credential label conftest gives each key (its name, else its buyer): never derived from the secret."""
+    return {"agent-chef": "chef", "agent-other": "other"}[key]
+
+
 def test_in_flight_duplicate_is_409(shop):
-    orders._idem_store()["agent:chef:orders:busy"] = {"fingerprint": "x", "response": None,
-                                                      "at": datetime.now(timezone.utc).isoformat()}
     import hashlib
     from app import signing
-    body = {"buyer_id": None, "requested_date": REQ.isoformat(), "lines": [{"product_id": "463335", "quantity": 1.0}]}
-    orders._idem_store()["agent:chef:orders:busy"]["fingerprint"] = hashlib.sha256(signing.canonical(body)).hexdigest()
+    body = {"requested_date": REQ.isoformat(), "lines": [{"product_id": "463335", "quantity": 1.0}]}
+    orders._idem_store()[f"agent:chef:orders:{kid('agent-chef')}:busy"] = {
+        "caller": "chef", "fingerprint": hashlib.sha256(signing.canonical(body)).hexdigest(), "response": None,
+        "at": datetime.now(timezone.utc).isoformat()}
     assert post(1, key="busy").status_code == 409
 
 
@@ -198,6 +203,43 @@ def test_idempotency_quota_is_per_caller_and_never_evicts_another_buyers_keys(sh
     for i in range(5):
         post(1, key=f"k{i}")  # chef floods its own quota
     keys = list(orders._idem_store())
-    assert "agent:other:orders:theirs" in keys  # the other buyer's retry protection survives
-    assert [k for k in keys if k.startswith("agent:chef")] == [f"agent:chef:orders:k{i}" for i in (2, 3, 4)]
+    assert f"agent:other:orders:{kid('agent-other')}:theirs" in keys  # the other buyer's retry protection survives
+    assert [k for k in keys if k.startswith("agent:chef")] == [f"agent:chef:orders:{kid('agent-chef')}:k{i}"
+                                                               for i in (2, 3, 4)]
     assert json.loads(orders.IDEM_FILE.read_text()).keys() == orders._idem_store().keys()
+
+
+# --- Codex review of room2-prod
+def test_two_credentials_of_one_buyer_never_share_a_replay(shop, monkeypatch):
+    monkeypatch.setattr(config, "AGENT_KEYS", config.AGENT_KEYS + ",agent-chef-2=chef:second agent")
+    a, b = post(10, key="same"), post(10, key="same", agent="agent-chef-2")
+    assert a.json()["order_id"] != b.json()["order_id"] and "Idempotent-Replayed" not in b.headers
+
+
+def test_equivalent_requests_share_a_fingerprint(shop):
+    oid = post(1000).json()["order_id"]
+    h = {**AP, "Idempotency-Key": "ap"}
+    first = c.post(f"/api/orders/{oid}/approve", headers=h)  # no body
+    again = c.post(f"/api/orders/{oid}/approve", headers=h, json={})  # empty body: same action
+    assert again.status_code == 200 and again.headers.get("Idempotent-Replayed") == "true" and again.json() == first.json()
+    r1, r2 = post(5, key="buyer"), None
+    store_mandate(MANDATE)
+    r2 = c.post("/api/orders", headers={"X-Agent-Key": "agent-chef", "Idempotency-Key": "buyer"},
+                json={"buyer_id": "chef", "requested_date": REQ.isoformat(),
+                      "lines": [{"product_id": "463335", "quantity": 5}]})
+    assert r2.headers.get("Idempotent-Replayed") == "true" and r2.json() == r1.json()
+
+
+def test_stored_replay_is_served_while_the_catalogue_loads(shop, monkeypatch):
+    from app import catalogue
+    first = post(10, key="boot").json()
+    monkeypatch.setattr(catalogue, "_ready", type("E", (), {"is_set": lambda self: False})())
+    assert post(10, key="boot").json() == first   # replay: no catalogue needed
+    assert post(11, key="new").status_code == 503  # a new action still waits for it
+
+
+def test_idempotency_store_holds_no_trace_of_the_secret(shop):
+    post(10, key="k1")
+    import hashlib
+    text = orders.IDEM_FILE.read_text()
+    assert "agent-chef" not in text and hashlib.sha256(b"agent-chef").hexdigest()[:16] not in text
