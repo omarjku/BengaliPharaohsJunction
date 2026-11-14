@@ -25,3 +25,13 @@ _MANDATES = {m.buyer_id: m for m in [
 
 def get(buyer_id: str) -> Mandate | None:
     return _MANDATES.get(buyer_id)
+
+
+# Gemini Decisions confidence below this → ask the chef. Kept beside the mandate because the v0.2 Mandate contract
+# has no field for it (extra fields are forbidden); add `min_confidence` to the contract in the next version.
+DEFAULT_CONFIDENCE_THRESHOLD = 0.8
+_CONFIDENCE_THRESHOLDS = {"lapland-kitchen": 0.8}
+
+
+def confidence_threshold(buyer_id: str) -> float:
+    return _CONFIDENCE_THRESHOLDS.get(buyer_id, DEFAULT_CONFIDENCE_THRESHOLD)
