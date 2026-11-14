@@ -275,12 +275,30 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
               </p>
             )}
             {sparePct > 0 && <p className="mt-spare-total small">{t.spareTotal(c.count(Math.round(sparePct)), c.money(spareCost), c.count(Math.round(spareRounding)))}</p>}
+            <div className="feed">
+              <div className="feed-head">
+                <div role="tablist" aria-label={t.feedTabs} className="feed-tabs">
+                  <button type="button" role="tab" id="feed-tab-all" aria-selected="true" aria-controls="feed-panel" className="feed-tab">
+                    {t.feedAll} <span className="feed-count">{plan.ingredients.length}</span>
+                  </button>
+                </div>
+              </div>
+              <p className="feed-note quiet small">{t.feedNote}</p>
+              <div role="tabpanel" id="feed-panel" aria-labelledby="feed-tab-all" className="feed-panel">
             {plan.ingredients.map((ing, i) => {
               const lines = plan.lines.filter((l) => l.item === i)
               const chosen = swap[i] ? [swap[i]] : lines.filter((l) => l.chosen)
               const others = lines.filter((l) => !chosen.includes(l))
               return (
-                <div key={i} className="cart-group">
+                <div key={i} className={'cart-group feed-item' + (chosen.length === 0 && !ing.have ? ' is-warn' : '')}>
+                  <span className="feed-ico" aria-hidden="true">
+                    {chosen.length === 0 && !ing.have ? (
+                      <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor"><path d="M10 2 19 18H1L10 2Zm-1 6v5h2V8H9Zm0 6v2h2v-2H9Z" /></svg>
+                    ) : (
+                      <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor"><path d="M10 1a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm4 7-5 5-3-3 1.4-1.4L9 10.2l3.6-3.6L14 8Z" /></svg>
+                    )}
+                  </span>
+                  <div className="feed-body">
                   <p className="dish">
                     {amount(ing.amount, ing.unit)} {ing.query}
                   </p>
@@ -377,9 +395,12 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
                       </ul>
                     </details>
                   )}
+                  </div>
                 </div>
               )
             })}
+              </div>
+            </div>
             <div className="split-total" ref={totalRef}>
               <span>
                 <strong className="num">{c.money(total)}</strong> <span className="quiet">{c.UI.result.exclVat}</span>

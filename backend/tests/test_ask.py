@@ -217,7 +217,7 @@ def answer(cid, text, key="agent-lk"):
 def test_follow_up_amount(shop1, monkeypatch):  # noqa: F811
     route(monkeypatch, "order", items=[dict(ITEM[0], amount=None, unit=None)])
     q = post("I need lactose-free milk")
-    assert q["question"] == "How much milk?" and q["conversation_id"] and q["speak"] == "How much milk?"
+    assert q["question"] == "How many milks?" and q["conversation_id"] and q["speak"] == "How many milks?"
     r = answer(q["conversation_id"], "ten litres").json()
     assert r["order"]["status"] == "confirmed" and r["order"]["lines"][0]["quantity"] == 10
     assert r["request"]["items"][0]["claims"] == ["FREE_FROM_LACTOSE"]  # only the amount came from the answer

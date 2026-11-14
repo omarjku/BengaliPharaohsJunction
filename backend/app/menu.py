@@ -103,6 +103,46 @@ def apply_dietary(menu_text: str, dishes: list[dict]) -> list[Reason]:
     return problems
 
 
+_PROFILE_SPECIAL = {
+    "gluten_free": {"flour", "wheat", "rye", "barley", "oat", "bread", "pizza", "dough", "base", "crust",
+                     "pasta", "noodle", "cake", "pastry", "biscuit", "cracker", "cheese", "mozzarella"},
+    "lactose_free": {"milk", "cream", "cheese", "mozzarella", "butter", "yogurt", "yoghurt", "whey", "dairy",
+                      "custard", "ice"},
+    "vegan": {"meat", "beef", "pork", "chicken", "fish", "salmon", "milk", "cream", "cheese", "butter", "egg",
+              "mayonnaise", "yogurt", "honey", "sausage"},
+    "vegetarian": {"meat", "beef", "pork", "chicken", "fish", "salmon", "sausage", "bacon"},
+    "milk_free": {"milk", "cream", "cheese", "mozzarella", "butter", "yogurt", "whey", "dairy", "custard"},
+    "egg_free": {"egg", "mayonnaise", "pasta", "cake", "biscuit"},
+    "nut_free": {"nut", "almond", "hazelnut", "walnut", "cashew", "peanut", "pistachio"},
+    "peanut_free": {"peanut"}, "soy_free": {"soy"}, "fish_free": {"fish", "salmon", "tuna"},
+}
+
+
+def _profile_relevant(query: str, tag: str) -> bool:
+    words = {agent._singular(w) for w in re.findall(r"[\wäöå]+", query.lower())}
+    special = _PROFILE_SPECIAL.get(tag, set())
+    return bool(words & special)
+
+
+def apply_profile_defaults(menu_text: str, dishes: list[dict], ingredients: list[dict], buyer_id: str) -> None:
+    """Mark only menu ingredients that need a special product for the kitchen's standing profile diets."""
+    standing = profile.dietary(buyer_id)
+    for ing in ingredients:
+        ing["_profile_checked"] = True
+        tags = set()
+        for dish_name in ing.get("dishes") or []:
+            words = re.findall(r"[\wäöå]+", dish_name.lower())
+            owned = dish_tags(menu_text, dish_name)
+            override = any(agent._PLAIN.search(line.lower()) and agent._words_in(words, line)
+                           for line in re.split(r"[;\n]|\.\s", menu_text))
+            if override:
+                continue
+            tags |= {tag for tag, _ in standing if tag not in owned and _profile_relevant(ing["query"], tag)}
+        if tags:
+            ing["prefer_claims"] = sorted({claim for tag in tags for claim in agent.DIETARY[tag][0]})
+            ing["profile_why"] = "; ".join(dict.fromkeys(why for tag, why in standing if tag in tags))
+
+
 def _key(name: str) -> str:
     """'Potatoes' and 'potato', 'lingonberries' and 'lingonberry' merge; word order doesn't matter."""
     return " ".join(sorted({agent._singular(w) for w in re.findall(r"[\wäöå]+", name.lower())}))
@@ -271,6 +311,40 @@ async def check_assumption(dish: str, ingredient: str, per_cover, unit, text: st
     return None if None in ys else min(ys)
 
 
+async def check_assumptions(assumptions: list[dict]) -> list[float | None]:
+    """Check all assumptions for one dish in one Decisions input, keeping dishes separate for calibration."""
+    results: list[float | None] = [None] * len(assumptions)
+    groups: dict[str, list[tuple[int, dict]]] = {}
+    for n, assumption in enumerate(assumptions):
+        if assumption["set_by"] != "chef":
+            groups.setdefault(assumption["dish"], []).append((n, assumption))
+
+    async def check_group(dish: str, group: list[tuple[int, dict]]) -> None:
+        rows = "\n".join(f"Ingredient {n}: {a['ingredient']}, {a['per_cover']} {a['unit']} per portion. {a['text']}"
+                          for n, a in group)
+        questions = {}
+        for n, _ in group:
+            questions[f"needed_{n}"] = {
+                "type": "noul", "instructions": "Is this ingredient normally needed for this dish?",
+                "criteria": {"true_description": "Yes, a usual ingredient of this dish.",
+                             "false_description": "No, it doesn't belong in this dish."}}
+            questions[f"amount_{n}"] = {
+                "type": "noul", "instructions": "Is this per-portion amount reasonable for this dish?",
+                "criteria": {"true_description": "Yes, a normal restaurant portion amount.",
+                             "false_description": "No, clearly too much or too little for one portion."}}
+        input_text = (f"{agent.UNTRUSTED}\nA professional restaurant kitchen plans a dish.\n"
+                      f"{agent._wrap(f'Dish: {dish}.\n{rows}')}")
+        answers = await agent._decisions_grouped([(input_text, key, question) for key, question in questions.items()])
+        if not answers:
+            return
+        for n, _ in group:
+            ys = [agent._yes(answers.get(f"needed_{n}")), agent._yes(answers.get(f"amount_{n}"))]
+            results[n] = None if None in ys else min(ys)
+
+    await asyncio.gather(*(check_group(dish, group) for dish, group in groups.items()))
+    return results
+
+
 async def parse_menu(menu_text: str, buyer_id: str | None = None) -> list[dict] | None:
     # The kitchen's standing needs (buyer profile) shape the recipe: a gluten-free kitchen's pizza uses gluten-free
     # flour, not wheat flour. Only when the menu itself says nothing about diet; it comes from our own data, never
@@ -291,8 +365,12 @@ async def parse_menu(menu_text: str, buyer_id: str | None = None) -> list[dict] 
             for d in out["dishes"] if isinstance(d, dict) and str(d.get("name") or "").strip()][:MAX_DISHES]
 
 
+_STEER_UNSET = object()
+
+
 async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, dishes_task=None,
-                  overrides: list[dict] | None = None, by_chef: bool = False, have: list[str] | None = None) -> dict:
+                  overrides: list[dict] | None = None, by_chef: bool = False, have: list[str] | None = None,
+                  steer_score: float | None | object = _STEER_UNSET) -> dict:
     """`dishes_task`: parse_menu(menu_text) already started by the caller (ask._flow starts it at t=0)."""
     agent.start_budget(agent.DECISIONS_PER_MENU)
     run_id, now = str(uuid4()), datetime.now(timezone.utc)
@@ -312,7 +390,10 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
     excluded = set().union(*(gate._allergen_codes(str(v)) for v in gate._rules(m, RuleKind.EXCLUDED_ALLERGEN)))
 
     progress.phase("planning")
-    dishes, steer = await asyncio.gather(dishes_task or parse_menu(menu_text, buyer_id), agent.steering(menu_text))
+    if steer_score is _STEER_UNSET:
+        dishes, steer = await asyncio.gather(dishes_task or parse_menu(menu_text, buyer_id), agent.steering(menu_text))
+    else:
+        dishes, steer = await (dishes_task or parse_menu(menu_text, buyer_id)), steer_score
     if steer is not None and steer >= agent.INJECTION_MAX:
         reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, "This menu seems to try to change limits, delivery, invoicing or "
                                f"approvals, or claims special authority (Gemini Decisions: {agent._pct(steer)}).", None,
@@ -338,6 +419,7 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
     reasons += apply_dietary(menu_text, kept)
     reasons += apply_overrides(kept, overrides, by_chef)
     ingredients, assumptions, problems = scale(kept, covers)
+    apply_profile_defaults(menu_text, kept, ingredients, buyer_id)
     reasons += problems
     if len(ingredients) > MAX_INGREDIENTS:
         reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The menu needs {len(ingredients)} ingredients; the agent "
@@ -359,9 +441,7 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
     spare_task = asyncio.create_task(agent.spare_proposals(ingredients, menu_text) if level != "none" else agent.empty())
     res, checks = await asyncio.gather(  # pricing and the assumption checks run side by side
         agent._pipeline(menu_text, items, requested, buyer_id, m, excluded, now, reasons, True),
-        asyncio.gather(*(agent.none() if a["set_by"] == "chef"  # the chef's own portion is not a guess to doubt
-                         else check_assumption(a["dish"], a["ingredient"], a["per_cover"], a["unit"], a["text"])
-                         for a in assumptions[:MAX_DISHES * MAX_PER_DISH])))
+        check_assumptions(assumptions[:MAX_DISHES * MAX_PER_DISH]))
     for a, y in zip(assumptions, checks):
         a["check"], a["flagged"] = y, y is not None and y < ASSUMPTION_MIN
         if a["flagged"]:
@@ -401,6 +481,8 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
             ln["have"] = ingredients[ln["item"]]["have"]
             ln.pop("check", None)
     chosen = [ln for ln in chosen if not ln.get("have")]
+    for ing in ingredients:
+        ing.pop("_profile_checked", None)
     if any(ln.get("have") for ln in check):  # re-say the "check them" sentence without what the kitchen has
         check = [ln for ln in check if not ln.get("have")]
         reasons[:] = [r for r in reasons if not r.message.startswith("Left out of the order lines until you check")]
