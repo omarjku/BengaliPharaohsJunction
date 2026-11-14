@@ -154,3 +154,16 @@ def test_data_dir_moves_all_state(tmp_path):
                              env={k: v for k, v in os.environ.items() if k != "DATA_DIR"}, capture_output=True,
                              text=True, cwd=Path(__file__).resolve().parents[1], check=True).stdout.strip()
     assert Path(default).parent.name == "data"
+
+
+# --- agents can follow their own orders (Room 1's MCP server)
+def test_agent_reads_its_own_buyers_order_only(shop):
+    oid = post(1000).json()["order_id"]  # pending approval
+    assert c.get(f"/api/orders/{oid}", headers={"X-Agent-Key": "agent-chef"}).json()["status"] == "pending_approval"
+    assert c.get(f"/api/orders/{oid}", headers={"X-Agent-Key": "agent-other"}).status_code == 404  # other buyer
+    assert c.get(f"/api/orders/{oid}", headers={"X-Agent-Key": "guess"}).status_code == 401
+    assert c.get(f"/api/orders/{oid}").status_code == 401
+    assert c.get(f"/api/orders/{oid}", headers=AP).status_code == 200  # approvers as before
+    for action in ("approve", "reject"):  # still approver-only
+        assert c.post(f"/api/orders/{oid}/{action}", headers={"X-Agent-Key": "agent-chef"}).status_code == 401
+    assert orders._store()[oid]["status"] == "pending_approval"
