@@ -67,3 +67,32 @@ Set up before recording:
 
 **Fallback:** if RAEA breaks, cut the same takes in CapCut with the same captions. Run `raea check` (or a manual
 check) for clipped text, contrast and loudness, then time the result at 1:55 or less before uploading as Public.
+
+## Variants: if the one input box and voice land
+
+Plan for both, decide on the day, and keep the total at 1:55 or less. Each variant replaces existing shots
+rather than adding time.
+
+**One input box** (`/api/agent/ask` routes an order or a menu, and asks "for how many guests?" when needed). This
+replaces the separate menu tab in shot 9:
+- Same box, type "Reindeer with mash and lingonberries; lingonberry cheesecake" → the agent asks "For how many
+  guests?" → "80" → cart.
+- Voiceover: "Same box for a kebab shop, a café or a restaurant. Paste a menu and it asks how many guests."
+- Caption: "One box · order or menu".
+
+**Voice** (push-to-talk via Gemini Live). Replaces shot 6 (the sugar, 8 s), and the sugar moves to the deck:
+
+| # | Time | On screen | Voiceover | Caption | Dur |
+|---|---|---|---|---|---|
+| 6v | 0:50–0:58 | Phone, chef's hand holding push-to-talk: "Cream for Monday, ten litres." → the agent answers aloud with the cut-off ("Order by 17:00 today for Monday") → Ordered | "Mid-service, hands busy: one sentence, and the agent checks the cut-off before it passes." | Hands-free · cut-off caught | 8 s |
+
+**Framing, kept factual** (`docs/valio-context.md`):
+- Valio Aimo's delivery wholesale arrives in about 24 h on agreed delivery days, and Click & Collect is Helsinki
+  only. So voice's value is catching the cut-off hands-free during service, not same-hour delivery.
+- The cut-off times come from the mock API (Stock usually 17:00 the day before, Terminal about 4 days before) and
+  are demo assumptions. Never say "delivered in an hour".
+
+**Capture, if voice lands:**
+- A phone screen recording with the microphone audio, in a quiet corner.
+- Record 3 takes. Use the one where Gemini Live's spoken answer is clear.
+- Speak the exact quantity and unit, so the grounding check passes.

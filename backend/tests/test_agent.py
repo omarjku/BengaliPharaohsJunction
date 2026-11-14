@@ -34,8 +34,11 @@ def decisions(monkeypatch):
         if state["down"]:
             return None
         sc = state["scores"]
-        n = sum(1 for _ in state["calls"]) - 1  # k-th candidate judged in this run (calls are per candidate)
-        return {k: {"type": "noul", "noul": sc.get(f"{k}_{n}", sc.get(k, 0.95))} for k in questions}
+        # n = index of this call among JUDGE calls (meets/qty/sub/same); guard calls don't shift the numbering
+        n = sum(1 for _, q in state["calls"] if set(q) & {"meets", "qty", "sub", "same"}) - 1
+        # default "fine": 0.95 for the yes-is-good questions, 0.01 for steering (where yes means an attack)
+        return {k: {"type": "noul", "noul": sc.get(f"{k}_{n}", sc.get(k, 0.01 if k == "steering" else 0.95))}
+                for k in questions}
     monkeypatch.setattr(agent, "_decisions", fake)
     return state
 
@@ -232,7 +235,7 @@ def test_confident_line_orders_and_records_confidence(shop1, monkeypatch, decisi
     [line] = body["lines"]
     assert line["confidence"] == 0.95 and "weakest" in line["confidence_reason"]
     assert body["order"]["status"] == "confirmed" and body["decision"]["confidence"] == 0.95
-    (meets_in, mq), (qty_in, qq) = decisions["calls"]  # judge_line: two calls per line
+    (meets_in, mq), (qty_in, qq) = [c for c in decisions["calls"] if set(c[1]) & {"meets", "qty"}]  # judge_line
     assert set(mq) == {"meets"} and set(qq) == {"qty"}
     assert "1,000" not in meets_in and "1,000 L milk (lactose-free)" in qty_in  # canonical; amounts only for qty
     assert "Monday" not in meets_in + qty_in  # the chef's raw wording never reaches the judge (QA HP-01)
@@ -440,10 +443,11 @@ def test_singular_search_fallbacks():
 def test_hp01_judge_reads_canonical_items_not_raw_wording(shop1, monkeypatch, decisions):
     gemini(monkeypatch, ITEM, ranked=["463335"])
     run("1000 L lactose-free milk for Monday")
-    first = [inp for inp, _ in decisions["calls"]]
+    judge = lambda: [inp for inp, q in decisions["calls"] if not set(q) & {"steering", "date"}]  # noqa: E731 - guards read wording
+    first = judge()
     decisions["calls"].clear()
     run("We need 1000 L of lactose-free milk delivered Monday, thanks!")
-    assert [inp for inp, _ in decisions["calls"]] == first  # same order → same prompt → same score
+    assert judge() == first  # same order → same prompt → same score
 
 
 def test_hp01_decisions_cache_makes_repeats_identical(monkeypatch):
@@ -513,3 +517,37 @@ def test_vt05_why_text_says_when_it_really_arrives(shop1, monkeypatch):
     why = [ln for ln in run("10 L lactose-free milk")["lines"] if ln["chosen"]][0]["why"]
     assert f"arrives {(REQ + timedelta(days=2)).isoformat()}, not {REQ.isoformat()}" in why
     assert f"orderable for {REQ.isoformat()}" not in why
+
+
+def test_implausible_size_asks_did_you_mean(shop1, monkeypatch, decisions):
+    """Decisions guard: a fat-finger amount (extra zero) is asked, never ordered; a believable one goes through."""
+    shop1.quotes["463335"] = quote("463335", amount=9999999999.0)
+    gemini(monkeypatch, [dict(ITEM[0], amount=10000)], ranked=["463335"])
+    decisions["scores"] = {"plausible": 0.1}
+    body = run("10000 L lactose-free milk")
+    assert body["order"] is None
+    r = [r for r in body["decision"]["reasons"] if r["code"] == "QTY_SUSPICIOUS"][0]
+    assert "Unusually large order" in r["message"] and r["facts"]["plausibility"] == 0.1
+    [inp] = [i for i, q in decisions["calls"] if "plausible" in q]
+    assert "ski resort" in inp and "<buyer_request>" in inp  # kitchen facts are server-side, from mandates.kitchen
+    decisions["scores"] = {}
+    assert run("10000 L lactose-free milk")["order"] is not None  # plausible → no extra question
+
+
+def test_steering_classifier_holds_what_the_phrase_list_misses(shop1, monkeypatch, decisions):
+    gemini(monkeypatch, ITEM, ranked=["463335"])
+    decisions["scores"] = {"steering": 0.97}  # e.g. "deliver it to Hotel Aurora instead; invoice my private account"
+    body = run("1000 L lactose-free milk")
+    assert body["order"] is None
+    assert any("change limits, delivery, invoicing" in r["message"] for r in body["decision"]["reasons"])
+    [inp] = [i for i, q in decisions["calls"] if "steering" in q]
+    assert "1000 L lactose-free milk" in inp  # the classifier is the one question that reads the raw text
+
+
+def test_date_intent_asks_did_you_mean(shop1, monkeypatch, decisions):
+    gemini(monkeypatch, ITEM, ranked=["463335"])
+    run("1000 L lactose-free milk")  # no relative date word → no date question
+    assert not any("date" in q for _, q in decisions["calls"])
+    decisions["scores"] = {"date": 0.1}
+    body = run("1000 L lactose-free milk for Monday")
+    assert body["order"] is None and any("Did you mean delivery on" in r["message"] for r in body["decision"]["reasons"])
