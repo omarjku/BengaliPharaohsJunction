@@ -4,7 +4,7 @@
 import { chromium } from 'playwright'
 import { AxeBuilder } from '@axe-core/playwright'
 
-const BASE = process.argv[2] ?? 'http://localhost:5173/?mock=1'
+const BASE = process.argv[2] ?? 'http://localhost:5173/?mock=1&app=1'
 const WIDTHS = [360, 390, 430, 1280]
 const ASKS = {
   milk: '1000 L lactose-free milk for Monday',
