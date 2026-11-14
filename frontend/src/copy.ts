@@ -24,7 +24,7 @@ export function question(q: string, r?: Reason | null): string {
   return q
 }
 
-export function headline(r: Reason): string {
+export function headline(r: Reason, threshold = CONFIDENT_AT): string {
   const f = r.facts
   switch (r.code) {
     case 'SPEND_OVER_LIMIT': {
@@ -72,7 +72,7 @@ export function headline(r: Reason): string {
     case 'PRICE_CHANGED':
       return 'The price changed since you last saw it.'
     case 'CONFIDENCE_OK':
-      if (num(f.confidence) !== null) return `${matched(num(f.confidence)!)}.`
+      if (num(f.confidence) !== null) return `${matched(num(f.confidence)!, threshold)}.`
       break
     case 'FRONT_DOOR':
       if (typeof f.status === 'string') return `Sent to Valio’s front door: ${DOOR_STATUS[f.status] ?? f.status}.`
@@ -84,8 +84,8 @@ export function headline(r: Reason): string {
 // Gemini Decisions API confidence, in one voice everywhere. Floored like the backend, so 79.9% never reads as 80%.
 export const CONFIDENT_AT = 0.8
 export const pct = (c: number): string => `${Math.floor(c * 100)}%`
-export const matched = (c: number): string => (c >= CONFIDENT_AT ? `Matched by Gemini · ${pct(c)}` : `Gemini’s best guess · ${pct(c)}, please check`)
-export const CONFIDENCE_MEANS: string = 'The percentage is Gemini’s confidence that this is the product you meant. Below 80%, the agent asks you first.'
+export const matched = (c: number, threshold = CONFIDENT_AT): string => (c >= threshold ? `Matched by Gemini · ${pct(c)}` : `Gemini’s best guess · ${pct(c)}, please check`)
+export const CONFIDENCE_MEANS = (threshold = CONFIDENT_AT): string => `The percentage is Gemini’s confidence that this is the product you meant. Below ${Math.round(threshold * 100)}%, the agent asks you first.`
 
 // Backend sentences shown as they are, minus the machine bits.
 export const humanize = (msg: string): string =>

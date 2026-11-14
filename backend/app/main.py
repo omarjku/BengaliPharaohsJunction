@@ -320,6 +320,13 @@ def front_door_keys() -> dict:
     return signing.jwks()
 
 
+@app.get("/.well-known/front-door-build.json")
+def front_door_build(response: Response) -> dict:
+    """Read-only build evidence for the signed front door; missing or invalid evidence has a safe fallback."""
+    response.headers["Cache-Control"] = "public, max-age=60"
+    return signing.build_provenance()
+
+
 @app.post("/api/verify")
 def verify_statement(req: VerifyRequest) -> dict:
     """Checks an order response's `signed_statement` + `signature`. valid=true proves this front door issued
@@ -800,6 +807,16 @@ class AskRequest(BaseModel):
 
 class ChatRequest(AskRequest):
     """A text turn for the Gemini tool-calling chat agent; its follow-up shape matches /ask."""
+    conversation_id: Annotated[str | None, StringConstraints(pattern=r"^[0-9a-f]{32}$")] = None
+
+
+def _with_confidence_threshold(body: dict, buyer_id: str) -> dict:
+    threshold = mandates.confidence_threshold(buyer_id)
+    cards = body.get("cards")
+    if isinstance(cards, list):
+        body = {**body, "cards": [dict(card, confidence_threshold=threshold) if isinstance(card, dict) else card
+                                   for card in cards]}
+    return {**body, "confidence_threshold": threshold}
 
 
 @app.post("/api/agent/ask")
@@ -811,10 +828,11 @@ async def agent_ask(req: AskRequest, who: Agent) -> dict:
     _catalogue_ready()
     token = auth.CURRENT_AGENT.set(who)
     try:
-        return await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump(),
+        body = await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump(),
                              req.have)
     finally:
         auth.CURRENT_AGENT.reset(token)
+    return _with_confidence_threshold(body, who.buyer_id)
 
 
 @app.post("/api/agent/chat")
@@ -823,10 +841,11 @@ async def agent_chat(req: ChatRequest, who: Agent) -> dict:
     _catalogue_ready()
     token = auth.CURRENT_AGENT.set(who)
     try:
-        return await chat_agent.chat(req.text, who.buyer_id, req.requested_date,
-                                     req.follow_up and req.follow_up.model_dump(), req.have)
+        body = await chat_agent.chat(req.text, who.buyer_id, req.requested_date,
+                                     req.follow_up and req.follow_up.model_dump(), req.have, req.conversation_id)
     finally:
         auth.CURRENT_AGENT.reset(token)
+    return _with_confidence_threshold(body, who.buyer_id)
 
 
 # --- Talk: a spoken conversation over Gemini Live (live.py). Auth is the first message: browsers can't set headers.

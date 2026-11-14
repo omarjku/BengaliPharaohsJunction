@@ -91,6 +91,9 @@ def show(body: dict, ms: float, debug: bool, mode: str) -> None:
     print(f"\033[1magent:\033[0m {reply}")
     if mode == "chat":
         print(f"  tools: {', '.join(body.get('tools_used') or []) or 'none'}")
+        for assumption in body.get("assumptions") or []:
+            print(f"  assumption: {assumption.get('text')}  p_yes={assumption.get('p_yes')}"
+                  f"  {'kept' if assumption.get('kept') else 'check this'}")
         for card in body.get("cards") or []:
             order = card.get("order") or {}
             status = order.get("status") or (card.get("decision") or {}).get("outcome") or "proposal"
@@ -196,7 +199,14 @@ def main() -> None:
             b = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
             print(f"  HTTP {r.status_code}: {b.get('status') or b.get('detail')}")
             continue
-        body = {"follow_up": {"to": convo, "answer": text}} if (pending and convo) else {"text": text}
+        if a.mode == "chat":
+            body = {"conversation_id": convo} if convo else {}
+            if pending and convo:
+                body["follow_up"] = {"to": convo, "answer": text}
+            else:
+                body["text"] = text
+        else:
+            body = {"follow_up": {"to": convo, "answer": text}} if (pending and convo) else {"text": text}
         t0 = time.perf_counter()
         path = "/api/agent/chat" if a.mode == "chat" else "/api/agent/ask"
         r = client.post(path, json=body, headers={"X-Agent-Key": agent})
