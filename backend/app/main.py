@@ -259,7 +259,7 @@ async def place_order(req: OrderRequest, who: Agent, request: Request, response:
 
     async def act():  # readiness only matters for a new action; a stored replay is served during catalogue startup
         _catalogue_ready()
-        return await orders.place(who.buyer_id, req.requested_date, req.lines, mandate)
+        return await orders.place(who.buyer_id, req.requested_date, req.lines, mandate, actor=who)
     effective = {"requested_date": req.requested_date.isoformat(), "lines": [ln.model_dump() for ln in req.lines]}
     return await _once(response, who, f"agent:{who.buyer_id}:orders", idempotency_key, effective, act)
 
@@ -402,7 +402,11 @@ async def agent_run(req: AgentRunRequest, who: Agent) -> dict:
     if (req.buyer_id or who.buyer_id) != who.buyer_id:
         raise HTTPException(403, detail="This agent key may only run the agent for its own buyer")
     _catalogue_ready()
-    return await agent.run(req.text, req.requested_date, who.buyer_id)
+    token = auth.CURRENT_AGENT.set(who)
+    try:
+        return await agent.run(req.text, req.requested_date, who.buyer_id)
+    finally:
+        auth.CURRENT_AGENT.reset(token)
 
 
 # --- T15 menu → cart: a proposal only (always ASK_HUMAN); the chef orders it by posting order_lines to /api/orders.
@@ -805,16 +809,24 @@ async def agent_ask(req: AskRequest, who: Agent) -> dict:
     asked (no date, menu without guests, unclear, conflicting dates), only `decision` (ASK_HUMAN) follows and nothing
     runs. Needs X-Agent-Key."""
     _catalogue_ready()
-    return await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump(),
-                         req.have)
+    token = auth.CURRENT_AGENT.set(who)
+    try:
+        return await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump(),
+                             req.have)
+    finally:
+        auth.CURRENT_AGENT.reset(token)
 
 
 @app.post("/api/agent/chat")
 async def agent_chat(req: ChatRequest, who: Agent) -> dict:
     """Gemini text chat with grounded function calls; provider protocol failures are surfaced as provider_call_ok=false."""
     _catalogue_ready()
-    return await chat_agent.chat(req.text, who.buyer_id, req.requested_date,
-                                 req.follow_up and req.follow_up.model_dump(), req.have)
+    token = auth.CURRENT_AGENT.set(who)
+    try:
+        return await chat_agent.chat(req.text, who.buyer_id, req.requested_date,
+                                     req.follow_up and req.follow_up.model_dump(), req.have)
+    finally:
+        auth.CURRENT_AGENT.reset(token)
 
 
 # --- Talk: a spoken conversation over Gemini Live (live.py). Auth is the first message: browsers can't set headers.
@@ -869,6 +881,7 @@ async def agent_ask_stream(req: AskRequest, who: Agent) -> StreamingResponse:
 
     async def work():
         progress.set_sink(queue.put_nowait)  # inside the task's own context: only this request's phases
+        token = auth.CURRENT_AGENT.set(who)
         try:
             queue.put_nowait(("result", await ask.ask(req.text, req.requested_date, who.buyer_id,
                                                       req.follow_up and req.follow_up.model_dump(), req.have)))
@@ -878,6 +891,8 @@ async def agent_ask_stream(req: AskRequest, who: Agent) -> StreamingResponse:
             logging.getLogger(__name__).exception("ask stream failed")
             queue.put_nowait(("error", {"status": 500, "detail": "Something went wrong. Check your orders before "
                                                                  "trying again."}))  # it may have got as far as an order
+        finally:
+            auth.CURRENT_AGENT.reset(token)
 
     async def events():
         # A disconnect never cancels the work: cancelling mid-order could store an order without its audit entry.
