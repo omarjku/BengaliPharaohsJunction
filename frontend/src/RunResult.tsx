@@ -14,6 +14,7 @@ type Props = {
   onRetry?: () => void // "Not this one": back to the request field
   onHistory?: () => void // "See it in History", from the front-door line
   onAskFor?: (text: string) => void // a substitute in another pack size: ask the agent for it (it works out the amount)
+  onPlain?: (need: string) => void // "Not gluten-free this time": ask again without the profile's dietary default
   after?: ReactNode // shown right under the answer (e.g. "Need it sooner?"), before the details
 }
 type Busy = 'approve' | 'reject' | 'place' | null
@@ -46,7 +47,7 @@ function useSeen<T extends Element>(): [RefObject<T | null>, boolean] {
 const orderable = (l: Line) => l.quote != null && l.quote.orderable && l.quantity?.quantity != null && l.line_total_cents != null
 const lineOrder = (l: Line) => ({ product_id: l.product.id, quantity: l.quantity!.quantity! })
 
-export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, onRetry, onHistory, onAskFor, after }: Props) {
+export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, onRetry, onHistory, onAskFor, onPlain, after }: Props) {
   const [busy, setBusy] = useState<Busy>(null)
   const [placing, setPlacing] = useState<string | null>(null) // which option's button is ordering (its label says so)
   const errorRef = useRef<HTMLDivElement>(null)
@@ -169,7 +170,12 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   }
 
   // Calm notes stay out of "Also worth knowing": the Gemini line says the confidence, the front-door line the hand-off.
-  const otherReasons = decision.reasons.slice(1).filter((r) => r.code !== 'CONFIDENCE_OK' && r.code !== 'FRONT_DOOR')
+  // The profile's dietary default (INFO) gets its own line with an override, so it stays out of the list too.
+  const profileNote = [...decision.reasons, ...run.decision.reasons].find((r) => r.code === 'PROFILE_DEFAULT' && r.severity === 'INFO')
+  const need = profileNote?.message.split(',')[0].toLowerCase() ?? '' // "Gluten-free, because …" -> "gluten-free"
+  const otherReasons = decision.reasons
+    .slice(1)
+    .filter((r) => r.code !== 'CONFIDENCE_OK' && r.code !== 'FRONT_DOOR' && !(r.code === 'PROFILE_DEFAULT' && r.severity === 'INFO'))
   const sentToDoor = run.decision.reasons.some((r) => r.code === 'FRONT_DOOR') && order ? order.status : null
   const query = run.request.items.length === 1 ? run.request.items[0].query : null
 
@@ -201,6 +207,17 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
             {confidence < CONFIDENT_AT && chosen[0]?.confidence_reason && <span className="quiet">. {chosen[0].confidence_reason}</span>}
           </p>
         )}
+        {profileNote && (
+          <p className="quiet small">
+            {c.humanize(profileNote.message.split(': only')[0])}.{' '}
+            {onPlain && canChoose && (
+              <button type="button" className="link accent inline" onClick={() => onPlain(need)} disabled={busy !== null}>
+                {t.plainInstead(need)}
+              </button>
+            )}
+          </p>
+        )}
+        {chosen.length === 1 && chosen[0].usual && <p className="quiet small">{t.usual}.</p>}
         {sentToDoor && (
           <p className="quiet small">
             {t.frontDoor(sentToDoor)}{' '}
@@ -393,6 +410,7 @@ function OtherOption({ line, onOrder, busy, placing }: { line: Line; onOrder: ((
     <li className="option">
       <div>
         <p>{productName(line)}</p>
+        {line.usual && <p className="quiet small">{c.UI.result.usual}</p>}
         <p className={`option-why num ${tone === 'bad' ? 'bad' : unsure ? 'warn' : ''}`}>{why}</p>
         {onOrder && (
           <button type="button" className="btn plain accent-text small-btn" onClick={onOrder} disabled={busy}>

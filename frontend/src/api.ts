@@ -1,5 +1,5 @@
 import type {
-  AdminFilter, AdminRow, AgentRun, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
+  AdminFilter, AdminRow, AgentRun, BuyerProfile, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
 } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
@@ -284,3 +284,9 @@ export const verifySignature = (signed_statement: Record<string, unknown>, signa
   MOCK
     ? Promise.resolve({ valid: true })
     : api<{ valid: boolean; kid: string; meaning: string }>('/api/verify', post({ signed_statement, signature }))
+
+// The calling buyer's profile (read-only): standing dietary needs and usual products.
+export const getProfile = () =>
+  MOCK
+    ? Promise.resolve<BuyerProfile>({ buyer_id: 'lapland-kitchen', dietary: [], usual_product_ids: [], memories: [] })
+    : api<BuyerProfile>('/api/profile', { headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')

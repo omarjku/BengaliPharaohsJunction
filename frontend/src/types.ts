@@ -91,6 +91,8 @@ export type Line = {
   line_total_cents: number | null
   why: string
   chosen: boolean
+  usual?: boolean // the buyer usually orders this product (profile or past confirmed orders)
+  check?: boolean // menu: a doubted line, left out of order_lines until the chef adds it
   confidence?: number | null // Gemini Decisions API: P(this product is what the buyer asked for)
   confidence_reason?: string | null
   facts?: LineFacts
@@ -279,4 +281,12 @@ export type Health = {
   valio_key_configured: boolean
   gemini_key_configured: boolean
   catalogue: { ready: boolean; products: number; error: string | null }
+}
+
+// GET /api/profile (agent key): the calling buyer's profile, read-only guidance.
+export type BuyerProfile = {
+  buyer_id: string
+  dietary: { tag: string; label: string; because: string }[]
+  usual_product_ids: string[]
+  memories: { kind: string; key: string; text: string; used_because: string }[]
 }
