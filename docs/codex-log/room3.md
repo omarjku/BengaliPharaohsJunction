@@ -76,3 +76,10 @@
   Switched to one concurrent call per candidate.
 - When every line was below the threshold, the price rule picked the least likely line (0.39). The tie-break is now
   highest confidence within the below-threshold group.
+
+## 5. Automated security review (security-guidance plugin) of e48cffb: 2 MEDIUM, both kept
+- Duplicate guard compared raw query strings, so "1 L milk" + "1 L Eila milk" (same product) were still summed.
+  Now judged on the chosen product ids: two items resolving to one product → ASK, quantities are never added.
+- Dietary check was fail-open for multi-item requests: a tag counted as assigned if ANY item carried it, so a parse
+  hanging "lactose-free" on the butter left the milk unconstrained. Now a tag counts only on the item whose own
+  clause states it (or the only item); otherwise ASK.
