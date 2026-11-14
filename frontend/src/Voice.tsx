@@ -1,6 +1,7 @@
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react'
 import { useCopy } from './i18n'
-import { unlockSpeech, type useVoice } from './useVoice'
+import { transcribe } from './api'
+import { unlockSpeech, useVoice } from './useVoice'
 import './Voice.css'
 
 const HOLD_MS = 300 // shorter than this is a tap (toggle), longer is push-to-talk
@@ -142,5 +143,16 @@ export function VoiceButton({ voice, talk, disabled }: {
     >
       <span className="talk-mic-dot" aria-hidden="true" />
     </button>
+  )
+}
+
+// A self-contained dictation mic (its own useVoice): the words go to `onText`, e.g. Onboarding's text box.
+export function DictationMic({ onText, disabled = false }: { onText: (text: string) => void; disabled?: boolean }) {
+  const voice = useVoice(transcribe, onText)
+  return (
+    <>
+      <MicButton voice={voice} disabled={disabled} />
+      <VoiceStatus voice={voice} />
+    </>
   )
 }
