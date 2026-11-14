@@ -1,4 +1,5 @@
 """Trust features: Valio's admin audit view and signed decisions. Offline (conftest.py)."""
+import json
 from conftest import REQ, store_mandate
 from fastapi.testclient import TestClient
 
@@ -135,3 +136,25 @@ def test_signing_key_from_env(monkeypatch):
     import pytest
     with pytest.raises(RuntimeError):
         signing._load()
+
+
+# --- the audit line carries the response's signed statement (Room 4's "Signed by the front door ✓")
+def test_audit_lines_carry_a_verifiable_signed_statement(shop):
+    placed = order([("463335", 1000)]).json()   # held
+    approved = c.post(f"/api/orders/{placed['order_id']}/approve", headers=AP).json()
+    held2 = order([("463335", 1000)]).json()
+    rejected = c.post(f"/api/orders/{held2['order_id']}/reject", headers=AP).json()
+    refused = order([("463038", 1)]).json()     # cut-off passed: refused, still audited and signed
+    rows = [r for r in c.get("/api/admin/audit", headers=ADM).json() if r.get("front_door", {}).get("signature")]
+    assert len(rows) == 5
+    for row, resp in zip(rows, [placed, approved, held2, rejected, refused]):
+        fd = row["front_door"]
+        assert fd["signed_statement"] == resp["signed_statement"] and fd["signature"] == resp["signature"]
+        assert fd["signed_statement"]["audit_id"] == row["id"]  # the statement names this very audit line
+        assert c.post("/api/verify", json={"signed_statement": fd["signed_statement"],
+                                           "signature": fd["signature"]}).json()["valid"] is True
+    tampered = json.loads(json.dumps(rows[1]["front_door"]))
+    tampered["signed_statement"]["status"] = "rejected"
+    assert c.post("/api/verify", json={"signed_statement": tampered["signed_statement"],
+                                       "signature": tampered["signature"]}).json()["valid"] is False
+    assert c.get("/api/audit", headers=AP).json()[0]["front_door"]["signature"]  # the buyer's view has it too

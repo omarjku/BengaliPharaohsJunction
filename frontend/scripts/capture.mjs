@@ -23,20 +23,26 @@ const SHOTS = [
   { name: '5-urgent-pickup', buyer: 'helsinki-bistro', ask: '6 L whipping cream, urgent, we need it today' },
   { name: '6-rules', buyer: 'lapland-kitchen', nav: 2 },
   { name: '7-history', buyer: 'lapland-kitchen', nav: 1 },
+  { name: '8-valio-view', buyer: 'lapland-kitchen', valio: true, fi: true },
 ]
 
 const browser = await chromium.launch({ channel: 'chrome' })
 for (const s of SHOTS.filter((x) => !only || x.name.includes(only))) {
   for (const lang of s.fi ? ['en', 'fi'] : ['en']) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 2 })
-    await page.addInitScript(([k, l]) => {
+    await page.addInitScript(([k, l, a]) => {
       localStorage.setItem('valio-aimo-keys', JSON.stringify(k))
       localStorage.setItem('valio-aimo-lang', l)
       localStorage.setItem('valio-aimo-voice-intro-seen', '1')
-    }, [keys(s.buyer), lang])
+      if (a) localStorage.setItem('valio-aimo-admin-key', a)
+    }, [keys(s.buyer), lang, s.valio ? env.VALIO_ADMIN_KEYS.split(',')[0].split('=')[0] : ''])
     await page.goto('http://localhost:5173/')
     await page.waitForSelector('#text')
-    if (s.ask) {
+    if (s.valio) {
+      await page.getByRole('button', { name: 'Valio', exact: true }).click()
+      await page.waitForSelector('.kitchen', { timeout: 20000 })
+      await page.locator('.kitchen details.event summary').first().click() // one request open, to show its steps
+    } else if (s.ask) {
       await page.fill('#text', lang === 'fi' && s.askFi ? s.askFi : s.ask)
       await page.click('form.ask button[type=submit]')
       await page.waitForSelector('main .answer, main .problem[role=alert]', { timeout: 120000 })

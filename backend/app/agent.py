@@ -102,7 +102,7 @@ def _bind() -> None:
     if _HTTP[0] is not loop or getattr(_HTTP[1], "is_closed", False):
         _HTTP[:] = [loop, httpx.AsyncClient(timeout=GEMINI_TIMEOUT_S,  # keep-alive: no TLS handshake per call
                                             limits=httpx.Limits(max_connections=32, max_keepalive_connections=16)),
-                    asyncio.Semaphore(16)]  # at most 16 concurrent paid Decisions calls (menus fan out)
+                    asyncio.Semaphore(32)]  # at most 32 concurrent paid Decisions calls (menus fan out)
 
 
 def _http() -> httpx.AsyncClient:
@@ -115,13 +115,14 @@ def _slots() -> asyncio.Semaphore:
     return _HTTP[2]
 
 
-async def _gemini(system: str, prompt: str, schema: dict) -> dict | None:
+async def _gemini(system: str, prompt: str, schema: dict, thinking: dict | None = None) -> dict | None:
     """One structured-output call. None on no key / any failure (never raises, never logs the key)."""
     if not config.GEMINI_API_KEY:
         return None
     body = {"systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"responseMimeType": "application/json", "responseSchema": schema, "temperature": 0}}
+            "generationConfig": {"responseMimeType": "application/json", "responseSchema": schema, "temperature": 0}
+            | ({"thinkingConfig": thinking} if thinking else {})}
     try:
         r = await _http().post(f"{GEMINI_URL}/{config.GEMINI_MODEL}:generateContent",
                                headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)
@@ -728,7 +729,15 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
     price), substitutes. Appends the problems it finds to `reasons`. The Decisions judge reads `canonical(item)`
     (parsed fields only; menu items add their dishes), never raw text."""
     progress.phase("searching")
-    found = await asyncio.gather(*(candidates(text, it, excluded) for it in items))
+    done = [0]
+
+    async def search(it: dict):  # one event per ingredient as it finishes, so a long menu shows it is moving
+        out = await candidates(text, it, excluded)
+        done[0] += 1
+        if len(items) > 1:
+            progress.phase("searching", f"Checking {it['query']}… {done[0]} of {len(items)}")
+        return out
+    found = await asyncio.gather(*(search(it) for it in items))
     if not all(by_gemini for _, by_gemini in found) and parsed_by_gemini:
         reasons.append(gate._r(C.LOW_CONFIDENCE, INFO, "Gemini Decisions couldn't check which catalogue hits "
                                "match; plain keyword order was used.", None, "Check the chosen products."))

@@ -190,9 +190,21 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
     t0 = time.monotonic()
     progress.phase("understanding")
     given_covers, given_parse = covers, parsed
+    # Menu markers always route to the menu path (classify), so its parse starts now and the order parse is skipped
+    # (room3-menu-speed: the unused order parse used to block the menu parse for ~8 s).
+    menu_first = given_parse is None and bool(given_covers is not None or _COVERS.search(text) or _MENU_WORD.search(text))
+    dishes = asyncio.create_task(menu.parse_menu(text)) if menu_first else None
+    try:
+        return await _route(text, requested, buyer_id, today, stated, guess, t0, given_covers, given_parse, dishes)
+    finally:
+        if dishes is not None and not dishes.done():
+            dishes.cancel()  # the request stopped at a question
+
+
+async def _route(text, requested, buyer_id, today, stated, guess, t0, given_covers, given_parse, dishes) -> dict:
     (intent, covers, _), parsed, steer, meant = await asyncio.gather(
-        classify(text), agent._given(given_parse, lambda: agent.parse(text)), agent.steering(text),
-        agent.date_intent(text, guess, today) if guess else agent.none())
+        classify(text), agent.none() if dishes else agent._given(given_parse, lambda: agent.parse(text)),
+        agent.steering(text), agent.date_intent(text, guess, today) if guess else agent.none())
     if given_covers is not None:  # a follow-up answered "for how many guests?"
         intent, covers = "menu", given_covers
     if given_parse is not None:  # a follow-up filled one amount: it stays an order
@@ -232,7 +244,7 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
         if covers is None:  # never guessed: portions decide every quantity in the cart
             return _ask(intent, None, when, source, "For how many guests?", C.QTY_AMBIGUOUS,
                         "Add the number of guests, e.g. 'for 80 guests'.", kind="guests")
-        body = await menu.propose(text, covers, when, buyer_id)
+        body = await menu.propose(text, covers, when, buyer_id, dishes)
     else:
         body = await agent.run(text, when, buyer_id, pre={"parsed": parsed, "steer": steer,
                                                          "meant": meant if when == guess else None})
