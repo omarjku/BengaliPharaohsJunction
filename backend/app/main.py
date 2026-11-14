@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import agent, auth, catalogue, config, orders, quantity, valio
+from . import agent, auth, catalogue, mandates, config, orders, quantity, valio
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -129,8 +129,7 @@ def resolve_quantity(req: QuantityRequest) -> dict:
 BuyerId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_.:-]{1,64}$")]
 OrderId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f-]{36}$")]  # uuid4
 MAX_ORDER_LINES = 50
-MAX_BODY_BYTES = 64 * 1024  # a full order (50 lines + a mandate with a 1000-id blocklist) is ~20 KB
-MANDATE_CAPS = {"hard_rules": 50, "blocklist": 1000, "guidance": 50, "open_questions": 20}
+MAX_BODY_BYTES = 64 * 1024  # a full order (50 lines) is ~3 KB
 Agent = Annotated[auth.Principal, Depends(auth.agent)]
 Approver = Annotated[auth.Principal, Depends(auth.approver)]
 
@@ -165,12 +164,12 @@ class OrderLine(BaseModel):
 
 class OrderRequest(BaseModel):
     """An order at fixed prices. Price and stock are re-read from Valio here; the client can't set them.
-    The buyer is the one the X-Agent-Key belongs to; buyer_id is optional and must match it if sent."""
+    The buyer is the one the X-Agent-Key belongs to; buyer_id is optional and must match it if sent.
+    No mandate field: the order is judged by the buyer's mandate stored at Valio (sending one is a 422)."""
     model_config = ConfigDict(extra="forbid")
     buyer_id: BuyerId | None = None
     requested_date: date = Field(examples=["2026-11-16"])
     lines: list[OrderLine] = Field(min_length=1, max_length=MAX_ORDER_LINES)
-    mandate: Mandate
 
     @field_validator("requested_date")
     @classmethod
@@ -183,18 +182,14 @@ class OrderRequest(BaseModel):
     def _consistent(self) -> "OrderRequest":
         if len({ln.product_id for ln in self.lines}) != len(self.lines):
             raise ValueError("each product_id may appear once per order")
-        for field, cap in MANDATE_CAPS.items():
-            if len(getattr(self.mandate, field)) > cap:
-                raise ValueError(f"mandate.{field} may have at most {cap} entries")
         return self
 
 
-def _mandate_for(who: auth.Principal, req: OrderRequest) -> Mandate:
-    """The mandate this order is judged by. Today: the one the agent sends, if it is its own buyer's.
-    m1-flow: swap the body for the stored mandate (mandates.py) here; nothing else changes."""
-    if (req.buyer_id or who.buyer_id) != who.buyer_id or req.mandate.buyer_id != who.buyer_id:
-        raise HTTPException(403, detail="This agent key may only order for its own buyer, under that buyer's mandate")
-    return req.mandate
+def _mandate_for(who: auth.Principal, req: OrderRequest) -> Mandate | None:
+    """The mandate this order is judged by: the key's buyer's, stored server-side. None → refused (MANDATE_MISSING)."""
+    if (req.buyer_id or who.buyer_id) != who.buyer_id:
+        raise HTTPException(403, detail="This agent key may only order for its own buyer")
+    return mandates.get(who.buyer_id)
 
 
 @app.post("/api/orders")
