@@ -1,15 +1,30 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ApiError, compileRules, getKeys, getMandate, MOCK, saveMandate } from './api'
-import { errorText } from './format'
+import { buyerLabel, errorText } from './format'
+import { KitchenChip } from './KitchenChip'
+import './RulesProfile.css'
 import { useCopy } from './i18n'
-import type { CompileResult, Mandate } from './types'
+import type { CompileResult, Mandate, RuleCat } from './types'
 
-type Props = { refreshKey: number; onAction: () => void; onAnnounce: (text: string) => void }
+type Props = { refreshKey: number; onAction: () => void; onAnnounce: (text: string) => void; kitchen: string | null; onSwitch: () => void }
+
+const CAT_ORDER: RuleCat[] = ['spending', 'safety', 'suppliers', 'approvals', 'other']
+const CAT_ICON: Record<RuleCat | 'all', string> = {
+  all: 'M4 6h16M4 12h16M4 18h16',
+  spending: 'M12 3v18M16 8c-.8-1.200-2.200-2-4-2-2.500 0-4 1.100-4 2.800 0 3.800 8 1.800 8 5.400 0 1.700-1.500 2.800-4 2.800-2 0-3.500-.8-4.200-2',
+  safety: 'M12 3l7 3v5c0 4.500-3 8-7 10-4-2-7-5.500-7-10V6z',
+  suppliers: 'M3 7h11v9H3zM14 10h4l3 3v3h-7zM7 19a1.500 1.500 0 100-3 1.500 1.500 0 000 3zM17 19a1.500 1.500 0 100-3 1.500 1.500 0 000 3z',
+  approvals: 'M5 12.500l4.500 4.500L19 7.500',
+  other: 'M5 12h.01M12 12h.01M19 12h.01',
+}
+
+const initials = (label: string) =>
+  label.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase()
 
 // The chef's rules: read them in plain words, rewrite them in plain words, check what changes, then save.
 // Compile never saves; saving needs every open question answered or skipped, and a second yes for anything looser.
 // Saves carry the version the chef was looking at (If-Match), so nobody silently overwrites someone else's change.
-export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
+export function Rules({ refreshKey, onAction, onAnnounce, kitchen, onSwitch }: Props) {
   const c = useCopy()
   const t = c.UI.rules
   const approverKey = getKeys().approverKey
@@ -27,6 +42,7 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [conflict, setConflict] = useState(false) // someone else saved first: the latest rules are shown
   const [saved, setSaved] = useState<string | null>(null)
+  const [cat, setCat] = useState<RuleCat | 'all'>('all')
   const heading = useRef<HTMLHeadingElement>(null)
   const confirmTitle = useRef<HTMLParagraphElement>(null)
 
@@ -136,14 +152,24 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
     }
   }
 
+  const lines = current ? c.ruleLines(current) : []
+  const cats = CAT_ORDER.filter((k) => lines.some((l) => l.cat === k))
+  const shown = cat === 'all' ? lines : lines.filter((l) => l.cat === cat)
+
   if (!canRead) return <p className="problem">{t.needKey}</p>
 
   return (
     <>
-      <div className="ask">
-        <h1 className="title">{t.title}</h1>
-        <p className="note">{t.intro}</p>
-      </div>
+      <header className="rp-head">
+        {kitchen && (
+          <div className="rp-avatar" role="img" aria-label={t.rpAvatar(buyerLabel(kitchen))}>
+            {initials(buyerLabel(kitchen))}
+          </div>
+        )}
+        <h1 className="rp-name">{kitchen ? buyerLabel(kitchen) : t.title}</h1>
+        <KitchenChip kitchen={kitchen} onSwitch={onSwitch} />
+      </header>
+      <p className="rp-intro">{t.intro}</p>
       {conflict && (
         <div className="problem" role="status">
           <strong ref={heading} tabIndex={-1}>
@@ -161,14 +187,37 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
       {current === undefined && !loadError && <p className="note empty">{t.loading}</p>}
       {current === null && <p className="note empty">{t.none}</p>}
       {current && (
-        <ul className="rules">
-          {c.ruleLines(current).map((r, i) => (
-            <li key={i}>
-              <p>{r.text}</p>
-              {r.said && <p className="quiet small">{t.youSaid(r.said)}</p>}
-            </li>
-          ))}
-        </ul>
+        <>
+          <div className="rp-desc">
+            {kitchen && <p>{t.rpKitchenLine(buyerLabel(kitchen))}</p>}
+            {lines[0] && <p>{t.rpRulesLine(lines.length, lines[0].text)}</p>}
+          </div>
+          <div className="rp-cats" role="group" aria-label={t.rpFilters}>
+            {(['all', ...cats] as const).map((k) => (
+              <button key={k} type="button" className="rp-cat" aria-pressed={cat === k} onClick={() => setCat(cat === k ? 'all' : k)}>
+                <span className="rp-cat-dot" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d={CAT_ICON[k]} />
+                  </svg>
+                </span>
+                <span className="rp-cat-label">{k === 'all' ? t.rpAll : t.rpCats[k]}</span>
+              </button>
+            ))}
+          </div>
+          <ul className="rp-list" key={cat}>
+            {shown.map((r, i) => (
+              <li key={i} className="rp-card">
+                <p className="rp-card-title">{r.text}</p>
+                {r.said && <p className="rp-card-said">{t.youSaid(r.said)}</p>}
+              </li>
+            ))}
+          </ul>
+          {text !== null && (
+            <button type="button" className="rp-pill" onClick={() => document.getElementById('rules-text')?.focus()}>
+              {t.rpToTell}
+            </button>
+          )}
+        </>
       )}
 
       {text !== null && (

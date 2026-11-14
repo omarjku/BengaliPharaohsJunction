@@ -3,7 +3,7 @@
 // Numbers and money in Finnish style (1 560 €, 81 %); sentences avoid case endings on numbers on purpose.
 // Some strings come from the backend in English (Reason.message, mandate source_text and guidance, rule-change
 // text). They are shown as they are, until the backend speaks Finnish; those spots are marked "backend English".
-import type { Mandate, RuleChange, Reason } from './types'
+import type { Mandate, RuleChange, Reason, RuleCat } from './types'
 import { ownWords } from './format'
 
 // Language-neutral: same values as the English module.
@@ -147,32 +147,32 @@ const cents = (v: unknown) => euro(Math.round(Number(v)))
 // A claim code in Finnish when we know it; otherwise the code in plain words (English).
 const words = (v: unknown) => CLAIMS[String(v).toUpperCase()] ?? String(v).toLowerCase().replace(/_/g, ' ')
 
-export function ruleLines(m: Mandate): { text: string; said: string | null; words?: string }[] {
-  const out: { text: string; said: string | null; words?: string }[] = []
+export function ruleLines(m: Mandate): { text: string; said: string | null; words?: string; cat: RuleCat }[] {
+  const out: { text: string; said: string | null; words?: string; cat: RuleCat }[] = []
   for (const r of m.hard_rules) {
     const said = ownWords(m, r.source_text) // the chef's own words, as written
     switch (r.kind) {
-      case 'excluded_allergen': out.push({ text: `Ei koskaan tuotteita, joissa on: ${allergen(r.value)}.`, said }); break
-      case 'required_claim': out.push({ text: `Vain tuotteita, joissa on merkintä: ${words(r.value)}.`, said }); break
+      case 'excluded_allergen': out.push({ text: `Ei koskaan tuotteita, joissa on: ${allergen(r.value)}.`, said, cat: 'safety' }); break
+      case 'required_claim': out.push({ text: `Vain tuotteita, joissa on merkintä: ${words(r.value)}.`, said, cat: 'safety' }); break
       case 'auto_approve_limit_cents':
-        out.push({ text: `Tilaukset ${cents(r.value)} asti menevät läpi itsestään. Isommista kysytään sinulta.`, said }); break
-      case 'max_unit_price_cents': out.push({ text: `Yksikköhinta enintään ${cents(r.value)}.`, said }); break
+        out.push({ text: `Tilaukset ${cents(r.value)} asti menevät läpi itsestään. Isommista kysytään sinulta.`, said, cat: 'spending' }); break
+      case 'max_unit_price_cents': out.push({ text: `Yksikköhinta enintään ${cents(r.value)}.`, said, cat: 'spending' }); break
       case 'min_delivery_reliability':
-        out.push({ text: `Sinulta kysytään ennen tuotteita, jotka saapuvat ajallaan alle ${Math.round(Number(r.value) * 100)} % kerroista.`, said }); break
-      default: out.push({ text: said ?? `${words(r.kind)}: ${r.value}`, said: null })
+        out.push({ text: `Sinulta kysytään ennen tuotteita, jotka saapuvat ajallaan alle ${Math.round(Number(r.value) * 100)} % kerroista.`, said, cat: 'suppliers' }); break
+      default: out.push({ text: said ?? `${words(r.kind)}: ${r.value}`, said: null, cat: 'other' })
     }
   }
-  out.push({ text: `Yhdestä tuotteesta enintään ${euro(m.per_line_cap_cents)} tilausta kohden.`, said: null })
-  if (m.weekly_budget_cents) out.push({ text: `Viikkobudjetti ${euro(m.weekly_budget_cents)}.`, said: null })
+  out.push({ text: `Yhdestä tuotteesta enintään ${euro(m.per_line_cap_cents)} tilausta kohden.`, said: null, cat: 'spending' })
+  if (m.weekly_budget_cents) out.push({ text: `Viikkobudjetti ${euro(m.weekly_budget_cents)}.`, said: null, cat: 'spending' })
   if (m.blocklist.length)
-    out.push({ text: m.blocklist.length > 1 ? `${m.blocklist.length} tuotetta on estetty.` : '1 tuote on estetty.', said: null, words: `Älä koskaan tilaa tuotetta ${m.blocklist.join(', ')}.` })
+    out.push({ text: m.blocklist.length > 1 ? `${m.blocklist.length} tuotetta on estetty.` : '1 tuote on estetty.', said: null, words: `Älä koskaan tilaa tuotetta ${m.blocklist.join(', ')}.`, cat: 'safety' })
   out.push({
     text: { ask: 'Kun agentti ei voi tarkistaa jotain, se kysyy sinulta.', decline: 'Kun agentti ei voi tarkistaa jotain, se jättää tilaamatta.', approve: 'Kun agentti ei voi tarkistaa jotain, se tilaa silti.' }[m.uncertainty_policy] ?? '',
-    said: null,
+    said: null, cat: 'approvals',
   })
-  for (const g of m.guidance) out.push({ text: `Toive: ${g.text}`, said: null }) // g.text: backend English unless the chef wrote it in Finnish
+  for (const g of m.guidance) out.push({ text: `Toive: ${g.text}`, said: null, cat: 'other' }) // g.text: backend English unless the chef wrote it in Finnish
   if (m.expires_at)
-    out.push({ text: `Säännöt ovat voimassa ${new Date(m.expires_at).toLocaleDateString('fi-FI', { day: 'numeric', month: 'long' })} asti.`, said: null, words: `Säännöt ovat voimassa ${m.expires_at.slice(0, 10)} asti.` })
+    out.push({ text: `Säännöt ovat voimassa ${new Date(m.expires_at).toLocaleDateString('fi-FI', { day: 'numeric', month: 'long' })} asti.`, said: null, words: `Säännöt ovat voimassa ${m.expires_at.slice(0, 10)} asti.`, cat: 'other' })
   return out
 }
 
@@ -455,6 +455,13 @@ export const UI = {
   },
   rules: {
     title: 'Sääntösi',
+    rpAvatar: (name: string): string => `Avatar: ${name}`,
+    rpFilters: 'Näytä säännöt lajeittain',
+    rpAll: 'Kaikki',
+    rpCats: { spending: 'Kulut', safety: 'Turvallisuus', suppliers: 'Toimittajat', approvals: 'Hyväksynnät', other: 'Muut' },
+    rpKitchenLine: (name: string): string => `Tilaukset keittiölle ${name}.`,
+    rpRulesLine: (n: number, first: string): string => `Voimassa ${n} ${n === 1 ? 'sääntö' : 'sääntöä'}. ${first}`,
+    rpToTell: 'Kerro agentille sääntösi',
     intro: 'Näitä agentti noudattaa jokaisessa tilauksessa. Valion etuovi tarkistaa ne uudelleen.',
     needKey: 'Lisää hyväksyjän avain kohdassa Avaimet, niin näet ja voit muuttaa sääntöjäsi.',
     know: 'Mitä tiedän keittiöstäsi',
