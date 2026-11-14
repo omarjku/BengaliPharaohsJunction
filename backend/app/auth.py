@@ -8,12 +8,15 @@ name come from the key, never from the request body. No keys configured → 503:
 ponytail: static shared secrets; per-buyer OAuth / signed mandates before production.
 """
 import hmac
+import re
 from dataclasses import dataclass, field
 from typing import Annotated
 
 from fastapi import Header, HTTPException, Request
 
 from . import config, sandbox
+
+_BUYER_ID = re.compile(r"^[a-z0-9-]{1,64}$")
 
 
 @dataclass(frozen=True)
@@ -28,7 +31,7 @@ def _parse(spec: str) -> list[tuple[bytes, Principal]]:
     for item in spec.split(","):
         key, _, who = item.strip().partition("=")
         buyer, _, name = who.partition(":")
-        if key and buyer:  # malformed entries grant nothing
+        if key and buyer and _BUYER_ID.fullmatch(buyer):  # malformed entries grant nothing
             # key_id is the entry's own label, never derived from the secret: it is persisted with idempotency keys.
             # Give a buyer's keys distinct names, or two unnamed keys share replays.
             out.append((key.encode(), Principal(buyer, name or buyer, name or buyer)))
