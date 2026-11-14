@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Front Door pitch deck</title>
+<!--
+  Pitch deck from docs/DECK.md. 16:9, one slide per page when printed.
+  Screenshots: every <img> points at ../design/screens/<name>.png. To swap in re-captured screens, replace the files
+  there (same names) or change the src attributes below. Export: node docs/deck/export.mjs
+  Tokens: the product's own (frontend/src/index.css, docs/design/DESIGN.md).
+-->
+<style>
+  :root {
+    --ink: #1c1f23; --ink-2: #5d6670; --ink-3: #737b85;
+    --paper: #ffffff; --wash: #f5f6f8; --line: #e7e9ec;
+    --accent: #0b5cad; --accent-soft: #e7f0fa;
+    --good: #1e7a3c; --good-bg: #e8f5ec; --warn: #8a5a00; --warn-bg: #fff4dc; --bad: #b3261e; --bad-bg: #fdecea;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  }
+  @page { size: 1920px 1080px; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--wash); color: var(--ink); font-family: var(--font);
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; font-variant-numeric: tabular-nums; }
+  .slide { width: 1920px; height: 1080px; padding: 112px 144px; background: var(--paper); position: relative;
+    display: flex; flex-direction: column; overflow: hidden; margin: 0 auto 48px; page-break-after: always; break-after: page; }
+  @media print { .slide { margin: 0; } body { background: var(--paper); } }
+  .kicker { font-size: 26px; color: var(--ink-2); margin: 0 0 28px; }
+  .kicker b { color: var(--accent); font-weight: 600; }
+  h1 { font-size: 96px; line-height: 1.05; font-weight: 650; letter-spacing: -0.02em; margin: 0; max-width: 1400px; }
+  h2 { font-size: 72px; line-height: 1.1; font-weight: 650; letter-spacing: -0.015em; margin: 0 0 48px; max-width: 1500px; }
+  p, li { font-size: 38px; line-height: 1.4; margin: 0; }
+  .lead { font-size: 44px; color: var(--ink-2); max-width: 1400px; }
+  ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 22px; }
+  li { padding-left: 40px; position: relative; }
+  li::before { content: ""; position: absolute; left: 0; top: 22px; width: 12px; height: 12px; border-radius: 50%; background: var(--line); }
+  .foot { position: absolute; left: 144px; right: 144px; bottom: 56px; display: flex; justify-content: space-between;
+    font-size: 22px; color: var(--ink-3); }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 96px; align-items: start; flex: 1; min-height: 0; }
+  .shot { border: 1px solid var(--line); border-radius: 12px; max-width: 100%; max-height: 640px; object-fit: contain;
+    object-position: top left; display: block; background: var(--paper); }
+  .frame { height: 760px; overflow: hidden; border: 1px solid var(--line); border-radius: 28px; flex: none; }
+  .frame img { display: block; width: 100%; }
+  .row { display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: center; }
+  .row p { font-size: 38px; }
+  .shots { display: flex; gap: 40px; align-items: flex-start; }
+  .tag { display: inline-flex; align-items: center; gap: 12px; font-size: 28px; font-weight: 600; padding: 8px 18px; border-radius: 999px; }
+  .tag::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: currentColor; }
+  .good { color: var(--good); background: var(--good-bg); } .warn { color: var(--warn); background: var(--warn-bg); }
+  .bad { color: var(--bad); background: var(--bad-bg); }
+  .flow { display: flex; align-items: center; gap: 28px; font-size: 40px; font-weight: 600; margin: 24px 0 56px; flex-wrap: wrap; }
+  .flow span { padding: 22px 32px; border: 1px solid var(--line); border-radius: 12px; }
+  .flow .door { border: 2px solid var(--accent); color: var(--accent); }
+  .flow i { color: var(--ink-3); font-style: normal; }
+  .big { font-size: 120px; font-weight: 650; letter-spacing: -0.03em; line-height: 1; }
+  .stats { display: flex; gap: 120px; margin: 24px 0 64px; }
+  .stats div span { display: block; font-size: 30px; color: var(--ink-2); margin-top: 12px; }
+  table { border-collapse: collapse; font-size: 36px; }
+  th, td { text-align: left; padding: 18px 48px 18px 0; border-bottom: 1px solid var(--line); }
+  th { font-size: 26px; color: var(--ink-2); font-weight: 500; }
+  tr.on td { color: var(--accent); font-weight: 650; }
+  .src { font-size: 22px; color: var(--ink-3); margin-top: auto; }
+  .src a { color: var(--ink-3); }
+  .cols3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 64px; }
+  .cols3 h3 { font-size: 30px; color: var(--ink-2); font-weight: 500; margin: 0 0 20px; }
+  .cols3 p { font-size: 34px; }
+</style>
+</head>
+<body>
+
+<!-- 1 Title -->
+<section class="slide">
+  <p class="kicker"><b>Front Door</b> · Valio Aimo Trusted Trade Agents · Junction 2026</p>
+  <h1 style="margin-top:120px">The buyer's agent is the visitor, and Valio wants a front door.</h1>
+  <p class="lead" style="margin-top:56px">Trusted trade agents for Valio Aimo.</p>
+  <div class="foot"><span>Omar Kassem · Fathia Fairuz Zoha</span><span>github.com/omarjku/BengaliPharaohsJunction</span></div>
+</section>
+
+<!-- 2 Problem -->
+<section class="slide">
+  <p class="kicker">The problem</p>
+  <div class="stats">
+    <div><div class="big">90%</div><span>of B2B buying via AI agents by 2028¹</span></div>
+  </div>
+  <ul>
+    <li>Valio Aimo: webshop, VALO and A.I.mo, with no public API²</li>
+    <li>Buyers will bring their own agents. Who checks them?</li>
+  </ul>
+  <p class="src">¹ Gartner, via <a href="https://www.digitalcommerce360.com/2025/11/28/gartner-ai-agents-15-trillion-in-b2b-purchases-by-2028/">Digital Commerce 360, Nov 2025</a>
+    · ² <a href="https://www.valioaimo.fi/en/company/why-choose-valio-aimo-as-a-partner/innovative-tools-for-everyday-work/">valioaimo.fi</a>; our research, docs/research/valio-context.md</p>
+</section>
+
+<!-- 3 What we built -->
+<section class="slide">
+  <p class="kicker">What we built</p>
+  <div class="flow"><span>Chef's words</span><i>→</i><span>Gemini buyer agent</span><i>→</i><span class="door">Valio front door</span><i>→</i><span>Valio</span></div>
+  <p class="lead">The door re-checks every order, from any agent, against the buyer's mandate. Unsure means ask.</p>
+  <div class="foot"><span>Our agent is one client. The door is the product.</span><span>3</span></div>
+</section>
+
+<!-- 4 Demo -->
+<section class="slide">
+  <p class="kicker">Demo, live on Valio's API</p>
+  <div class="split" style="grid-template-columns: 1.15fr 1fr; gap:72px">
+    <div style="display:grid;gap:40px;align-self:center">
+      <div><span class="tag good">Ordered</span><p style="margin-top:12px">1000 L milk, €1,400, by itself</p></div>
+      <div><span class="tag warn">Needs your OK</span><p style="margin-top:12px">1500 L, and the chef approves</p></div>
+      <div><span class="tag warn">Asks</span><p style="margin-top:12px">Menu for 80, then a cart</p></div>
+    </div>
+    <div class="shots">
+      <div class="frame" style="width:400px"><img src="../design/screens/3-needs-ok-390.png" alt="Held for the chef's OK"></div>
+      <div class="frame" style="width:400px"><img src="../design/screens/4-approved-390.png" alt="Approved on a phone"></div>
+    </div>
+  </div>
+  <div class="foot"><span>UI screens shown with sample data</span><span>4</span></div>
+</section>
+
+<!-- 5 Trust and controls -->
+<section class="slide">
+  <p class="kicker">Trust and controls · J3</p>
+  <div class="split" style="grid-template-columns: 1fr auto">
+    <ul style="align-self:center">
+      <li><b>Hard rules refuse:</b> allergens, claims, max price, cut-off</li>
+      <li><b>Sign-off rules hold:</b> limits, weekly budget, reliability</li>
+      <li>Only humans approve</li>
+      <li>Every decision signed and audited</li>
+    </ul>
+    <div class="frame" style="width:420px;justify-self:end"><img src="../design/screens/7-history-390.png" alt="History and audit"></div>
+  </div>
+  <div class="foot"><span>Mandate stored at Valio's side · Ed25519-signed decisions</span><span>5</span></div>
+</section>
+
+<!-- 6 Exceptions -->
+<section class="slide">
+  <p class="kicker">Exceptions · J4</p>
+  <div class="split" style="grid-template-columns: 1fr auto">
+    <ul style="align-self:center">
+      <li>Cut-off passed, "available Monday" anyway</li>
+      <li>999999 = unknown, not unlimited</li>
+      <li>Short stock → split</li>
+      <li>Substitutes: allergen-safe, same category</li>
+      <li>Injection → nothing ordered</li>
+    </ul>
+    <div class="frame" style="width:420px;justify-self:end"><img src="../design/screens/6-short-stock-split-390.png" alt="Short stock split"></div>
+  </div>
+  <div class="foot"><span>Every trap asks, with reasons and alternatives</span><span>6</span></div>
+</section>
+
+<!-- 7 Open -->
+<section class="slide">
+  <p class="kicker">Open by design · J5</p>
+  <h2>No proprietary format.</h2>
+  <div class="cols3">
+    <div><h3>Implemented</h3><p>OpenAPI 3.1, JSON Schemas, MCP server, Ed25519 signed statements, GS1 allergens</p></div>
+    <div><h3>Mapped</h3><p>Peppol BIS Order / UBL 2.1, AP2 mandates</p></div>
+    <div><h3>Next</h3><p>RFC 9421 signed requests, signed mandates, Postgres</p></div>
+  </div>
+  <div class="foot"><span>MIT · public repo · docs/STANDARDS.md</span><span>7</span></div>
+</section>
+
+<!-- 8 Gemini -->
+<section class="slide">
+  <p class="kicker">Gemini decides when to ask</p>
+  <div class="split" style="grid-template-columns: 1fr 1fr">
+    <div>
+      <table>
+        <tr><th>threshold</th><th>handled alone</th><th>wrong autos</th></tr>
+        <tr><td>0.7</td><td>11</td><td>0</td></tr>
+        <tr class="on"><td>0.8</td><td>11</td><td>0</td></tr>
+        <tr><td>0.9</td><td>8</td><td>0</td></tr>
+      </table>
+      <p style="margin-top:32px;font-size:28px;color:var(--ink-2)">30 hand-labelled cases, real Valio products</p>
+    </div>
+    <div>
+      <p style="font-size:30px;color:var(--ink-2);margin-bottom:24px">"10 kg sugar for baking"</p>
+      <p><span class="tag bad">below 0.5</span>&nbsp; 500 × 5 g sachets</p>
+      <p style="margin-top:24px"><span class="tag good">≈0.9</span>&nbsp; caster sugar</p>
+    </div>
+  </div>
+  <div class="foot"><span>Gemini Decisions API · calibrated confidence</span><span>8</span></div>
+</section>
+
+<!-- 9 Codex -->
+<section class="slide">
+  <p class="kicker">Codex as our adversary</p>
+  <div class="stats">
+    <div><div class="big">9</div><span>reviews</span></div>
+    <div><div class="big">62</div><span>findings</span></div>
+    <div><div class="big" style="color:var(--accent)">43</div><span>fixed, each with a test</span></div>
+  </div>
+  <p class="lead">Caught prompt-injection bypasses, unvalidated confidence and stale approvals.</p>
+  <div class="foot"><span>docs/CODEX.md</span><span>9</span></div>
+</section>
+
+<!-- 10 Real vs mocked -->
+<section class="slide">
+  <p class="kicker">Real vs mocked, and next</p>
+  <ul style="gap:36px">
+    <li><b>Real:</b> live Valio mock API, the full catalogue, Gemini, signing, MCP</li>
+    <li><b>Assumed:</b> cut-offs, delivery days, no Valio order endpoint</li>
+    <li><b>Next:</b> Postgres, per-agent identity, signed mandates</li>
+  </ul>
+  <p class="lead" style="margin-top:auto;color:var(--ink)">Any agent can visit. Only the right orders get in.</p>
+  <div class="foot" style="position:static;margin-top:40px"><span>valio-front-door.onrender.com</span><span>10</span></div>
+</section>
+
+</body>
+</html>
