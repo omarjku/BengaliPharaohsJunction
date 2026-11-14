@@ -58,8 +58,8 @@ export function PhotoButton({ disabled, onRead }: { disabled: boolean; onRead: (
                 {t.read}: {read.items.map(itemText).filter(Boolean).join(', ')}
               </p>
             )}
-            {unreadable.length > 0 && <p className="quiet small warn-text">{t.unreadable(unreadable.join(', '))}</p>}
-            {error && <p className="bad-text">{error}</p>}
+            {unreadable.length > 0 && <p className="quiet small photo-unreadable">{t.unreadable(unreadable.join(', '))}</p>}
+            {error && <p className="photo-error">{error}</p>}
           </div>
         </div>
       )}

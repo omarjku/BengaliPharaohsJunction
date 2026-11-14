@@ -497,7 +497,7 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
 }
 
 /* --- Talk: one circle that listens, thinks and speaks; captions under it; End at the thumb. */
-.ask-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); margin-block-start: var(--s2); }
+.talk-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); margin-block-start: var(--s2); }
 .talk-btn, .photo-btn { display: inline-flex; align-items: center; gap: var(--s2); }
 .talk-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); }
 .talk {
@@ -536,8 +536,8 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
   .talk-circle.thinking, .talk-circle.speaking { animation: none; }
 }
 
-/* --- Photo: what was read, next to a small thumbnail. */
+/* --- Photo: what was read, next to a small thumbnail. (Talk + photo use only talk-* / photo-* classes.) */
 .photo-read { flex-basis: 100%; display: flex; align-items: flex-start; gap: var(--s3); }
 .photo-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
-.photo-read .bad-text { color: var(--bad); }
-.photo-read .warn-text { color: var(--warn); }
+.photo-error { color: var(--bad); }
+.photo-unreadable { color: var(--warn); }

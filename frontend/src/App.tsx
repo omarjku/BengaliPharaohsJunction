@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { ApiError, askAgentStream, PHOTO_READY, TALK_READY, DROPPED, getAdminKey, getHealth, getKeys, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
+import { ApiError, askAgentStream, DROPPED, getAdminKey, getHealth, getKeys, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
 import { buyerLabel, errorText, nextMonday } from './format'
 import { groupHistory } from './history'
@@ -15,6 +15,7 @@ import { usePhaseLine } from './usePhaseLine'
 import { MicButton, VoiceStatus } from './Voice'
 import { PhotoButton } from './PhotoButton'
 import { Talk } from './Talk'
+import { useTalk, useTalkPhotoAvailable } from './useTalk'
 
 type View = 'order' | 'rules' | 'history' | 'valio'
 
@@ -97,27 +98,9 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const phaseLine = usePhaseLine(400)
   const refreshAudit = () => setAuditKey((k) => k + 1)
   const offline = useBackendDown()
-  // Talk and the photo button: on by default, hidden when the backend's health says it can't do them.
-  const [caps, setCaps] = useState({ talk: TALK_READY, photo: PHOTO_READY })
-  useEffect(() => {
-    let cancelled = false
-    getHealth().then(
-      (h) => !cancelled && setCaps({ talk: TALK_READY && h.talk !== false, photo: PHOTO_READY && h.vision !== false }),
-      () => {},
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [])
-  const [talk, setTalk] = useState<{ ctx: AudioContext; mic: Promise<MediaStream> } | null>(null)
-  // Started inside the tap: iOS only lets audio play and the mic open from a user gesture.
-  function openTalk() {
-    const ctx = new AudioContext()
-    void ctx.resume()
-    const mic = navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
-    mic.catch(() => {}) // Talk shows the error
-    setTalk({ ctx, mic })
-  }
+  // HOOK: Talk + photo (Talk.tsx, PhotoButton.tsx, useTalk.ts). Keep these three lines and the two JSX blocks marked HOOK.
+  const caps = useTalkPhotoAvailable()
+  const talk = useTalk()
   const talkResult = (r: AskResponse) =>
     r.question ? (
       <section className="answer" aria-label={u.question.status}>
@@ -318,18 +301,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         <AdminKeyForm onSaved={adminSaved} onCancel={() => adminDialog.current?.close()} />
       </dialog>
 
-      {talk && (
-        <Talk
-          ctx={talk.ctx}
-          mic={talk.mic}
-          onEnd={() => {
-            void talk.mic.then((s) => s.getTracks().forEach((tr) => tr.stop()), () => {})
-            void talk.ctx.close()
-            setTalk(null)
-          }}
-          renderResult={talkResult}
-        />
-      )}
+      {/* HOOK: Talk, full screen while a session is open */}
+      {talk.session && <Talk ctx={talk.session.ctx} mic={talk.session.mic} onEnd={talk.end} renderResult={talkResult} />}
 
       <p className="sr-only" aria-live="polite">
         {announce}
@@ -394,10 +367,11 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                 <p className="sr-only" id="text-help">
                   {u.ask.help(c.EXAMPLES)}
                 </p>
-                {(caps.photo || (caps.talk && voiceSupported())) && (
-                  <div className="ask-tools">
-                    {caps.talk && voiceSupported() && (
-                      <button type="button" className="link talk-btn" onClick={openTalk} disabled={running}>
+                {/* HOOK: Talk + photo buttons */}
+                {(caps.photo || caps.talk) && (
+                  <div className="talk-tools">
+                    {caps.talk && (
+                      <button type="button" className="link talk-btn" onClick={talk.open} disabled={running}>
                         <span className="talk-dot" aria-hidden="true" />
                         {u.talk.open}
                       </button>
