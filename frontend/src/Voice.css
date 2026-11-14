@@ -1,0 +1,3 @@
+/* VoiceButton in Talk mode: the mic's circle (.mic, index.css) holding a small accent dot. */
+.talk-mic { color: var(--accent); }
+.talk-mic-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); }

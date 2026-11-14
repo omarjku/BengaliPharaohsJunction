@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react'
-import { getHealth, PHOTO_READY, TALK_READY } from './api'
+import { getHealth, MOCK, PHOTO_READY, TALK_READY } from './api'
 import { voiceSupported } from './useVoice'
 
 // Talk and the photo button, joined to App by these two hooks only (so a restyle of App can't break them).
 
-// Which of the two the backend can do: on by default, off with VITE_TALK=0 / VITE_PHOTO=0, or when /api/health
-// says talk: false / vision: false. Talk also needs a browser that can record.
+// Which of the two the backend can do. Talk: only when /api/health says talk: true (and VITE_TALK isn't '0', and the
+// browser can record); until then the voice button is plain dictation. Photo: on unless VITE_PHOTO=0 or vision: false.
 export function useTalkPhotoAvailable() {
-  const [caps, setCaps] = useState({ talk: TALK_READY && voiceSupported(), photo: PHOTO_READY })
+  const [caps, setCaps] = useState({ talk: MOCK && TALK_READY && voiceSupported(), photo: PHOTO_READY })
   useEffect(() => {
     let cancelled = false
     getHealth().then(
-      (h) => !cancelled && setCaps({ talk: TALK_READY && voiceSupported() && h.talk !== false, photo: PHOTO_READY && h.vision !== false }),
+      (h) => !cancelled && setCaps({ talk: TALK_READY && voiceSupported() && (MOCK || h.talk === true), photo: PHOTO_READY && h.vision !== false }),
       () => {},
     )
     return () => {
