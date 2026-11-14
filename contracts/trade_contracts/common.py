@@ -110,6 +110,8 @@ class ReasonCode(StrEnum):
     # --- engine
     LOW_CONFIDENCE = "LOW_CONFIDENCE"
     ENGINE_ERROR = "ENGINE_ERROR"
+    # --- menu to cart
+    MENU_ASSUMPTIONS = "MENU_ASSUMPTIONS"  # a cart proposed from a menu rests on per-cover recipe guesses
 
 
 # D4: the only codes that may carry DECLINE severity (the mandate itself forbids it and
