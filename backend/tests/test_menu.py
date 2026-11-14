@@ -21,9 +21,13 @@ def fake_gemini(monkeypatch, dishes):
         if schema is menu._MENU_SCHEMA:
             assert "<buyer_request>" in prompt and "untrusted" in system
             return None if dishes is None else {"dishes": dishes}
-        item = prompt.split("\n")[0].removeprefix("Item: ").split(" (")[0]
-        return {"ids": RANKS.get(item, [])}
+        return None
     monkeypatch.setattr(agent, "_gemini", fake)
+
+    async def match(item, hits):
+        known = {p["id"] for p in hits}
+        return [i for i in RANKS.get(item["query"], []) if i in known]
+    monkeypatch.setattr(agent, "match", match)
 
 
 def post(text, covers=80, key="agent-lk"):

@@ -127,3 +127,10 @@ def test_live_recording_with_say(tmp_path):
     out = asyncio.run(voice.transcribe(wav_.read_bytes(), "audio/wav"))
     print(f"\nlive: {out['seconds']} s of audio → {out['text']!r} in {time.monotonic() - t:.2f} s")
     assert "butter" in out["text"].lower() and "20" in out["text"]
+
+
+def test_decoder_is_pinned_to_the_declared_type(live):
+    """Security review: no format auto-probing (a WAV sent as audio/webm is refused, not sniffed and decoded)."""
+    assert post(wav(1.0), "audio/webm").status_code == 422
+    with pytest.raises(ValueError):
+        voice.to_pcm16(b"#EXTM3U\n#EXT-X-TARGETDURATION:1\nhttp://169.254.169.254/latest\n", "audio/mpeg")

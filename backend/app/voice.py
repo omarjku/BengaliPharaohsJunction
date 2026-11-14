@@ -25,26 +25,43 @@ MAX_SECONDS = 30
 RATE = 16_000
 CHUNK = RATE * 2 // 10  # 100 ms of PCM16 mono
 TIMEOUT_S = 15
-TYPES = ("audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/aac", "audio/wav", "audio/x-wav",
-         "audio/wave", "audio/flac")
+# Declared type → the ONE demuxer allowed to read it (never auto-probed: a crafted file must not be able to pick a
+# playlist/HLS/concat demuxer that opens URLs), and no network protocol is allowed at all.
+DEMUXERS = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "mp4", "audio/mpeg": "mp3", "audio/aac": "aac",
+            "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav", "audio/flac": "flac"}
+TYPES = tuple(DEMUXERS)
+SANE_RATES, MAX_CHANNELS = (8_000, 96_000), 2
 log = logging.getLogger(__name__)
 connect = websockets.connect  # tests replace this with a fake Live socket
 
 
-def to_pcm16(data: bytes) -> tuple[bytes, float]:
-    """Any browser recording → (16 kHz mono PCM16, seconds). ValueError if it can't be read or is too long."""
+def to_pcm16(data: bytes, kind: str = "audio/webm") -> tuple[bytes, float]:
+    """A browser recording of the declared type → (16 kHz mono PCM16, seconds). ValueError if it can't be read, isn't
+    that type, or is longer than MAX_SECONDS (checked per frame BEFORE decoding work is spent on it)."""
+    fmt = DEMUXERS[kind]
+    cap = MAX_SECONDS * RATE * 2
     try:
-        with av.open(io.BytesIO(data)) as box:
+        with av.open(io.BytesIO(data), format=fmt, options={"protocol_whitelist": "", "safe": "1"}) as box:
+            if box.format.name != fmt:
+                raise ValueError(f"not a {kind} recording")
             stream = next(s for s in box.streams if s.type == "audio")
+            rate, channels = stream.codec_context.sample_rate or 0, stream.codec_context.channels or 0
+            if not SANE_RATES[0] <= rate <= SANE_RATES[1] or not 1 <= channels <= MAX_CHANNELS:
+                raise ValueError("unsupported sample rate or channel count")
+            if stream.duration and stream.time_base and float(stream.duration * stream.time_base) > MAX_SECONDS + 1:
+                raise ValueError(f"longer than {MAX_SECONDS} s")
             resampler = av.AudioResampler(format="s16", layout="mono", rate=RATE)
             out = bytearray()
             for frame in box.decode(stream):
+                projected = len(out) + int(frame.samples * RATE / (frame.sample_rate or rate)) * 2
+                if projected > cap:
+                    raise ValueError(f"longer than {MAX_SECONDS} s")
                 for f in resampler.resample(frame):
                     out += bytes(f.planes[0])[: f.samples * 2]
-                if len(out) > MAX_SECONDS * RATE * 2:
-                    raise ValueError(f"longer than {MAX_SECONDS} s")
             for f in resampler.resample(None):  # flush
                 out += bytes(f.planes[0])[: f.samples * 2]
+            if len(out) > cap:
+                raise ValueError(f"longer than {MAX_SECONDS} s")
     except ValueError:
         raise
     except (av.error.FFmpegError, StopIteration, OSError) as e:
@@ -93,7 +110,7 @@ async def transcribe(data: bytes, content_type: str) -> dict:
     if not config.GEMINI_API_KEY:
         raise HTTPException(503, detail="Voice isn't configured on this server; type the order instead.")
     try:
-        pcm, seconds = await asyncio.to_thread(to_pcm16, data)
+        pcm, seconds = await asyncio.to_thread(to_pcm16, data, kind)
     except ValueError as e:
         raise HTTPException(422, detail=f"Couldn't read the recording ({e}). Try again, or type it.") from None
     if seconds < 0.3:

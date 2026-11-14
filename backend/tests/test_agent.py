@@ -43,21 +43,27 @@ def decisions(monkeypatch):
     return state
 
 
+def fake_match(monkeypatch, ranked):
+    """Fake candidate matcher (agent.match): the ranked ids that are search hits, in that order (None = Decisions down)."""
+    async def match(item, hits):
+        if ranked is None:
+            return None
+        known = {p["id"] for p in hits}
+        return [i for i in dict.fromkeys(ranked) if i in known][:agent.QUOTE_TOP]
+    monkeypatch.setattr(agent, "match", match)
+
+
 def gemini(monkeypatch, items=None, ranked=None):
-    """Fake Gemini: parse → items, rank → ranked ids (None = Gemini down for that call)."""
+    """Fake Gemini: parse → items (None = Gemini down); candidates → ranked ids (the matcher)."""
     calls = []
 
     async def fake(system, prompt, schema):
-        assert "untrusted" in system
-        if schema is agent._PARSE_SCHEMA:
-            assert "<buyer_request>" in prompt  # chef text only inside the delimiters
-        else:
-            assert "<buyer_request>" not in prompt  # the rank call sees parsed fields only
+        assert "untrusted" in system and schema is agent._PARSE_SCHEMA
+        assert "<buyer_request>" in prompt  # chef text only inside the delimiters
         calls.append(prompt)
-        if schema is agent._PARSE_SCHEMA:
-            return None if items is None else {"summary": "Lactose-free milk for Monday", "items": items}
-        return None if ranked is None else {"ids": ranked}
+        return None if items is None else {"summary": "Lactose-free milk for Monday", "items": items}
     monkeypatch.setattr(agent, "_gemini", fake)
+    fake_match(monkeypatch, ranked)
     return calls
 
 
@@ -99,7 +105,7 @@ def test_milk_end_to_end_orders_through_front_door(shop1, monkeypatch):
     assert agent_entry["input"]["mandate"]["id"] == "lapland-kitchen-2026-11"
     assert agent_entry["rejected_options"][0]["product_id"] == "462775"
     assert door_entry["actor"] == "valio_front_door" and door_entry["id"] == body["audit_id"]
-    assert len(calls) == 2
+    assert len(calls) == 1  # one parse; candidates come from the Decisions matcher
 
 
 def test_over_auto_limit_is_held_by_the_front_door(shop1, monkeypatch):
@@ -551,3 +557,30 @@ def test_date_intent_asks_did_you_mean(shop1, monkeypatch, decisions):
     decisions["scores"] = {"date": 0.1}
     body = run("1000 L lactose-free milk for Monday")
     assert body["order"] is None and any("Did you mean delivery on" in r["message"] for r in body["decision"]["reasons"])
+
+
+def test_match_keeps_real_matches_best_first(decisions):
+    """room3-speed: candidates come from the Decisions 'meets' question per search hit (it replaced a 5-8 s rank)."""
+    hits = [{"id": i, "name_en": n, "brand": "Valio", "claims": [], "allergens": {"contains": ["AM"]}}
+            for i, n in (("1", "Milk ice cream 5 l"), ("2", "Whole milk 1 l"), ("3", "Semi skimmed milk 1 l"))]
+    item = agent._item("milk", 200, "L", [])
+
+    async def by_name(input_text, questions):
+        decisions["calls"].append((input_text, questions))
+        y = 0.02 if "ice cream" in input_text else 0.97 if "Whole" in input_text else 0.9
+        return {k: {"type": "noul", "noul": y} for k in questions}
+    import app.agent as a
+    a._decisions, real = by_name, a._decisions
+    try:
+        assert asyncio.run(agent.match(item, hits)) == ["2", "3"]  # ice cream cut, best first
+        assert all("200" not in inp for inp, _ in decisions["calls"])  # same amount-free input as the line judge (cache)
+    finally:
+        a._decisions = real
+
+    async def down(*_):
+        return None
+    a._decisions = down
+    try:
+        assert asyncio.run(agent.match(item, hits)) is None  # caller falls back to search order, flagged
+    finally:
+        a._decisions = real

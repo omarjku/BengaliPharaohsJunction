@@ -124,6 +124,26 @@ Menus are bounded so a steered parse can't fan out paid calls: at most 12 dishes
 
 Live: "1000 L lactose-free milk" (plausibility 0.86) is still confirmed automatically in 9.9 s, about the same as without the guard. "10000 L lactose-free milk" (0.51) is not ordered: "Unusually large order … Did you mean less?". The first wording also flagged a 5 L top-up as implausibly *small* (0.32); the guard now judges only "too much", because a small order is never a safety problem.
 
+## Speed: one spoken order in ~4 s (room3-speed)
+
+Profile of one `/ask` "200 L lactose-free milk for Monday" (real Valio + Gemini, cold caches), in seconds:
+
+| step | before | after |
+|---|---|---|
+| intent check (Gemini) | 1.65, then the parse waited for it | in parallel with the parse |
+| parse (Gemini) | 2.18 | 2.5–3.9 (now the critical path) |
+| steering + date guards | 0.4 after the parse | in parallel with the parse |
+| **candidate rank (Gemini 4 Hydrogen)** | **8.51** (it thinks ~1,100 tokens whatever thinking setting is used) | **replaced**: the Decisions "meets" question per search hit, in parallel, **~0.4–0.9** |
+| Valio quotes | 0.17 | 0.17 |
+| line judge (meets + qty) | 0.5 | ~0.2: the meets answers come from the cache filled by the matcher |
+| plausibility guard | 0.5 after the choice | in the judge's parallel batch |
+| front door (re-quote + place) | 0.14 | 0.14 |
+| **total** | **13.8** (15.9 in the control room's test) | **2.9–5.0 typical** (5 runs: 3.84, 4.39, 5.03 Finnish, 2.85; fries 5.73) |
+
+No check was removed or loosened. The matcher is the same calibrated question the evaluation measured. Every match over 0.5 still competes on confidence, limits and price (up to 10: a top-5-by-score cut once dropped the cheapest milk behind small packs). One keep-alive HTTP client per event loop saves a TLS handshake per call. Each `/ask` returns `timings_ms` {understand, total} and logs it.
+
+`POST /api/agent/ask/stream` streams the same request as Server-Sent Events: `event: phase` {phase, text} with "Reading your request…", "Searching Valio's catalogue…", "Checking Valio stock and prices…", "Asking Gemini to double-check each match…" and "Placing the order at Valio's front door…" (menus add "Turning the menu into ingredients…"), then one `event: result` with exactly the `/ask` body, or `event: error` {status, detail}.
+
 ## Interface for T06 `decide()`
 
 The agent sets the contract's `Decision.confidence` (the weakest chosen line) and exposes `agent.judge(text, [(product, kinds)]) -> [(confidence, why)]`. A `decide(..., confidence=...)` can take either value without changes on our side.
