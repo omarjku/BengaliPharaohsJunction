@@ -74,6 +74,10 @@ over the lapland-kitchen keys.
 `WEEKLY_BUDGET_EXCEEDED`. Between visitors, use the voice and trap steps (small
 or unordered), or run `demo_prep.py` again during a quiet moment. Remember that it resets every buyer.
 
+**Repeats:** the same order again within 30 minutes gets "You ordered this N minutes ago… Order again?" (the
+duplicate guard). Between peer-review visitors, vary the amount (1000 L, then 1100 L, 1200 L) or say "again". Or
+show the guard on purpose: it's one more thing the agent doesn't do silently.
+
 ## If something fails
 
 | Failure | What you see | Do this |
