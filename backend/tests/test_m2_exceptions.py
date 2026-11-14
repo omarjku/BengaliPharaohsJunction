@@ -60,8 +60,8 @@ def test_split_is_exposed_by_the_front_door_and_reorderable(shop):
                                                   "lines": [{"product_id": "462775", "quantity": 100}]}).json()
     assert body["status"] == "refused" and body["alternative_order"]["lines"][0]["quantity"] == 51.0
     assert body["substitutes"][0]["tier"] == "best"
-    again = c.post("/api/orders", headers=h, json={"requested_date": REQ.isoformat(), "lines": [
-        {"product_id": x["product_id"], "quantity": x["quantity"]} for x in body["alternative_order"]["lines"]]})
+    again = c.post("/api/orders", headers=h, json={"requested_date": REQ.isoformat(),
+                                                   "lines": body["alternative_order"]["order_lines"]})  # verbatim
     assert again.json()["status"] == "confirmed"  # the human chose the split; the door re-checks it
 
 
@@ -103,3 +103,49 @@ def test_substitutes_keep_required_and_dietary_claims_and_category(shop):
     res = run([("463335", 1)])
     assert "100" not in {s["product_id"] for s in res.substitutes}
     assert "keeps FREE_FROM_LACTOSE" in res.substitutes[0]["why_safe"]
+
+
+# --- Codex review #4 follow-ups
+def test_substitute_needs_an_allergen_declaration_covering_the_excluded_ones(shop):
+    peanut_shop(shop)
+    for pid in ("111", "112"):  # only a free-from list, and not for peanuts: unknown, not safe
+        shop.products[pid]["allergens"] = {"contains": [], "may_contain": [], "free_from": ["AM"]}
+    shop.products["113"]["allergens"] = {"contains": [], "may_contain": [], "free_from": ["AP"]}  # explicitly free
+    for policy in ("ask", "approve"):  # "approve unknowns" governs the order, never what we offer instead
+        res = run([("110", 5)], [("excluded_allergen", "AP")], uncertainty_policy=policy)
+        assert [s["product_id"] for s in res.substitutes] == ["113"]
+
+
+def test_unknown_category_is_not_the_same_category(shop):
+    shop.products["104"]["category"] = None  # out of stock, unknown category
+    shop.products["104"]["substitutes"] = ["476240"]
+    shop.products["476240"]["category"] = None
+    assert run([("104", 1)]).substitutes == []
+
+
+def test_split_units_compared_after_resolving_the_catalogue_unit(shop):
+    shop.quotes["462775"]["sales_unit"] = None   # Valio silent; catalogue says ST
+    for pid in ("476240", "463335", "102"):
+        shop.quotes[pid]["sales_unit"] = None
+        shop.products[pid]["sales_unit"] = "KI"  # substitutes are sold per case
+    assert run([("462775", 100)]).alternative_order is None
+
+
+def test_zero_price_substitute_is_not_offered(shop):
+    shop.quotes["104"] = quote("104", amount=0.0)
+    shop.products["104"]["substitutes"] = ["476240"]
+    shop.quotes["476240"] = quote("476240", price=0.0)
+    for pid in ("463335", "463038", "462775", "102", "105", "106"):
+        shop.products[pid]["category"] = "999"  # 476240 is the only candidate left
+    res = run([("104", 1)])
+    assert res.substitutes == [] and "476240" in {ro.product_id for ro in res.rejected_options}
+
+
+def test_split_that_breaks_route_limits_is_not_proposed(shop):
+    shop.products["462775"]["lot_size"] = 0.01
+    shop.products["476240"]["lot_size"] = 3.0
+    shop.quotes["462775"] = quote("462775", amount=0.01, price=2.57)
+    for pid in ("463335", "102"):
+        shop.products[pid]["category"] = "999"
+    shop.quotes["476240"] = quote("476240", amount=200000.0, price=1.2)
+    assert run([("462775", 100000)]).alternative_order is None  # 0.01 + 100002 > 100000 per line

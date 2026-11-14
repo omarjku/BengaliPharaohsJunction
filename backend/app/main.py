@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import agent, auth, catalogue, mandates, config, orders, quantity, valio
+from . import agent, auth, catalogue, config, gate, mandates, orders, quantity, valio
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -128,7 +128,7 @@ def resolve_quantity(req: QuantityRequest) -> dict:
 # approver's name come from the key. ONE uvicorn worker only: orders.py keeps its lock and store in-process.
 BuyerId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_.:-]{1,64}$")]
 OrderId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f-]{36}$")]  # uuid4
-MAX_ORDER_LINES = 50
+MAX_ORDER_LINES = gate.MAX_ORDER_LINES  # one source: the gate only proposes orders that fit these
 MAX_BODY_BYTES = 64 * 1024  # a full order (50 lines) is ~3 KB
 Agent = Annotated[auth.Principal, Depends(auth.agent)]
 Approver = Annotated[auth.Principal, Depends(auth.approver)]
@@ -158,7 +158,7 @@ async def validation_error(_request: Request, exc: RequestValidationError) -> JS
 class OrderLine(BaseModel):
     model_config = ConfigDict(extra="forbid")
     product_id: ProductId
-    quantity: float = Field(gt=0, le=100_000, allow_inf_nan=False,
+    quantity: float = Field(gt=0, le=gate.MAX_LINE_QTY, allow_inf_nan=False,
                             description="In the product's sales unit (see the quote's sales_unit).")
 
 
