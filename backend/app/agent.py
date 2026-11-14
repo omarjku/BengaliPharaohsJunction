@@ -35,7 +35,7 @@ ACTOR = "buyer_agent"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 DECISIONS_URL = "https://generativelanguage.googleapis.com/v1beta/decisions"
 GEMINI_TIMEOUT_S = 15
-SEARCH_LIMIT = 20  # catalogue hits shown to Gemini
+SEARCH_LIMIT = 36  # catalogue hits the matcher may judge (in batches of 12)
 QUOTE_TOP = 5  # candidates per item actually quoted at Valio (no catalogue sweeps)
 MAX_ITEMS = 10  # bounds Valio, Gemini and Decisions calls per run
 MAX_AMOUNT = 1_000_000
@@ -210,8 +210,11 @@ def _describe(p: dict) -> str:
 
 QUESTIONS = {
     "meets": ("Is {c} the product the buyer asked for, and does it meet every dietary need they stated?",
-              "It is the requested product (not merely made from it) and meets every stated dietary need.",
-              "It is a different product, or it misses a stated dietary need.", "the product matches the request"),
+              "It is the requested product (not merely made from it, not a narrower special-purpose variant of it) "
+              "and meets every stated dietary need.",
+              "It is a different product, a special-purpose variant the buyer didn't ask for (e.g. coffee milk or "
+              "coffee cream when they asked for milk or cream), or it misses a stated dietary need.",
+              "the product matches the request"),
     "qty": ("Is the quantity interpretation for {c} what the buyer meant?",
             "The quantity to order delivers what the buyer asked for.",
             "The quantity is misread (wrong unit, pack size or amount).", "the quantity is what the chef meant"),
@@ -552,8 +555,10 @@ SYNONYMS = {"kebab bread": ["pita bread", "pitabread", "pitaleipä"], "kebab mea
             "gyro": ["gyros"], "fry": ["french fries", "fries"], "chip": ["french fries"], "pita": ["pita bread"]}
 
 
+NEAR_TIE = 0.10  # confident lines within this of the item's best confidence compete on limits/preference/price
 MATCH_MIN = 0.5  # P(this hit IS the item) needed to be a candidate at all; the line threshold still applies later
-MATCH_HITS = 12  # search hits judged per item (security review: bounded paid fan-out)
+MATCH_HITS = 12  # search hits judged per batch (security review: bounded paid fan-out)
+MATCH_POOL = 36  # at most three batches per item, and only while no batch has found a real match
 MATCH_TOP = 8  # every real match competes on confidence, limits and price; a top-5-by-score cut dropped the
                 # cheapest milk behind small packs scoring 0.97 (measured, room3-speed)
 
@@ -564,13 +569,20 @@ async def match(item: dict, hits: list[dict]) -> list[str] | None:
     evaluated question the line judge asks: those answers are cached, so judging the chosen lines reuses them.
     The canonical item carries the grounded purpose ('for the rotisserie' → a spit). None if Decisions is down."""
     text = _AMOUNTS.sub(" ", canonical(item))
-    hits = hits[:MATCH_HITS]  # bounded fan-out per item
-    res = await asyncio.gather(*(_judge_one(text, p, ["meets"]) for p in hits))
-    if all(y is None for y, *_ in res):
+    # Judged in batches of MATCH_HITS, stopping at the first batch with real matches: a generic word ("cream") lists
+    # sour cream, ice cream and coffee cream first, the whipping creams only from hit ~21 (measured, room3-rank).
+    found, answered = [], False
+    for start in range(0, min(len(hits), MATCH_POOL), MATCH_HITS):
+        batch = hits[start:start + MATCH_HITS]
+        res = await asyncio.gather(*(_judge_one(text, p, ["meets"]) for p in batch))
+        answered = answered or any(y is not None for y, *_ in res)
+        found += [(y, start + n, p["id"]) for n, ((y, *_), p) in enumerate(zip(res, batch))
+                  if y is not None and y >= MATCH_MIN]
+        if found:
+            break
+    if not answered:
         return None
-    ranked = sorted(((y, n, p["id"]) for n, ((y, *_), p) in enumerate(zip(res, hits)) if y is not None and y >= MATCH_MIN),
-                    key=lambda x: (-x[0], x[1]))
-    return [pid for _, _, pid in ranked][:MATCH_TOP]
+    return [pid for _, _, pid in sorted(found, key=lambda x: (-x[0], x[1]))][:MATCH_TOP]
 
 
 async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[str], bool]:
@@ -746,10 +758,17 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
     for n, it, cands, amount_ok, scored in per_item:
         mark = len(reasons)
         try:
-            # Safe first, then Gemini-confident, within the mandate's limits, fewer concerns, cheapest total; rank last.
-            # When every line is below the threshold, the most likely one goes to the chef, not the cheapest.
+            # Safe first, then Gemini-confident, then CLOSE to the best confidence, within the mandate's limits, fewer
+            # concerns, Finnish preference, cheapest total; rank last. The threshold only decides whether the agent may
+            # act alone; which product wins is led by confidence, and price breaks near-ties only: a line more than
+            # NEAR_TIE below the item's best loses even if cheaper (live: coffee milk 0.72 at EUR 1,300 beat milk at
+            # 0.96 for "lactose-free milk"). When every line is below the threshold, the most likely one goes first.
+            best = max((ln["confidence"] for k, ln, _ in scored if not k[0] and ln["confidence"] is not None),
+                       default=None)
             scored = [((k[0], k[1], low := ln["confidence"] is None or ln["confidence"] < threshold,
-                        -(ln["confidence"] or 0) if low else 0) + k[2:], ln, a) for k, ln, a in scored]
+                        -(ln["confidence"] or 0) if low else 0,
+                        not low and best is not None and ln["confidence"] < best - NEAR_TIE) + k[2:], ln, a)
+                      for k, ln, a in scored]
 
             label = f"'{it['query']}'" + (f" ({', '.join(it['claims'] + ['no ' + a for a in it['exclude_allergens']])})"
                                           if it["claims"] or it["exclude_allergens"] else "")

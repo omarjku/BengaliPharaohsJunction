@@ -1,7 +1,7 @@
 {
  "summary": {
-  "cases": 30,
-  "answered": 30,
+  "cases": 33,
+  "answered": 33,
   "accuracy_at_0.5": 1.0,
   "auto": [
    {
@@ -20,17 +20,17 @@
    },
    {
     "threshold": 0.8,
-    "auto": 12,
+    "auto": 11,
     "false_auto": 0,
     "precision": 1.0,
-    "recall": 0.8
+    "recall": 0.7333333333333333
    },
    {
     "threshold": 0.9,
-    "auto": 8,
+    "auto": 6,
     "false_auto": 0,
     "precision": 1.0,
-    "recall": 0.5333333333333333
+    "recall": 0.4
    }
   ]
  },
@@ -43,8 +43,8 @@
    "kind": "meets",
    "correct": true,
    "label_why": "lactose-free whole milk",
-   "p_yes": 0.9589475826606193,
-   "judge": "Gemini Decisions: 0.96 that the product matches the request, 0.95 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+   "p_yes": 0.8967384111826845,
+   "judge": "Gemini Decisions: 0.89 that the product matches the request, 0.95 that the quantity is what the chef meant (weakest: the product matches the request)."
   },
   {
    "request": "200 L whole milk",
@@ -54,8 +54,8 @@
    "kind": "meets",
    "correct": true,
    "label_why": "organic whole milk",
-   "p_yes": 0.8942515506117943,
-   "judge": "Gemini Decisions: 0.89 that the product matches the request (weakest: the product matches the request)."
+   "p_yes": 0.9039070174845969,
+   "judge": "Gemini Decisions: 0.90 that the product matches the request (weakest: the product matches the request)."
   },
   {
    "request": "20 L whipping cream",
@@ -65,8 +65,8 @@
    "kind": "meets",
    "correct": true,
    "label_why": "whipping cream 1 l",
-   "p_yes": 0.935012447016414,
-   "judge": "Gemini Decisions: 0.93 that the product matches the request, 0.96 that the quantity is what the chef meant (weakest: the product matches the request)."
+   "p_yes": 0.7509793586889205,
+   "judge": "Gemini Decisions: 0.75 that the product matches the request, 0.96 that the quantity is what the chef meant (weakest: the product matches the request)."
   },
   {
    "request": "5 kg unsalted butter",
@@ -76,7 +76,7 @@
    "kind": "meets",
    "correct": true,
    "label_why": "unsalted butter 500 g",
-   "p_yes": 0.9681360494860566,
+   "p_yes": 0.9644325438609539,
    "judge": "Gemini Decisions: 0.96 that the product matches the request, 0.97 that the quantity is what the chef meant (weakest: the product matches the request)."
   },
   {
@@ -88,7 +88,7 @@
    "correct": true,
    "label_why": "Philadelphia original cream cheese",
    "p_yes": 0.8416673463349232,
-   "judge": "Gemini Decisions: 0.97 that the product matches the request, 0.84 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+   "judge": "Gemini Decisions: 0.90 that the product matches the request, 0.84 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
   },
   {
    "request": "10 kg caster sugar",
@@ -99,7 +99,7 @@
    "correct": true,
    "label_why": "caster sugar 1 kg",
    "p_yes": 0.965588671263326,
-   "judge": "Gemini Decisions: 0.97 that the product matches the request, 0.96 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+   "judge": "Gemini Decisions: 0.96 that the product matches the request, 0.96 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
   },
   {
    "request": "12 kg reindeer meat for sautéed reindeer",
@@ -109,8 +109,8 @@
    "kind": "meets",
    "correct": true,
    "label_why": "reindeer top loin",
-   "p_yes": 0.9075503031655792,
-   "judge": "Gemini Decisions: 0.90 that the product matches the request, 0.95 that the quantity is what the chef meant (weakest: the product matches the request)."
+   "p_yes": 0.8197886928342373,
+   "judge": "Gemini Decisions: 0.81 that the product matches the request, 0.95 that the quantity is what the chef meant (weakest: the product matches the request)."
   },
   {
    "request": "10 kg salmon fillet",
@@ -121,7 +121,7 @@
    "correct": true,
    "label_why": "salmon fillet ~10 kg",
    "p_yes": 0.7893027482425262,
-   "judge": "Gemini Decisions: 0.96 that the product matches the request, 0.78 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+   "judge": "Gemini Decisions: 0.95 that the product matches the request, 0.78 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
   },
   {
    "request": "6 kg lingonberry jam",
@@ -131,8 +131,8 @@
    "kind": "meets",
    "correct": true,
    "label_why": "lingonberry jam 6 kg",
-   "p_yes": 0.9632144704929523,
-   "judge": "Gemini Decisions: 0.96 that the product matches the request, 0.97 that the quantity is what the chef meant (weakest: the product matches the request)."
+   "p_yes": 0.9466763497069468,
+   "judge": "Gemini Decisions: 0.94 that the product matches the request, 0.97 that the quantity is what the chef meant (weakest: the product matches the request)."
   },
   {
    "request": "20 L oat drink for vegan guests",
@@ -143,7 +143,7 @@
    "correct": true,
    "label_why": "Oatly organic oat drink, vegan",
    "p_yes": 0.9662838230101471,
-   "judge": "Gemini Decisions: 0.96 that the product matches the request, 0.96 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+   "judge": "Gemini Decisions: 0.97 that the product matches the request, 0.96 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
   },
   {
    "request": "5 L lactose-free coffee milk",
@@ -153,8 +153,8 @@
    "kind": "meets",
    "correct": true,
    "label_why": "lactose-free coffee milk 1 l",
-   "p_yes": 0.9634298899311358,
-   "judge": "Gemini Decisions: 0.96 that the product matches the request, 0.96 that the quantity is what the chef meant (weakest: the product matches the request)."
+   "p_yes": 0.9070555277250765,
+   "judge": "Gemini Decisions: 0.90 that the product matches the request, 0.96 that the quantity is what the chef meant (weakest: the product matches the request)."
   },
   {
    "request": "3 kg lactose-free cream cheese",
@@ -165,7 +165,7 @@
    "correct": true,
    "label_why": "Valio Viola lactose free 3.5 kg",
    "p_yes": 0.722027333564153,
-   "judge": "Gemini Decisions: 0.93 that the product matches the request, 0.72 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+   "judge": "Gemini Decisions: 0.91 that the product matches the request, 0.72 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
   },
   {
    "request": "1000 L lactose-free milk",
@@ -175,8 +175,8 @@
    "kind": "meets",
    "correct": false,
    "label_why": "chocolate milk drink, not milk",
-   "p_yes": 0.012890424724008514,
-   "judge": "Gemini Decisions: 0.01 that the product matches the request (weakest: the product matches the request)."
+   "p_yes": 0.02120672162510675,
+   "judge": "Gemini Decisions: 0.02 that the product matches the request (weakest: the product matches the request)."
   },
   {
    "request": "200 L whole milk",
@@ -186,7 +186,7 @@
    "kind": "meets",
    "correct": false,
    "label_why": "semi-skimmed milk drink, not whole milk",
-   "p_yes": 0.019492585663048546,
+   "p_yes": 0.014177443570905664,
    "judge": "Gemini Decisions: 0.01 that the product matches the request (weakest: the product matches the request)."
   },
   {
@@ -197,8 +197,8 @@
    "kind": "meets",
    "correct": false,
    "label_why": "500 x 5 g brown sugar sachets, not bulk baking sugar",
-   "p_yes": 0.37449573678922676,
-   "judge": "Gemini Decisions: 0.37 that the product matches the request, 0.61 that the quantity is what the chef meant (weakest: the product matches the request)."
+   "p_yes": 0.2565563275847933,
+   "judge": "Gemini Decisions: 0.25 that the product matches the request, 0.61 that the quantity is what the chef meant (weakest: the product matches the request)."
   },
   {
    "request": "20 L dairy-free milk for a guest with a milk allergy",
@@ -208,7 +208,7 @@
    "kind": "meets",
    "correct": false,
    "label_why": "lactose-free milk still contains milk protein",
-   "p_yes": 0.0123072819147261,
+   "p_yes": 0.01,
    "judge": "Gemini Decisions: 0.01 that the product matches the request, 0.42 that the quantity is what the chef meant (weakest: the product matches the request)."
   },
   {
@@ -219,8 +219,8 @@
    "kind": "meets",
    "correct": false,
    "label_why": "salted butter",
-   "p_yes": 0.023233844580114765,
-   "judge": "Gemini Decisions: 0.02 that the product matches the request, 0.42 that the quantity is what the chef meant (weakest: the product matches the request)."
+   "p_yes": 0.05982489305503696,
+   "judge": "Gemini Decisions: 0.05 that the product matches the request, 0.42 that the quantity is what the chef meant (weakest: the product matches the request)."
   },
   {
    "request": "5 kg butter",
@@ -230,7 +230,7 @@
    "kind": "meets",
    "correct": false,
    "label_why": "peanut butter",
-   "p_yes": 0.023377372087628565,
+   "p_yes": 0.022848767616373646,
    "judge": "Gemini Decisions: 0.02 that the product matches the request (weakest: the product matches the request)."
   },
   {
@@ -241,8 +241,8 @@
    "kind": "meets",
    "correct": false,
    "label_why": "whisky-cream ice cream",
-   "p_yes": 0.07596901132111405,
-   "judge": "Gemini Decisions: 0.11 that the product matches the request, 0.07 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+   "p_yes": 0.02904803866075372,
+   "judge": "Gemini Decisions: 0.02 that the product matches the request, 0.07 that the quantity is what the chef meant (weakest: the product matches the request)."
   },
   {
    "request": "12 kg reindeer meat for a stew",
@@ -252,8 +252,8 @@
    "kind": "meets",
    "correct": false,
    "label_why": "ready meal with reindeer",
-   "p_yes": 0.022582600436467308,
-   "judge": "Gemini Decisions: 0.02 that the product matches the request (weakest: the product matches the request)."
+   "p_yes": 0.01738529308708549,
+   "judge": "Gemini Decisions: 0.01 that the product matches the request (weakest: the product matches the request)."
   },
   {
    "request": "10 kg salmon fillet",
@@ -263,7 +263,7 @@
    "kind": "meets",
    "correct": false,
    "label_why": "salmon-potato casserole",
-   "p_yes": 0.011579482925240425,
+   "p_yes": 0.011865191376282624,
    "judge": "Gemini Decisions: 0.01 that the product matches the request (weakest: the product matches the request)."
   },
   {
@@ -274,7 +274,7 @@
    "kind": "meets",
    "correct": false,
    "label_why": "rye bread contains gluten",
-   "p_yes": 0.01,
+   "p_yes": 0.01225081200971955,
    "judge": "Gemini Decisions: 0.01 that the product matches the request (weakest: the product matches the request)."
   },
   {
@@ -285,18 +285,18 @@
    "kind": "meets",
    "correct": false,
    "label_why": "regular cream cheese, not lactose-free",
-   "p_yes": 0.0235603074898193,
-   "judge": "Gemini Decisions: 0.02 that the product matches the request, 0.24 that the quantity is what the chef meant (weakest: the product matches the request)."
+   "p_yes": 0.04115660030775447,
+   "judge": "Gemini Decisions: 0.04 that the product matches the request, 0.24 that the quantity is what the chef meant (weakest: the product matches the request)."
   },
   {
    "request": "10 L unsweetened oat drink for cooking",
-   "judge_input": "10 L unsweetened oat drink, for cooking",
+   "judge_input": "10 L oat drink, for cooking",
    "product_id": "464226",
    "product": "18x Oatly Oat Drink Chocolate 2,5dl",
    "kind": "meets",
    "correct": false,
    "label_why": "chocolate oat drink in 2.5 dl packs",
-   "p_yes": 0.01,
+   "p_yes": 0.015155281991565774,
    "judge": "Gemini Decisions: 0.01 that the product matches the request (weakest: the product matches the request)."
   },
   {
@@ -307,8 +307,41 @@
    "kind": "meets",
    "correct": false,
    "label_why": "Starbucks skinny latte drink",
-   "p_yes": 0.048574152092262624,
-   "judge": "Gemini Decisions: 0.04 that the product matches the request (weakest: the product matches the request)."
+   "p_yes": 0.03640470333484944,
+   "judge": "Gemini Decisions: 0.03 that the product matches the request (weakest: the product matches the request)."
+  },
+  {
+   "request": "1000 L lactose-free milk",
+   "judge_input": "1,000 L milk (lactose-free)",
+   "product_id": "464237",
+   "product": "Valio coffee milk 1 l lactose free UHT",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "coffee milk, not the milk a kitchen asks for",
+   "p_yes": 0.11533488799014749,
+   "judge": "Gemini Decisions: 0.11 that the product matches the request, 0.89 that the quantity is what the chef meant (weakest: the product matches the request)."
+  },
+  {
+   "request": "100 litraa laktoositonta maitoa",
+   "judge_input": "100 L milk (lactose-free)",
+   "product_id": "464237",
+   "product": "Valio coffee milk 1 l lactose free UHT",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "coffee milk (Finnish request)",
+   "p_yes": 0.11533488799014749,
+   "judge": "Gemini Decisions: 0.11 that the product matches the request, 0.87 that the quantity is what the chef meant (weakest: the product matches the request)."
+  },
+  {
+   "request": "10 L lactose-free cream",
+   "judge_input": "10 L cream (lactose-free)",
+   "product_id": "463442",
+   "product": "Valio coffee cream 1 l lactose free",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "coffee cream, not cooking or whipping cream",
+   "p_yes": 0.14074397481137987,
+   "judge": "Gemini Decisions: 0.14 that the product matches the request, 0.93 that the quantity is what the chef meant (weakest: the product matches the request)."
   },
   {
    "request": "1000 L lactose-free milk",

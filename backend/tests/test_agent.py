@@ -610,3 +610,13 @@ def test_decisions_budget_turns_extra_calls_into_unverified(monkeypatch):
         return [await REAL_DECISIONS(f"in {i}", q) for i in range(3)] + [await REAL_DECISIONS("in 0", q)]
     a, b, c3, cached = asyncio.run(go())
     assert a and b and c3 is None and cached == a and len(sent) == 2  # 3rd refused; a cached repeat is free
+
+
+def test_confidence_leads_price_breaks_near_ties_only(shop1, monkeypatch, decisions):
+    """Live bug: coffee milk at 0.72 (cheapest, over the 0.70 threshold) beat real milk at 0.96."""
+    gemini(monkeypatch, ITEM, ranked=["463335", "476240"])  # 476240 is the cheaper one (EUR 1.20 vs 1.40)
+    decisions["scores"] = {"meets_2": 0.72}  # the cheaper line is a far weaker match
+    chosen = [ln["product"]["id"] for ln in run()["lines"] if ln["chosen"]]
+    assert chosen == ["463335"]  # 0.95 beats 0.72 even though dearer
+    decisions["scores"] = {"meets_2": 0.90}  # within 0.10 of the best: a near-tie, so the cheaper one wins
+    assert [ln["product"]["id"] for ln in run()["lines"] if ln["chosen"]] == ["476240"]
