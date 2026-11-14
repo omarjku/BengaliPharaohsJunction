@@ -60,7 +60,65 @@ Valio's side and never sent by the agent. It uses fresh quotes.
 - Every assumption is documented: Valio's API is the challenge mock, and cut-offs and delivery days are demo
   assumptions.
 
-Codex was our adversary: 62 findings, 43 fixed, each with a test.
+Codex was our adversary: over 100 review findings across the rooms, most fixed with a test (exact count: docs/CODEX.md).
+
+## Best Use of Gemini: the four answers
+
+Rewritten from the code on Sun 15 Nov (`backend/app/*.py`, every Gemini call). The principle is **Gemini proposes, code
+decides, a human approves.** The app was *built* with Claude Code and Codex; everything the product *runs on* is
+Gemini.
+
+### 1. The problem, and why it matters
+
+Restaurants will send AI agents to buy from wholesalers like Valio Aimo, and today nothing checks those agents at
+the seller's side. Kitchens order the way people talk: "1000 L lactose-free milk", a Finnish voice note, a
+handwritten list, a chalkboard menu. A wrong guess costs money (an extra zero), safety (an allergen) or service (a
+missed cut-off). The hard part isn't reading the words. It's knowing **when the agent may act alone** and when it
+must ask the chef.
+
+### 2. How the Gemini API is integrated
+
+| Capability | Model | What it returns | What our code does with it |
+|---|---|---|---|
+| Reading an order | `gemini-4-hydrogen`, structured output (JSON schema, temperature 0) | items: product, amount, unit, dietary needs, purpose | Every item must be grounded in the chef's own words (product, amount and unit in one clause), or the chef is asked |
+| Routing (order, menu or unclear; guest count) | `gemini-4-hydrogen`, structured | intent, covers | Code picks the path. A menu with no guest count → "For how many guests?" |
+| Matching catalogue hits | `gemini-decision-1` (Decisions API) | P(yes) "is this hit the item?", one call per hit | Hits are kept or dropped by probability; the search stops at a confident match |
+| **Line judge: product and quantity** | `gemini-decision-1` | P(yes) for "is it the product?" (no amounts) and "is the quantity right?" | **The weaker P(yes) gates autonomy:** at or above the buyer's threshold (0.70, measured) it may order; below, it asks. Among confident lines, confidence leads and price only breaks near-ties. The number is stored in the audit |
+| Plausibility, steering, date intent, same product in Finnish | `gemini-decision-1` | P(yes) each | **Can only add a question**, never permit anything. Unanswered → the mandate's uncertainty policy (ask) |
+| Menu → ingredients | `gemini-4-hydrogen`, structured | dishes, ingredients, per-portion amounts, assumptions | Code scales and merges, quotes Valio and runs the judge. A menu never orders by itself |
+| Menu assumption check | `gemini-decision-1` | P(yes) "needed for this dish?", "portion reasonable?" | Low scores are flagged for the chef |
+| Spare amounts | `gemini-4-hydrogen`, structured (no thinking) | 0–20 % extra per ingredient, with a reason | Shown as a proposal; code applies limits |
+| Rules in plain language → mandate | `gemini-4-hydrogen` via Zoha's compiler, structured | proposed mandate, open questions | A Decisions "is this rule faithful?" check adds open questions. Saving needs the approver key; loosening needs a second confirmation |
+| Onboarding text → profile | `gemini-4-hydrogen`, structured | location, diets, spare level, cuisine, unclear | Stored as profile memories: guidance, never rules |
+| Photo of a list, menu board or whiteboard | `gemini-4-hydrogen` (image input), structured | kind, text, items, covers, `suspicious` | Places nothing. The text goes through the same `/api/agent/ask`. Planted instructions are only text |
+| Push-to-talk | `gemini-3.5-transcribe-live` (Live API) | the chef's words; numbers normalised to digits | Same pipeline as typing |
+| **Talk** | `gemini-3.8-live` (Live, native audio, tool calls, barge-in) | speech, plus tool calls `ask_agent` and `search_catalogue` | `ask_agent` runs the full pipeline and the front door. **No approve tool.** The browser never sees the Gemini key |
+
+### 3. What is innovative
+
+- **Calibrated confidence as policy.** Autonomy isn't a prompt instruction. It's a number from the Decisions API
+  that a buyer sets a threshold on, measured on 33 labelled cases with real Valio products: at 0.70, 0 wrong
+  automatic orders. Every decision is stored with its score.
+- **Gemini can only add caution.** Five extra Decisions guards can each turn "order" into "ask", never the reverse.
+  Money, stock, cut-offs, limits and approval stay in code and at Valio's front door, which re-checks every order
+  from any agent.
+- **One pipeline for every input.** Typed text, Finnish voice, a live conversation and a phone photo all land on the
+  same grounded, judged, audited path. That's why a planted note in a photo changes nothing.
+- **Our QA caught Gemini's own trap.** The agent once auto-bought coffee milk (0.72, cheapest). We changed the question
+  and the ranking, and added it to the eval. It now scores 0.12.
+
+### 4. Why Gemini, honestly
+
+- **Any capable LLM could do:** reading a request or a menu into JSON, routing order vs menu, onboarding text into a
+  profile.
+- **What depends on Gemini specifically:**
+  - The **Decisions API's calibrated probabilities**: deterministic (6/6 identical scores), about 0.5 s, cheap
+    enough to ask per candidate, and measured on our eval. A model's self-reported confidence in generated text
+    can't be thresholded like this.
+  - The **Live API's native audio with tool calls and barge-in**: Talk orders through our pipeline in about 1.3 s to
+    first audio.
+  - **One API family for text, image and audio**, each with structured output. Photo, voice and text share one
+    validated path, with one key held server-side.
 
 ## Challenges
 - **Valio Aimo: Trusted Trade Agents** (main challenge)
