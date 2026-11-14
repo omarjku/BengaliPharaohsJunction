@@ -58,6 +58,32 @@ used as a fallback when live evidence is unavailable.
 `craci_error`, `github_error`, or `timeout`. The signing-keys document keeps
 the same object in its `build` field.
 
+## What CRACI found and what we did
+
+The build at `8958ae5` reported 7 HIGH and 0 CRITICAL findings. Local audits
+map those HIGH findings to these runtime dependencies (Starlette is transitive
+through FastAPI):
+
+| Package | Installed | Advisory | Fixed in | Scope |
+| --- | --- | --- | --- | --- |
+| `cryptography` | 44.0.0 | CVE-2024-12797 | 44.0.1 | runtime |
+| `cryptography` | 44.0.0 | CVE-2026-26007 | 46.0.5 | runtime |
+| `cryptography` | 44.0.0 | CVE-2026-69247 | 50.0.0 | runtime |
+| `cryptography` | 44.0.0 | CVE-2026-69249 | 49.0.0 | runtime |
+| `starlette` | 0.46.2 | CVE-2025-62727 | 0.49.1 | runtime |
+| `starlette` | 0.46.2 | CVE-2026-48818 | 1.1.0 | runtime |
+| `starlette` | 0.46.2 | CVE-2026-54283 | 1.3.1 | runtime |
+
+We upgraded `fastapi` 0.115.12 → 0.133.0 so the framework accepts the fixed
+Starlette line, pinned `starlette` to 1.3.1, and upgraded `cryptography`
+44.0.0 → 50.0.0. Fresh-environment backend and package tests remain green.
+The post-fix local audits show 0 HIGH/CRITICAL: pip-audit still reports the
+lower-severity `python-dotenv` 1.1.0 finding (fixed in 1.2.2) and dev/test
+`pytest` 8.3.5 finding (fixed in 9.0.3); npm audit still reports 7 moderate
+`typescript-eslint`/`minimatch` entries and offers no non-forced fix. We did
+not use a forced npm override. The live evidence page will show the new counts
+after the next deploy and CRACI refresh; it currently reports `unavailable`.
+
 ## Verifying the digest
 
 Use `craci_job_ids` in the order returned. Fetch each raw CycloneDX SBOM, then
