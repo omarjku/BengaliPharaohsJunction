@@ -80,7 +80,8 @@ def test_menu_says_the_dietary_rule_once_for_the_cart(shop1, monkeypatch):  # no
     r = c.post("/api/agent/menu", json={"menu_text": "Gluten-free pizza", "covers": 20,
                                         "requested_date": REQ.isoformat()}, headers={"X-Agent-Key": "agent-lk"})
     body = r.json()
-    cart = [x for x in reasons(body) if x["code"] == "MENU_ASSUMPTIONS" and x["severity"] == "INFO"]
+    cart = [x for x in reasons(body) if x["code"] == "MENU_ASSUMPTIONS" and x["severity"] == "INFO"
+            and "spare" not in x["message"]]
     assert len(cart) == 1 and cart[0]["message"].startswith("Gluten-free: I only pick products Valio labels gluten-free")
     assert any(x["code"] == "DATA_MISSING" and "mozzarella" in x["message"] for x in reasons(body))
 

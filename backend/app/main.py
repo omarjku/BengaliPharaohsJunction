@@ -8,7 +8,7 @@ import re
 import threading
 from contextlib import asynccontextmanager
 from datetime import date
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, WebSocket
 from fastapi.exceptions import RequestValidationError
@@ -394,9 +394,18 @@ class PortionOverride(BaseModel):
     """The chef's own portion for one ingredient (the menu screen's editable grams per portion)."""
     model_config = ConfigDict(extra="forbid")
     ingredient: str = Field(min_length=1, max_length=80, examples=["butter"])
-    per_cover: float = Field(gt=0, le=5000, examples=[25])
-    unit: Literal["L", "dl", "cl", "ml", "kg", "g", "pcs"] = Field(examples=["g"])
+    per_cover: float | None = Field(default=None, gt=0, le=5000, examples=[25])
+    unit: Literal["L", "dl", "cl", "ml", "kg", "g", "pcs"] | None = Field(default=None, examples=["g"])
     dish: str | None = Field(default=None, max_length=120, description="Only in this dish; default: every dish.")
+    spare_percent: float | None = Field(default=None, ge=0, le=20, description="The chef's spare for this ingredient.")
+
+    @model_validator(mode="after")
+    def _something(self):
+        if (self.per_cover is None) != (self.unit is None):
+            raise ValueError("per_cover and unit go together")
+        if self.per_cover is None and self.spare_percent is None:
+            raise ValueError("set per_cover + unit, or spare_percent")
+        return self
 
 
 class MenuRequest(BaseModel):
@@ -516,6 +525,46 @@ def remember(req: RememberRequest, who: Approver) -> dict:
     except ValueError as e:
         raise HTTPException(422, detail=str(e)) from None
     return {"memory": memory, "profile": profile.context(who.buyer_id)}
+
+
+class OnboardingRequest(BaseModel):
+    """answers: {question id: value}; about: free text or dictated speech for Gemini to fill the answers from.
+    Without confirm=true nothing is stored: the response is a preview to show and edit."""
+    model_config = ConfigDict(extra="forbid")
+    answers: dict[str, Any] | None = Field(default=None, max_length=20)
+    about: str | None = Field(default=None, max_length=2000)
+    confirm: bool = False
+
+
+@app.get("/api/profile/onboarding")
+def get_onboarding(who: Agent) -> dict:
+    """First-run questions about the kitchen → {onboarded, questions: [{id, question, input: text|choice|multi,
+    options?, answer?}]}. Answers are guidance for the agent, never rules. Needs X-Agent-Key."""
+    return profile.onboarding(who.buyer_id)
+
+
+@app.post("/api/profile/onboarding")
+async def post_onboarding(req: OnboardingRequest, who: Approver) -> dict:
+    """The human sets up the kitchen (X-Approver-Key). `about` → Gemini fills the answers (the text is untrusted data).
+    Without confirm: a PREVIEW {stored: false, proposed: [{id, question, value}], unclear, hints}. With confirm=true and
+    `answers`: stored as profile memories → {stored: true, saved, hints, onboarding, profile}. Nothing here becomes a
+    rule or changes the mandate (hints point to the Rules screen). Bad values → 422 {errors: {id: reason}}."""
+    if not req.answers and not req.about:
+        raise HTTPException(422, detail="Send `answers` and/or `about`.")
+    answers, errors = profile.validate(req.answers or {})
+    if errors:
+        raise HTTPException(422, detail={"errors": errors})
+    if req.confirm:
+        if not answers:
+            raise HTTPException(422, detail="To store, send the `answers` you accept (from the preview) with confirm=true.")
+        saved = await asyncio.to_thread(profile.save_onboarding, who.buyer_id, answers)
+        return {"stored": True, "saved": saved, "hints": profile.hints(answers),
+                "onboarding": profile.onboarding(who.buyer_id), "profile": profile.context(who.buyer_id)}
+    proposed, unclear = (await profile.from_about(req.about)) if req.about else ({}, [])
+    proposed = {**proposed, **answers}  # what the chef typed beats what Gemini read
+    questions = {q["id"]: q["question"] for q in profile.onboarding(who.buyer_id)["questions"]}
+    return {"stored": False, "proposed": [{"id": k, "question": questions[k], "value": v} for k, v in proposed.items()],
+            "unclear": unclear, "hints": profile.hints(proposed)}
 
 
 @app.get("/api/profile")

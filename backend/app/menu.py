@@ -107,6 +107,47 @@ def _key(name: str) -> str:
     return " ".join(sorted({agent._singular(w) for w in re.findall(r"[\wäöå]+", name.lower())}))
 
 
+def add_spare(ingredients: list[dict], chosen: list[dict], props: dict, level: str | None,
+              chef: dict[str, float]) -> list[Reason]:
+    """Kitchen loss on a menu cart, visibly: per ingredient Gemini's proposal (or the chef's), scaled by the kitchen's
+    spare level and clamped; pack rounding counts as spare FIRST, so it is never bought twice. The cart's lines (and
+    so every total the front door checks) include the spare."""
+    by_item = {ln["item"]: ln for ln in chosen}
+    needed_cost = plain_cost = final_cost = 0.0
+    for n, ing in enumerate(ingredients):
+        needed, key = ing["amount"], agent._spare_key(ing["query"])
+        if key in chef:
+            pct, why, src = min(max(float(chef[key]), 0.0), agent.SPARE_MAX), "Set by the chef.", "chef"
+        else:
+            pct, why, src = agent.spare_target(props.get(key), level)
+        ln = by_item.get(n)
+        rnd = agent.rounding_spare(needed, ln["quantity"]) if ln else 0.0
+        ing.update(needed_amount=needed, spare_percent=round(pct, 1), spare_reason=why, spare_source=src,
+                   spare_from_rounding=rnd, amount_with_spare=math.ceil(needed * (1 + pct / 100) * 1000) / 1000)
+        if not ln or not ln.get("quote") or ln["quote"].get("price") is None:
+            continue
+        price = gate.eur_to_cents(ln["quote"]["price"])
+        plain = price * ln["quantity"]["quantity"]
+        if rnd < pct:  # packs don't cover it: top up to the spare (never more)
+            more = agent.resolve(ln["product"], needed * (1 + pct / 100), ing["unit"])
+            if more.get("quantity") is not None and more["quantity"] > ln["quantity"]["quantity"]:
+                ln["quantity"] = more | {"explanation": f"{more['explanation']} Includes {pct:g}% spare: {why}"}
+                ln["line_total_cents"] = round(price * more["quantity"])
+        final = price * ln["quantity"]["quantity"]
+        if delivered := ln["quantity"].get("delivered"):
+            needed_cost += final * needed / delivered
+            plain_cost += plain
+            final_cost += final
+        ln["spare"] = {k: ing[k] for k in ("needed_amount", "spare_percent", "spare_reason", "spare_source",
+                                           "spare_from_rounding")}
+    if not (final_cost and needed_cost) or final_cost - needed_cost < 0.005 * needed_cost:  # nothing worth saying
+        return []
+    total = (final_cost - needed_cost) / needed_cost * 100
+    packs = max(0.0, (plain_cost - needed_cost) / needed_cost * 100)
+    return [gate._r(C.MENU_ASSUMPTIONS, gate.INFO, f"Includes about {total:.0f}% spare for kitchen loss; {packs:.0f}% of "
+                    "it is pack rounding.", None, None, spare_percent=round(total, 1), from_rounding=round(packs, 1))]
+
+
 def apply_overrides(dishes: list[dict], overrides: list[dict] | None, by_chef: bool = False) -> list[Reason]:
     """The chef's own portions, on top of Gemini's reading: deterministic, so the cart rescales the same way every
     time. Matches an ingredient by name (plural- and order-tolerant), in one dish or, without `dish`, in every dish."""
@@ -118,15 +159,20 @@ def apply_overrides(dishes: list[dict], overrides: list[dict] | None, by_chef: b
                 continue
             for ing in d["ingredients"]:
                 if _key(str(ing.get("name") or "")) == _key(o["ingredient"]):
+                    hit = True
+                    if o.get("per_cover") is None:  # a spare-only change: applied after pricing (propose)
+                        continue
                     # only an approver-key request is the chef; an agent's change is still checked by Gemini
                     ing.update(per_cover=o["per_cover"], unit=o["unit"], set_by="chef" if by_chef else "agent",
                                assumption=f"{d['name']}: {o['per_cover']:g} {o['unit']} {ing.get('name')} per portion "
                                           + ("(set by the chef)" if by_chef else "(changed by the agent)"))
-                    hit = True
         if not hit:
             problems.append(gate._r(C.QTY_AMBIGUOUS, gate.INFO, f"No ingredient '{o['ingredient']}' in this menu"
                                     + (f" for {o['dish']}" if o.get("dish") else "") + "; that portion change was "
                                     "not applied.", None, "Check the ingredient name."))
+        if o.get("spare_percent") is not None and not by_chef:
+            problems.append(gate._r(C.QTY_AMBIGUOUS, gate.INFO, f"The spare for '{o['ingredient']}' can only be changed "
+                                    "by the chef (approver key); Gemini's proposal was kept.", None, None))
     return problems
 
 
@@ -278,6 +324,8 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
                                "butter), the closest product is shown and the line says 'check the label'.", None, None,
                                claims=", ".join(needs)))
 
+    level = agent.spare_level(buyer_id)
+    spare_task = asyncio.create_task(agent.spare_proposals(ingredients, menu_text) if level != "none" else agent.empty())
     res, checks = await asyncio.gather(  # pricing and the assumption checks run side by side
         agent._pipeline(menu_text, items, requested, buyer_id, m, excluded, now, reasons, True),
         asyncio.gather(*(agent.none() if a["set_by"] == "chef"  # the chef's own portion is not a guess to doubt
@@ -294,6 +342,9 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
     for ln in lines:
         ln["dishes"] = ingredients[ln["item"]]["dishes"]
         ln.pop("_weakest", None)
+    chef_spare = {agent._spare_key(o["ingredient"]): o["spare_percent"] for o in overrides or []
+                  if by_chef and o.get("spare_percent") is not None}
+    reasons += add_spare(ingredients, chosen, await spare_task, level, chef_spare)
     qty: dict[str, float] = {}
     price: dict[str, int] = {}
     # A line with a doubt (low confidence, odd quantity, unlabelled, ...) never goes into order_lines silently (black-box
