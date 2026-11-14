@@ -10,14 +10,14 @@ from contextlib import asynccontextmanager
 from datetime import date
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import (agent, ask, auth, catalogue, config, gate, httpsig, mandates, menu, orders, profile, progress,
+from . import (agent, ask, auth, catalogue, config, gate, httpsig, live, mandates, menu, orders, profile, progress,
                quantity, ratelimit, rules, signing, valio, voice)
 
 @asynccontextmanager
@@ -45,6 +45,7 @@ def health() -> dict:
         "commit": os.getenv("RENDER_GIT_COMMIT") or None,
         "valio_key_configured": bool(config.VALIO_API_KEY),
         "gemini_key_configured": bool(config.GEMINI_API_KEY),
+        "talk": config.TALK_ENABLED and bool(config.GEMINI_API_KEY),
         "catalogue": catalogue.status(),
     }
 
@@ -527,6 +528,12 @@ async def agent_ask(req: AskRequest, who: Agent) -> dict:
     runs. Needs X-Agent-Key."""
     _catalogue_ready()
     return await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump())
+
+
+# --- Talk: a spoken conversation over Gemini Live (live.py). Auth is the first message: browsers can't set headers.
+@app.websocket("/api/live")
+async def talk(ws: WebSocket) -> None:
+    await live.session(ws)
 
 
 # --- Voice: push-to-talk audio → the chef's words (Gemini Live via our backend; the key never reaches the browser).
