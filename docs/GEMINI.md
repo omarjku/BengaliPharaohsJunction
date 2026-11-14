@@ -82,6 +82,20 @@ Accuracy at P(yes) ≥ 0.5 is **100 %** (30 of 30), and two runs gave identical 
 
 **Threshold: propose 0.70 for `lapland-kitchen`.** On this set it is as precise as 0.80 (100 %), handles 93 % of the right lines alone instead of 80 %, and still sits 0.33 above the worst trap. It also matters for the demo: the cheapest correct milk now scores 0.81, stable but only just over 0.80. It is a one-line per-buyer setting (`mandates._CONFIDENCE_THRESHOLDS`), left at 0.80 until the team decides. Thirty cases are evidence, not proof. Every chosen line's confidence goes to the audit log, so approvals and rejections there will grow the set.
 
+## Guards: more Decisions questions that can only add caution
+
+The Decisions API answers a calibrated yes/no in about 0.5 s, so the agent asks it extra questions. Every guard follows the same rules:
+- it can only make the agent **more cautious** (ask the chef); it never permits what a hard rule forbids, never adds an allergen exception and never raises a limit;
+- it asks about one candidate per call;
+- it runs concurrently with the rest;
+- it is switched on only after its labelled cases pass in `backend/eval/guards_eval.py` (results in `backend/eval/guards.json`).
+
+| guard | question | asks when | labelled cases |
+|---|---|---|---|
+| **Quantity plausibility** | "Could this kitchen plausibly need this much in one delivery?" (kitchen facts are server-side: `mandates.kitchen`) | P(yes) < 0.70 → QTY_SUSPICIOUS "Unusually large order … Did you mean less?" | **6/6**: believable orders ≥ 0.86, extra-zero orders ≤ 0.53 |
+
+Live: "1000 L lactose-free milk" (plausibility 0.86) is still confirmed automatically in 9.9 s, about the same as without the guard. "10000 L lactose-free milk" (0.51) is not ordered: "Unusually large order … Did you mean less?". The first wording also flagged a 5 L top-up as implausibly *small* (0.32); the guard now judges only "too much", because a small order is never a safety problem.
+
 ## Interface for T06 `decide()`
 
 The agent sets the contract's `Decision.confidence` (the weakest chosen line) and exposes `agent.judge(text, [(product, kinds)]) -> [(confidence, why)]`. A `decide(..., confidence=...)` can take either value without changes on our side.

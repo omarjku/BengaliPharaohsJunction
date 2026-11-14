@@ -1,0 +1,46 @@
+{
+ "plausibility (asks below 0.70)": [
+  {
+   "case": "1,000 L milk (lactose-free)",
+   "product": "Valio Eila® 3 % milk drink 1 l lactose free",
+   "label": true,
+   "p_yes": 0.861086758703318,
+   "ok": true
+  },
+  {
+   "case": "10,000 L milk (lactose-free)",
+   "product": "Valio Eila® 3 % milk drink 1 l lactose free",
+   "label": false,
+   "p_yes": 0.5113248351801641,
+   "ok": true
+  },
+  {
+   "case": "20 kg butter",
+   "product": "Valio butter 500 g unsalted",
+   "label": true,
+   "p_yes": 0.9677070583952124,
+   "ok": true
+  },
+  {
+   "case": "2,000 kg butter",
+   "product": "Valio butter 500 g unsalted",
+   "label": false,
+   "p_yes": 0.5266936493952082,
+   "ok": true
+  },
+  {
+   "case": "60 kg reindeer meat",
+   "product": "Rönkä Reindeer top loin frozen",
+   "label": true,
+   "p_yes": 0.9453493482489158,
+   "ok": true
+  },
+  {
+   "case": "5 L whipping cream (lactose-free)",
+   "product": "Valio whipping cream 1 l UHT lactose free",
+   "label": true,
+   "p_yes": 0.9661847245659737,
+   "ok": true
+  }
+ ]
+}

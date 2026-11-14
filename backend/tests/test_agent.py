@@ -232,7 +232,7 @@ def test_confident_line_orders_and_records_confidence(shop1, monkeypatch, decisi
     [line] = body["lines"]
     assert line["confidence"] == 0.95 and "weakest" in line["confidence_reason"]
     assert body["order"]["status"] == "confirmed" and body["decision"]["confidence"] == 0.95
-    (meets_in, mq), (qty_in, qq) = decisions["calls"]  # judge_line: two calls per line
+    (meets_in, mq), (qty_in, qq) = [c for c in decisions["calls"] if set(c[1]) & {"meets", "qty"}]  # judge_line
     assert set(mq) == {"meets"} and set(qq) == {"qty"}
     assert "1,000" not in meets_in and "1,000 L milk (lactose-free)" in qty_in  # canonical; amounts only for qty
     assert "Monday" not in meets_in + qty_in  # the chef's raw wording never reaches the judge (QA HP-01)
@@ -513,3 +513,18 @@ def test_vt05_why_text_says_when_it_really_arrives(shop1, monkeypatch):
     why = [ln for ln in run("10 L lactose-free milk")["lines"] if ln["chosen"]][0]["why"]
     assert f"arrives {(REQ + timedelta(days=2)).isoformat()}, not {REQ.isoformat()}" in why
     assert f"orderable for {REQ.isoformat()}" not in why
+
+
+def test_implausible_size_asks_did_you_mean(shop1, monkeypatch, decisions):
+    """Decisions guard: a fat-finger amount (extra zero) is asked, never ordered; a believable one goes through."""
+    shop1.quotes["463335"] = quote("463335", amount=9999999999.0)
+    gemini(monkeypatch, [dict(ITEM[0], amount=10000)], ranked=["463335"])
+    decisions["scores"] = {"plausible": 0.1}
+    body = run("10000 L lactose-free milk")
+    assert body["order"] is None
+    r = [r for r in body["decision"]["reasons"] if r["code"] == "QTY_SUSPICIOUS"][0]
+    assert "Unusually large order" in r["message"] and r["facts"]["plausibility"] == 0.1
+    [inp] = [i for i, q in decisions["calls"] if "plausible" in q]
+    assert "ski resort" in inp and "<buyer_request>" in inp  # kitchen facts are server-side, from mandates.kitchen
+    decisions["scores"] = {}
+    assert run("10000 L lactose-free milk")["order"] is not None  # plausible → no extra question

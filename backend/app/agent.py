@@ -189,6 +189,24 @@ QUESTIONS = {
 }
 
 
+PLAUSIBLE_MIN = 0.7  # P(plausible) below this → ask. Eval: believable >= 0.86, extra-zero orders <= 0.53
+
+
+async def plausible(kitchen: str, item_text: str, p: dict, qty_explanation: str, total_cents: int | None):
+    """Gemini Decisions guard: is this order size believable for this kitchen? Only ever adds a question for the
+    chef (fat-finger orders: an extra zero), never permits anything. → P(yes) or None."""
+    money = f" Order line total: {gate.eur(total_cents)} net." if total_cents is not None else ""
+    answers = await _decisions(
+        f"{UNTRUSTED}\nThe buyer is {kitchen}.\n{_wrap(item_text)}\nProduct: {_describe(p)}.\n"
+        f"Quantity: {qty_explanation}{money}", {"plausible": {
+            "type": "noul", "instructions": "Could this kitchen plausibly need this much in one delivery? Small or "
+                                            "top-up orders always count as plausible; only judge whether it is too much.",
+            "criteria": {"true_description": "Not too much: a small, normal, or large but believable order.",
+                         "false_description": "Implausibly large: most likely a typo or a misunderstanding (an extra "
+                                              "zero, the wrong unit)."}}})
+    return _yes(answers["plausible"]) if answers else None
+
+
 async def judge(text: str, items: list[tuple[dict, list[str]]]) -> list[tuple[float | None, str, str | None]]:
     """The judgment calls rules can't make, for each (product, [question kinds]) → (P(yes) of the weakest
     question, why, weakest question kind); (None, why, None) when Gemini couldn't answer. One Decisions call PER candidate, run concurrently:
@@ -677,6 +695,21 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             item_reasons.extend(reasons[mark:])
             if any(r.severity is not INFO for r in reasons[mark:]):
                 failed.add(n)
+
+    # Guard (Gemini Decisions): is the chosen quantity believable for this kitchen? Only adds a question.
+    sizes = await asyncio.gather(*(plausible(mandates.kitchen(buyer_id), canonical(items[ln["item"]]), ln["product"],
+                                             ln["quantity"]["explanation"], ln["line_total_cents"]) for ln in chosen))
+    for ln, p_ok in zip(chosen, sizes):
+        ln["plausibility"] = p_ok
+        if p_ok is not None and p_ok < PLAUSIBLE_MIN:
+            r = gate._r(C.QTY_SUSPICIOUS, ASK, f"Unusually large order: {gate._qty(ln['quantity']['quantity'])} "
+                        f"{ln['quantity']['sales_unit']} of {_name(ln['product'])} for "
+                        f"{canonical(items[ln['item']])}. Did you mean less? (Gemini Decisions: {_pct(p_ok)} that "
+                        "this size is plausible for your kitchen.)", ln["product"]["id"],
+                        "Confirm the amount, or correct it.", plausibility=p_ok, min_plausibility=PLAUSIBLE_MIN)
+            reasons.append(r)
+            item_reasons.append(r)
+            failed.add(ln["item"])
 
     rejected = [RejectedOption(product_id=line["product"]["id"], reasons=gate._sorted(rs)) for line, rs in checked
                 if not line["chosen"] and any(r.severity is not INFO for r in rs)]
