@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getAudit } from './api'
-import { errorText, formatDateTime } from './format'
+import { errorText, formatDateTime, outcomeView } from './format'
 import type { AuditEntry } from './types'
 
 export function AuditLog({ buyerId, refreshKey }: { buyerId: string; refreshKey: number }) {
@@ -11,10 +11,11 @@ export function AuditLog({ buyerId, refreshKey }: { buyerId: string; refreshKey:
 
   useEffect(() => {
     let cancelled = false
+    setEntries(null)
     setLoading(true)
     setError(null)
     getAudit(buyerId)
-      .then((e) => !cancelled && setEntries(e))
+      .then((e) => !cancelled && setEntries([...e].reverse())) // API is oldest first
       .catch((e) => !cancelled && setError(errorText(e)))
       .finally(() => !cancelled && setLoading(false))
     return () => {
@@ -40,16 +41,17 @@ export function AuditLog({ buyerId, refreshKey }: { buyerId: string; refreshKey:
       {entries && entries.length > 0 && (
         <ol className="audit">
           {entries.map((e) => (
-            <li key={e.audit_id}>
+            <li key={e.id}>
               <p>
-                <span className={`badge ${e.outcome.toLowerCase()}`}>{e.outcome.replace(/_/g, ' ')}</span>{' '}
-                <time dateTime={e.at}>{formatDateTime(e.at)}</time>
+                <span className={`badge ${e.decision.outcome.toLowerCase()}`}>{outcomeView(e.decision.outcome)[1]}</span>{' '}
+                <time dateTime={e.timestamp}>{formatDateTime(e.timestamp)}</time>{' '}
+                <span className="muted">· {actorLabel(e.actor)}</span>
               </p>
-              <p>{e.summary}</p>
-              {e.reasons.length > 0 && (
+              <p>{e.input.request.text}</p>
+              {e.decision.reasons.length > 0 && (
                 <ul className="muted">
-                  {e.reasons.map((r, i) => (
-                    <li key={i}>{r.text}</li>
+                  {e.decision.reasons.map((r, i) => (
+                    <li key={i}>{r.message}</li>
                   ))}
                 </ul>
               )}
@@ -59,4 +61,11 @@ export function AuditLog({ buyerId, refreshKey }: { buyerId: string; refreshKey:
       )}
     </section>
   )
+}
+
+// actor is 'buyer_agent', 'valio_front_door' or 'human:<name>:approve|reject'.
+function actorLabel(actor: string): string {
+  const [kind, name, action] = actor.split(':')
+  if (kind === 'human' && name) return action === 'reject' ? `rejected by ${name}` : action === 'approve' ? `approved by ${name}` : name
+  return { buyer_agent: 'buyer agent', valio_front_door: 'Valio front door' }[kind] ?? actor
 }

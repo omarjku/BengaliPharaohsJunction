@@ -28,17 +28,34 @@ const FLAG_LABELS: Record<string, string> = {
   quantity_unknown: 'Stock unknown (supplier delivers)',
   undeliverable: 'Cannot be delivered on the requested date',
   out_of_stock: 'Out of stock',
-  partial_stock: 'Only part of the amount in stock',
+  sales_block: 'Sales blocked at Valio',
   unknown_product: 'Product not found at Valio',
 }
 
 export const flagLabel = (flag: string) => FLAG_LABELS[flag] ?? flag.replace(/_/g, ' ')
 
-// Next Monday in local time (a week ahead if today is Monday), as YYYY-MM-DD.
+// Next Monday in Helsinki (a week ahead if it is Monday there), as YYYY-MM-DD.
 export function nextMonday(from = new Date()): string {
-  const d = new Date(from)
-  d.setDate(d.getDate() + (((8 - d.getDay()) % 7) || 7))
-  return [d.getFullYear(), d.getMonth() + 1, d.getDate()].map((n) => String(n).padStart(2, '0')).join('-')
+  const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone: HELSINKI }).format(from).split('-').map(Number)
+  const day = new Date(Date.UTC(y, m - 1, d))
+  day.setUTCDate(d + ((8 - day.getUTCDay()) % 7 || 7))
+  return day.toISOString().slice(0, 10)
 }
 
 export const errorText = (e: unknown) => (e instanceof Error ? e.message : 'Something went wrong.')
+
+// Chef-facing wording for backend codes. Unknown values fall back to the raw code, never a blank page.
+export type Tone = 'good' | 'warn' | 'bad' | 'neutral'
+const OUTCOME_VIEW: Record<string, [Tone, string]> = {
+  AUTO: ['good', 'Ordered'],
+  ASK_HUMAN: ['warn', 'Needs your OK'],
+  DECLINE: ['bad', 'Refused'],
+}
+const RESULT_VIEW: Record<string, [Tone, string]> = {
+  confirmed: ['good', 'Ordered'],
+  pending_approval: ['warn', 'Needs your OK'],
+  refused: ['bad', 'Refused at Valio’s front door'],
+  rejected: ['neutral', 'Rejected: nothing was ordered'],
+}
+export const outcomeView = (o: string): [Tone, string] => OUTCOME_VIEW[o] ?? ['neutral', o]
+export const resultView = (s: string): [Tone, string] => RESULT_VIEW[s] ?? ['neutral', s]

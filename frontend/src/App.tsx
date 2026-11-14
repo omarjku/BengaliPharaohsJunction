@@ -17,12 +17,15 @@ export default function App() {
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [auditKey, setAuditKey] = useState(0)
+  const [deciding, setDeciding] = useState(false) // approve/reject in flight
+  const [announce, setAnnounce] = useState('')
   const refreshAudit = () => setAuditKey((k) => k + 1)
 
   async function submit(e: FormEvent) {
     e.preventDefault()
     const buyer = buyerId.trim()
     setRunning(true)
+    setAnnounce('Asking the agent…')
     setError(null)
     setRun(null)
     setAuditBuyer(buyer)
@@ -30,6 +33,7 @@ export default function App() {
       setRun(await runAgent({ text: text.trim(), requested_date: date, buyer_id: buyer }))
     } catch (err) {
       setError(errorText(err))
+      setAnnounce('')
     } finally {
       setRunning(false)
       refreshAudit()
@@ -45,8 +49,8 @@ export default function App() {
       <main>
         {MOCK && (
           <p className="notice">
-            Mock mode: no backend calls. Requests with “1000” need approval, “cream” or “tomorrow” are refused,
-            “error” fails, anything else is ordered.
+            Mock mode: no backend calls. Requests with “1000” need your OK, “cream” or “tomorrow” are refused at
+            the front door, “error” fails, anything else is ordered.
           </p>
         )}
 
@@ -64,22 +68,23 @@ export default function App() {
               <input id="buyer" value={buyerId} onChange={(e) => setBuyerId(e.target.value)} required />
             </div>
           </div>
-          <button type="submit" disabled={running || !text.trim() || !buyerId.trim()}>
+          <button type="submit" disabled={running || deciding || !text.trim() || !buyerId.trim()}>
             {running ? 'Asking the agent…' : 'Ask the agent'}
           </button>
         </form>
 
-        {running && (
-          <p className="muted" role="status">
-            Searching the catalogue and checking price and availability…
-          </p>
-        )}
+        <p className="sr-only" aria-live="polite">
+          {announce}
+        </p>
+        {running && <p className="muted">Searching the catalogue and checking price and availability…</p>}
         {error && (
           <p className="error" role="alert">
             {error}
           </p>
         )}
-        {run && <RunResult key={run.audit_id} run={run} onAction={refreshAudit} />}
+        {run && (
+          <RunResult key={run.audit_id} run={run} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} />
+        )}
 
         <AuditLog buyerId={auditBuyer} refreshKey={auditKey} />
       </main>
