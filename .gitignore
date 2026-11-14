@@ -4,7 +4,7 @@
 .DS_Store
 node_modules/
 __pycache__/
-.venv/
+.venv
 data/
 .pytest_cache/
 build/

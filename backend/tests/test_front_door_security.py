@@ -305,3 +305,37 @@ def test_nan_quantity_is_422_not_500(shop):
            '"lines": [{"product_id": "463335", "quantity": NaN}]}' % REQ.isoformat())
     r = c.post("/api/orders", content=raw, headers={**AG, "Content-Type": "application/json"})
     assert r.status_code == 422 and shop.calls == []
+
+
+# Codex review #3 follow-ups.
+def test_approve_is_bound_to_the_decision_the_human_saw(shop):
+    m = dict(MANDATE, hard_rules=[{"kind": "auto_approve_limit_cents", "value": 100}])
+    body = order([("463335", 1000)], m).json()
+    oid, seen = body["order_id"], body["decision"]["decided_at"]
+    shop.quotes["463335"] = quote("463335", price=1.5)
+    first = c.post(f"/api/orders/{oid}/approve", headers=AP, json={"decided_at": seen}).json()  # approver A
+    assert first["status"] == "pending_approval"  # new price: back to the humans
+    stale = c.post(f"/api/orders/{oid}/approve", headers=AP, json={"decided_at": seen})  # approver B, old screen
+    assert stale.status_code == 409 and orders._store()[oid]["status"] == "pending_approval"
+    ok = c.post(f"/api/orders/{oid}/approve", headers=AP, json={"decided_at": first["decision"]["decided_at"]})
+    assert ok.json()["status"] == "confirmed"
+
+
+def test_change_during_approve_is_409_not_a_silent_retry(shop, monkeypatch):
+    m = dict(MANDATE, hard_rules=[{"kind": "auto_approve_limit_cents", "value": 100}])
+    oid = order([("463335", 1000)], m).json()["order_id"]
+    real = shop.get_quotes
+
+    async def racing(*a, **k):  # another approver re-decides the order while this approval re-checks it
+        orders._store()[oid]["updated_at"] = "changed"
+        return await real(*a, **k)
+    monkeypatch.setattr(valio, "get_quotes", racing)
+    assert c.post(f"/api/orders/{oid}/approve", headers=AP).status_code == 409
+    assert orders._store()[oid]["status"] == "pending_approval"
+
+
+def test_gate_refuses_past_dates_whoever_calls_it(shop):
+    from datetime import date as d
+    m = Mandate(id="m1", buyer_id="chef", per_line_cap_cents=10**9)
+    res = asyncio.run(gate.check([L(product_id="463335", quantity=1)], d.today() - timedelta(days=1), m, "r", now=NOW))
+    assert res.status == "refused" and "DATE_NOT_HONOURED" in codes(res)
