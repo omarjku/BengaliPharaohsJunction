@@ -1,0 +1,14 @@
+/* PhotoButton variant="icon": a round 44 px button like the mic, for inside the text box (Zoha positions it). */
+.photo-icon {
+  width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+  border: 1px solid var(--field-line); background: var(--surface); color: var(--ink-2); -webkit-tap-highlight-color: transparent;
+}
+.photo-icon:active { transform: scale(0.95); }
+.photo-icon:disabled { opacity: 0.5; cursor: default; }
+/* What was read, floating just under the box (the box is position: relative). */
+.photo-read-float {
+  position: absolute; inset-inline: 0; inset-block-start: calc(100% + var(--s2)); z-index: 5;
+  padding: var(--s3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  box-shadow: 0 6px 18px rgba(28, 31, 35, 0.08);
+}
+.photo-close { margin-inline-start: auto; min-width: 44px; font-size: 1.25rem; }

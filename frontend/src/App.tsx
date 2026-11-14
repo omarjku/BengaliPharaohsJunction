@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { ApiError, askAgentStream, DROPPED, getAdminKey, getHealth, getKeys, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
+import { ApiError, askAgentStream, DROPPED, getAdminKey, getHealth, getKeys, KEYS_FROM_LINK, applyLinkKeys, checkLinkKeys, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
 import { buyerLabel, errorText, nextMonday } from './format'
 import { groupHistory } from './history'
@@ -13,6 +13,9 @@ import { ValioView } from './Valio'
 import { languageOf, useReadBack, useVoice, voiceSupported } from './useVoice'
 import { usePhaseLine } from './usePhaseLine'
 import { MicButton, VoiceStatus } from './Voice'
+import { PhotoButton } from './PhotoButton'
+import { Talk } from './Talk'
+import { useTalk, useTalkPhotoAvailable } from './useTalk'
 
 type View = 'order' | 'rules' | 'history' | 'valio'
 
@@ -87,15 +90,51 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const micOn = VOICE_READY && voiceSupported()
   const [editing, setEditing] = useState(false) // phone: the composer is collapsed to a summary row after a result
   const [running, setRunning] = useState(false)
-  const [sent, setSent] = useState('') // the words just sent, shown as the chat bubble
   const [error, setError] = useState<string | null>(null)
   const [expired, setExpired] = useState(false) // a follow-up came too late: offer to ask the original again
   const [auditKey, setAuditKey] = useState(0)
   const [deciding, setDeciding] = useState(false) // approve/reject in flight
   const [announce, setAnnounce] = useState('')
+  // Opened from a setup link (api.ts read and removed it): say quietly that the keys were saved, or, when other keys
+  // were already saved here, ask before replacing them.
+  // The notice stays until dismissed, so keys that changed are always noticed.
+  const [fromLink, setFromLink] = useState<typeof KEYS_FROM_LINK | 'invalid'>(KEYS_FROM_LINK)
+  const [linkKitchen, setLinkKitchen] = useState<string | null | undefined>(undefined) // undefined: still checking
+  useEffect(() => {
+    if (KEYS_FROM_LINK !== 'confirm') return
+    let cancelled = false
+    void checkLinkKeys().then(({ valid, kitchen }) => {
+      if (cancelled) return
+      if (valid) return setLinkKitchen(kitchen)
+      applyLinkKeys(false) // a bad key never replaces a working one
+      setFromLink('invalid')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  function answerLink(replace: boolean) {
+    applyLinkKeys(replace)
+    setFromLink(replace ? 'saved' : null)
+    if (replace) keysSaved()
+  }
   const phaseLine = usePhaseLine(400)
   const refreshAudit = () => setAuditKey((k) => k + 1)
   const offline = useBackendDown()
+  // HOOK: Talk + photo (Talk.tsx, PhotoButton.tsx, useTalk.ts). Keep these three lines and the two JSX blocks marked HOOK.
+  const caps = useTalkPhotoAvailable()
+  const talk = useTalk()
+  const talkResult = (r: AskResponse) =>
+    r.question ? (
+      <section className="answer" aria-label={u.question.status}>
+        <p className="status neutral">{u.question.status}</p>
+        <h2 className="answer-text">{c.question(r.question, r.decision?.reasons[0])}</h2>
+      </section>
+    ) : r.intent === 'menu' && 'lines' in r ? (
+      <MenuResult key={r.audit_id} plan={r} covers={r.covers ?? null} requestedDate={r.requested_date ?? date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} />
+    ) : 'lines' in r ? (
+      <RunResult key={r.audit_id} run={r} requestedDate={r.requested_date ?? date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} />
+    ) : null
   const onEntries = useCallback((e: AuditEntry[]) => setEntries(e), [])
 
   const needsSetup = !MOCK && (!savedKeys.agentKey || !savedKeys.approverKey)
@@ -149,7 +188,6 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
 
   // A new request, or (with `to`) the answer to the question the agent just asked.
   async function ask(words: string, to?: string, when?: string) {
-    setSent(words.trim())
     setRunning(true)
     setAnnounce(u.ask.announce)
     setError(null)
@@ -286,6 +324,9 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         <AdminKeyForm onSaved={adminSaved} onCancel={() => adminDialog.current?.close()} />
       </dialog>
 
+      {/* HOOK: Talk, full screen while a session is open */}
+      {talk.session && <Talk ctx={talk.session.ctx} mic={talk.session.mic} onEnd={talk.end} renderResult={talkResult} />}
+
       <p className="sr-only" aria-live="polite">
         {announce}
       </p>
@@ -295,6 +336,41 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
           <p className="mock" role="note">
             <strong>{u.mock.title}</strong> {u.mock.body}
           </p>
+        )}
+        {fromLink === 'saved' && (
+          <p className="note banner" role="status">
+            {u.keys.fromLink}{' '}
+            <button type="button" className="link accent inline" onClick={() => setFromLink(null)}>
+              {u.keys.ok}
+            </button>
+          </p>
+        )}
+        {fromLink === 'invalid' && (
+          <div className="problem banner" role="alert">
+            <strong>{u.keys.linkInvalid}</strong>
+            {u.keys.linkKept}{' '}
+            <button type="button" className="link accent inline" onClick={() => setFromLink(null)}>
+              {u.keys.ok}
+            </button>
+          </div>
+        )}
+        {fromLink === 'confirm' && linkKitchen === undefined && (
+          <p className="note banner" role="status">
+            {u.keys.linkChecking}
+          </p>
+        )}
+        {fromLink === 'confirm' && linkKitchen !== undefined && (
+          <div className="banner" role="alertdialog" aria-labelledby="link-keys-q">
+            <p id="link-keys-q">{u.keys.switchQ(linkKitchen ? buyerLabel(linkKitchen) : null)}</p>
+            <div className="actions">
+              <button type="button" className="btn" onClick={() => answerLink(true)}>
+                {u.keys.switchTo}
+              </button>
+              <button type="button" className="btn plain" onClick={() => answerLink(false)}>
+                {u.keys.keepCurrent}
+              </button>
+            </div>
+          </div>
         )}
         {offline && (
           <div className="problem banner" role="status">
@@ -317,7 +393,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
           )
         ) : (
           <>
-            <section hidden={view !== 'order'} aria-label={u.nav.order} className={empty ? undefined : 'thread'}>
+            <section hidden={view !== 'order'} aria-label={u.nav.order}>
               <h1 className="sr-only">{u.nav.order}</h1>
               {empty && waiting !== null && <p className="greeting">{u.greeting(partOfDay(), approver, waiting)}</p>}
               {collapsed && (
@@ -349,6 +425,27 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                 <p className="sr-only" id="text-help">
                   {u.ask.help(c.EXAMPLES)}
                 </p>
+                {/* HOOK: Talk + photo buttons */}
+                {(caps.photo || caps.talk) && (
+                  <div className="talk-tools">
+                    {caps.talk && (
+                      <button type="button" className="link talk-btn" onClick={talk.open} disabled={running}>
+                        <span className="talk-dot" aria-hidden="true" />
+                        {u.talk.open}
+                      </button>
+                    )}
+                    {caps.photo && (
+                      <PhotoButton
+                        disabled={running || deciding}
+                        onRead={(words) => {
+                          setText(words)
+                          setByVoice(false)
+                          void ask(words)
+                        }}
+                      />
+                    )}
+                  </div>
+                )}
                 <div className="ask-row">
                   <label className="date-pick">
                     {u.ask.delivery} <strong className="num">{c.day(date)}</strong>
@@ -387,7 +484,6 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                 )}
               </form>
 
-              {!empty && sent && <p className="bubble mine">{sent}</p>}
               {running && (
                 <div className="working" role="status" aria-label={u.progress.aria}>
                   {/* Re-keyed per phase, so each step fades in; the status region reads each step out politely. */}
@@ -710,6 +806,7 @@ function KeysForm({
           {title}
         </h1>
         {intro && <p className="note">{intro}</p>}
+        <p className="note small">{k.tip}</p>
       </div>
       <SecretField id="agent-key" label={k.agent} help={k.agentHelp} value={keys.agentKey} onChange={(v) => setDraft({ ...keys, agentKey: v })} />
       <SecretField id="approver-key" label={k.approver} help={k.approverHelp} value={keys.approverKey} onChange={(v) => setDraft({ ...keys, approverKey: v })} />

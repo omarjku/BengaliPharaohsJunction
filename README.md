@@ -80,7 +80,7 @@ signature base and the limits are in `docs/STANDARDS.md` ("Signed agent requests
 
 ## Testing
 
-- **Unit and integration tests:** `cd backend && .venv/bin/python -m pytest -q tests` gives 318 passed, 1 skipped
+- **Unit and integration tests:** `cd backend && .venv/bin/python -m pytest -q tests` gives 434 passed
   (offline, with Valio and Gemini faked).
 - **Labelled Gemini evaluation:** `backend/eval/` has 30 cases with real Valio products. It set the 0.70 threshold,
   and now includes the coffee-milk and coffee-cream traps.
@@ -121,7 +121,7 @@ The mandates are stored server-side in `backend/app/mandates.py`. Each buyer get
 | Buyer | Who | Rules |
 |---|---|---|
 | `lapland-kitchen` | Restaurant kitchen in Lapland: the main demo | Peanut-free; auto-approve up to EUR 1,500; EUR 2,000 per line; EUR 6,000 a week; asks below 90% on-time delivery; prefers Finnish origin; confidence threshold 0.70 |
-| `helsinki-bistro` | Bistro in central Helsinki: the urgent-pickup story | Auto-approve up to EUR 800; EUR 1,000 per line; EUR 3,000 a week; threshold 0.70 |
+| `helsinki-bistro` | Bistro in central Helsinki: the urgent-pickup and profile story | Auto-approve up to EUR 800; EUR 1,000 per line; EUR 3,000 a week; threshold 0.70. Profile: gluten-free kitchen; usually orders Valio unsalted butter 500 g, a gluten-free flour mix and grated mozzarella |
 | `smoke-kitchen` | Same rules as `lapland-kitchen`, for smoke tests | Keeps the demo kitchen's weekly budget untouched |
 
 **Urgent pickup.** This is for Helsinki buyers only, and only when the chef signals urgency ("ASAP", "today",
@@ -133,6 +133,16 @@ Each suggestion is marked as an assumption, because store stock and pickup aren'
 places a pickup order. The facts come from valioaimo.fi (`backend/app/urgent.py`). Any other buyer gets the earliest
 Valio delivery and its cut-off instead.
 
+## New today (Sun 15 Nov)
+
+- **Buyer profile** (on main): standing needs and usual products steer the choice without becoming rules. Example:
+  `helsinki-bistro`'s "our kitchen is gluten-free". Details are in `docs/GEMINI.md`.
+- **Photo input** (on main): photograph a handwritten list, a chalkboard or a whiteboard. `POST /api/vision/read`
+  reads it into text, then the same order or menu flow runs. It places nothing itself. The three test images in
+  [`docs/demo-images/`](docs/demo-images/) all read as expected with real Gemini.
+- **Talk** (on main): a Gemini Live voice conversation (WebSocket `/api/live`). The agent answers aloud, asks its
+  follow-up, and orders through the same pipeline. It has no approve tool.
+
 ## API surface
 
 Public routes use the server-side Valio and Gemini keys where needed. Protected
@@ -140,6 +150,9 @@ routes derive the buyer identity from the key, not from a trusted request body.
 
 | Method and route | What it does | Header |
 | --- | --- | --- |
+| `POST /api/vision/read` | A photo (list, menu board, whiteboard) → the request in words. It places nothing; the UI sends the text to `/api/agent/ask`. | `X-Agent-Key` |
+| `WS /api/live` | Talk: a Gemini Live voice conversation. Its tools are `ask_agent` (the same pipeline) and a read-only catalogue search, with no approve tool. The agent key goes in the first message. | agent key (in-band) |
+| `GET /api/profile` | The buyer's profile, read-only: standing dietary needs (helsinki-bistro is gluten-free), usual products, what the agent remembers and why. Guidance, never a rule. | `X-Agent-Key` |
 | `POST /api/agent/ask` | **The one input box.** Free text, in English or Finnish: an order or a menu. It routes to run or menu, and asks back when it must ("For how many guests?", "For which delivery day?"). Urgent needs for a Helsinki buyer also get pickup suggestions. | `X-Agent-Key` |
 | `POST /api/voice/transcribe` | Push-to-talk audio (wav, webm, ogg or mp4; at most 1 MB / 30 s) → the chef's words (Gemini transcribe-live, about 1.3 s). Nothing is ordered here: the UI sends the text to `/api/agent/ask/stream`. | `X-Agent-Key` |
 | `POST /api/agent/ask/stream` | The same as `/api/agent/ask`, streamed as Server-Sent Events: progress lines, then the result. | `X-Agent-Key` |
@@ -207,6 +220,11 @@ checks them with fresh quotes. Two kinds of rule:
 re-checks fresh data at approval. `backend/app/auth.py`, `/api/audit`, and the
 `AuditEntry` contract scope and record the actors, reasons, quotes, and rejected
 options.
+
+
+**Where decisions are made, honestly.** `decision/` (`trade_decision.decide()`) is Zoha's standalone reference
+decision engine, with its own tests. The live decisions on every request are made by `backend/app/agent.py` (the
+buyer's agent) and `backend/app/gate.py` (Valio's front door). Both use the same contracts.
 
 ### J4 — Robustness to exceptions
 

@@ -1,0 +1,19 @@
+/* The menu in three steps (Zoha's layout): your menu, portions per dish, the cart. Shared tokens only. */
+.mt-step { margin-block-start: var(--s6); }
+.mt-step-head { display: flex; gap: var(--s3); align-items: flex-start; margin-block-end: var(--s4); }
+.mt-step-n {
+  flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  border: 1px solid var(--line); background: var(--surface); font: var(--t-small); font-weight: 600; color: var(--ink-2);
+}
+.mt-dishes { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.mt-dishes li { padding: var(--s1) var(--s3); border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font: var(--t-small); }
+.mt-dish-grid { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr)); }
+.mt-dish { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: var(--s3) var(--s4); }
+.mt-dish-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s2); padding-block-end: var(--s2); border-block-end: 1px solid var(--line); }
+.mt-dish-head h3 { font-weight: 600; }
+.mt-covers { font: var(--t-tiny); color: var(--ink-3); white-space: nowrap; }
+.mt-ing { display: grid; grid-template-columns: 1fr auto; gap: 2px var(--s3); padding-block: var(--s2); border-block-end: 1px solid var(--line); }
+.mt-ing:last-child { border-block-end: 0; }
+.mt-ing-name { font: var(--t-small); }
+.mt-ing-total { font: var(--t-small); font-weight: 600; text-align: end; }
+.mt-ing-per, .mt-ing-why { grid-column: 1 / -1; }

@@ -1,5 +1,5 @@
 import type {
-  AdminFilter, AdminRow, AgentRun, BuyerProfile, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
+  AdminFilter, AdminRow, AgentRun, BuyerProfile, LiveEvent, LiveSocket, PhotoRead, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
 } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
@@ -33,6 +33,61 @@ export const setKeys = (next: ApiKeys) => {
   } catch {
     // storage unavailable (private mode, blocked): keys last for this page only
   }
+}
+
+// One-tap setup link: <site>/#agent=<key>&approver=<key> (either part optional), read when the page loads, before any
+// API call. The hash never reaches a server, is never logged, and is removed from the address bar at once, so it
+// isn't left in history or screenshots. A part missing from the link keeps the saved key.
+// On a device with no saved keys the link fills them in ('saved'). The same keys as saved: nothing to say (null).
+// If other keys are saved, nothing changes until the chef confirms (a crafted link must never silently swap a
+// kitchen's keys): 'confirm', with the keys held in memory only, checked by checkLinkKeys() and applied by
+// applyLinkKeys().
+let linkKeys: ApiKeys | null = null
+export const KEYS_FROM_LINK: 'saved' | 'confirm' | null = (() => {
+  if (typeof window === 'undefined' || !window.location.hash) return null
+  const link = new URLSearchParams(window.location.hash.slice(1))
+  const agentKey = link.get('agent')?.trim()
+  const approverKey = link.get('approver')?.trim()
+  if (!agentKey && !approverKey) return null
+  window.history.replaceState(null, '', window.location.pathname + window.location.search)
+  const next = { agentKey: agentKey || keys.agentKey, approverKey: approverKey || keys.approverKey }
+  if (next.agentKey === keys.agentKey && next.approverKey === keys.approverKey) return null // the same keys
+  if (!keys.agentKey && !keys.approverKey) {
+    setKeys(next)
+    return 'saved'
+  }
+  linkKeys = next
+  return 'confirm'
+})()
+// Before asking "Switch this device to <kitchen>?": are the link's new keys real, and whose are they? The new agent
+// key reads its own buyer (GET /api/profile); a new approver key alone is checked with GET /api/audit (no name).
+// Called with the link's keys only; nothing is saved here.
+export async function checkLinkKeys(): Promise<{ valid: boolean; kitchen: string | null }> {
+  if (!linkKeys) return { valid: false, kitchen: null }
+  if (MOCK) return { valid: true, kitchen: 'lapland-kitchen' }
+  const check = async (path: string, header: string, key: string) => {
+    try {
+      const r = await fetch(`${BASE}${path}`, { headers: { [header]: key } })
+      return r.ok ? r : null
+    } catch {
+      return null
+    }
+  }
+  let kitchen: string | null = null
+  if (linkKeys.agentKey !== keys.agentKey) {
+    const r = await check('/api/profile', 'X-Agent-Key', linkKeys.agentKey)
+    if (!r) return { valid: false, kitchen: null }
+    kitchen = ((await r.json().catch(() => ({}))) as { buyer_id?: string }).buyer_id ?? null
+  }
+  if (linkKeys.approverKey !== keys.approverKey && !(await check('/api/audit', 'X-Approver-Key', linkKeys.approverKey)))
+    return { valid: false, kitchen: null }
+  return { valid: true, kitchen }
+}
+
+// The chef's answer to "Switch this device to <kitchen>?" (or the link wasn't valid: replace = false).
+export function applyLinkKeys(replace: boolean) {
+  if (replace && linkKeys) setKeys(linkKeys)
+  linkKeys = null
 }
 
 // Valio staff's own key (read-only across buyers), kept apart from the kitchen's keys.
@@ -290,3 +345,46 @@ export const getProfile = () =>
   MOCK
     ? Promise.resolve<BuyerProfile>({ buyer_id: 'lapland-kitchen', dietary: [], usual_product_ids: [], memories: [] })
     : api<BuyerProfile>('/api/profile', { headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')
+
+// Talk (live voice conversation) and the photo button: on unless a build sets VITE_TALK=0 / VITE_PHOTO=0; the
+// buttons also hide when /api/health says the backend can't do it (talk: false / vision: false).
+export const TALK_READY = import.meta.env.VITE_TALK !== '0'
+export const PHOTO_READY = import.meta.env.VITE_PHOTO !== '0'
+
+// The live socket: wss:// on the API's host (VITE_API_URL, or this page's host in dev via the proxy). Auth is the
+// first message, never the URL. In mock mode a scripted conversation replays instead.
+export function openLive(handlers: Pick<LiveSocket, 'onEvent' | 'onClose'>): Promise<Pick<LiveSocket, 'send' | 'close'>> {
+  if (MOCK) return mock().then((m) => m.live(handlers))
+  const base = BASE || window.location.origin
+  const ws = new WebSocket(`${base.replace(/^http/, 'ws')}/api/live`)
+  ws.onmessage = (m) => {
+    try {
+      handlers.onEvent(JSON.parse(m.data as string) as LiveEvent)
+    } catch {
+      // not JSON: ignore it
+    }
+  }
+  ws.onclose = () => handlers.onClose()
+  return new Promise((resolve, reject) => {
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'auth', agent_key: keys.agentKey }))
+      resolve({ send: (msg) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg)), close: () => ws.close() })
+    }
+    ws.onerror = () => reject(new Error("Can't reach the live voice service."))
+  })
+}
+
+// A photo of a note, a menu or a slip -> its text (POST /api/vision/read, multipart field "image").
+export async function readPhoto(image: File): Promise<PhotoRead> {
+  if (MOCK) return mock().then((m) => m.readPhoto())
+  const body = new FormData()
+  body.append('image', image)
+  let res: Response
+  try {
+    res = await fetch(`${BASE}/api/vision/read`, { method: 'POST', body, headers: keyHeader('X-Agent-Key', keys.agentKey) })
+  } catch {
+    throw new Error("Can't reach the backend. Is it running?")
+  }
+  if (!res.ok) throw await failure(res, 'agent')
+  return json<PhotoRead>(res)
+}

@@ -107,6 +107,29 @@ def _key(name: str) -> str:
     return " ".join(sorted({agent._singular(w) for w in re.findall(r"[\wäöå]+", name.lower())}))
 
 
+def apply_overrides(dishes: list[dict], overrides: list[dict] | None, by_chef: bool = False) -> list[Reason]:
+    """The chef's own portions, on top of Gemini's reading: deterministic, so the cart rescales the same way every
+    time. Matches an ingredient by name (plural- and order-tolerant), in one dish or, without `dish`, in every dish."""
+    problems = []
+    for o in overrides or []:
+        hit = False
+        for d in dishes:
+            if o.get("dish") and _key(o["dish"]) != _key(d["name"]):
+                continue
+            for ing in d["ingredients"]:
+                if _key(str(ing.get("name") or "")) == _key(o["ingredient"]):
+                    # only an approver-key request is the chef; an agent's change is still checked by Gemini
+                    ing.update(per_cover=o["per_cover"], unit=o["unit"], set_by="chef" if by_chef else "agent",
+                               assumption=f"{d['name']}: {o['per_cover']:g} {o['unit']} {ing.get('name')} per portion "
+                                          + ("(set by the chef)" if by_chef else "(changed by the agent)"))
+                    hit = True
+        if not hit:
+            problems.append(gate._r(C.QTY_AMBIGUOUS, gate.INFO, f"No ingredient '{o['ingredient']}' in this menu"
+                                    + (f" for {o['dish']}" if o.get("dish") else "") + "; that portion change was "
+                                    "not applied.", None, "Check the ingredient name."))
+    return problems
+
+
 def scale(dishes: list[dict], covers: int) -> tuple[list[dict], list[dict], list[Reason]]:
     """Dishes → (merged ingredients scaled to covers, assumptions, problems). Pure function."""
     merged: dict[tuple[str, str], dict] = {}
@@ -119,7 +142,8 @@ def scale(dishes: list[dict], covers: int) -> tuple[list[dict], list[dict], list
             except (TypeError, ValueError):
                 per = math.nan
             assumptions.append({"ingredient": name, "dish": dish["name"], "per_cover": per if math.isfinite(per) else None,
-                                "unit": ing.get("unit"), "text": str(ing.get("assumption") or "")})
+                                "unit": ing.get("unit"), "text": str(ing.get("assumption") or ""),
+                                "set_by": ing.get("set_by") or "gemini"})
             if not name or unit not in quantity.MEASURES or not math.isfinite(per) or per <= 0:
                 problems.append(gate._r(C.QTY_AMBIGUOUS, ASK, f"Couldn't read a usable amount for '{name or '?'}' in "
                                         f"{dish['name']} ({ing.get('per_cover')} {ing.get('unit')} per cover); it is "
@@ -190,7 +214,8 @@ async def parse_menu(menu_text: str, buyer_id: str | None = None) -> list[dict] 
             for d in out["dishes"] if isinstance(d, dict) and str(d.get("name") or "").strip()][:MAX_DISHES]
 
 
-async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, dishes_task=None) -> dict:
+async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, dishes_task=None,
+                  overrides: list[dict] | None = None, by_chef: bool = False) -> dict:
     """`dishes_task`: parse_menu(menu_text) already started by the caller (ask._flow starts it at t=0)."""
     agent.start_budget(agent.DECISIONS_PER_MENU)
     run_id, now = str(uuid4()), datetime.now(timezone.utc)
@@ -234,6 +259,7 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
             reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The dish '{d['name']}' isn't on the menu you sent; its "
                                    "ingredients were left out.", None, "Check the menu text."))
     reasons += apply_dietary(menu_text, kept)
+    reasons += apply_overrides(kept, overrides, by_chef)
     ingredients, assumptions, problems = scale(kept, covers)
     reasons += problems
     if len(ingredients) > MAX_INGREDIENTS:
@@ -254,7 +280,8 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
 
     res, checks = await asyncio.gather(  # pricing and the assumption checks run side by side
         agent._pipeline(menu_text, items, requested, buyer_id, m, excluded, now, reasons, True),
-        asyncio.gather(*(check_assumption(a["dish"], a["ingredient"], a["per_cover"], a["unit"], a["text"])
+        asyncio.gather(*(agent.none() if a["set_by"] == "chef"  # the chef's own portion is not a guess to doubt
+                         else check_assumption(a["dish"], a["ingredient"], a["per_cover"], a["unit"], a["text"])
                          for a in assumptions[:MAX_DISHES * MAX_PER_DISH])))
     for a, y in zip(assumptions, checks):
         a["check"], a["flagged"] = y, y is not None and y < ASSUMPTION_MIN

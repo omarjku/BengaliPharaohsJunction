@@ -7,7 +7,7 @@ import { ApiError } from './api'
 //   contains "error"                     -> a failed request (to see the error state)
 //   anything else                        -> AUTO, order confirmed (small butter order)
 import type {
-  AdminFilter, AdminRow, SecurityEvent, AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
+  AdminFilter, AdminRow, LiveEvent, LiveSocket, PhotoRead, SecurityEvent, AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
   AskInput, AskResponse, CompileResult, Mandate, MenuInput, MenuRun, Product, RuleChange, SaveResult, Quote, QuantityResolution, Reason, RunInput, Substitute,
 } from './types'
 
@@ -726,6 +726,36 @@ export const mockApi = {
     await wait()
     const o = orders.get(orderId)
     return { signed_off_by: o?.signedOffBy ?? null, status: o?.res.status ?? 'refused' }
+  },
+
+  // Talk: a scripted conversation, timed like the real one (the agent's audio is left out: captions only).
+  async live(h: Pick<LiveSocket, 'onEvent' | 'onClose'>): Promise<Pick<LiveSocket, 'send' | 'close'>> {
+    let closed = false
+    const timers: number[] = []
+    const at = (ms: number, e: LiveEvent) => timers.push(window.setTimeout(() => !closed && h.onEvent(e), ms))
+    const run = await mockApi.ask({ text: '1000 L lactose-free milk for Monday' })
+    at(300, { type: 'ready' })
+    at(1500, { type: 'transcript', role: 'user', text: 'I need lactose-free milk for Monday', final: false })
+    at(2300, { type: 'transcript', role: 'user', text: 'I need lactose-free milk for Monday, a thousand litres.', final: true })
+    at(2700, { type: 'transcript', role: 'agent', text: 'Give me a second to check Valio.', final: true })
+    at(3000, { type: 'tool', name: 'ask', status: 'running', label: 'Checking Valio prices…' })
+    at(5200, { type: 'tool', name: 'ask', status: 'done', label: 'Checked Valio prices' })
+    at(5300, { type: 'result', payload: run })
+    at(5600, { type: 'transcript', role: 'agent', text: 'That’s 1,560 euros, 60 over your limit, so it needs your OK. Approve it on screen.', final: true })
+    at(6200, { type: 'turn_complete' })
+    return {
+      send: () => {},
+      close: () => {
+        closed = true
+        timers.forEach(clearTimeout)
+        h.onClose()
+      },
+    }
+  },
+
+  async readPhoto(): Promise<PhotoRead> {
+    await wait()
+    return { kind: 'note', text: '20 kg butter and 30 L cream for Friday', items: ['20 kg butter', '30 L cream'], covers: null, unreadable: ['one smudged line'], language: 'en' }
   },
 
   async audit(): Promise<AuditEntry[]> {

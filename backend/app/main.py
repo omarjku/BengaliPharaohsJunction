@@ -10,15 +10,15 @@ from contextlib import asynccontextmanager
 from datetime import date
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import (agent, ask, auth, catalogue, config, gate, httpsig, mandates, menu, orders, profile, progress,
-               quantity, ratelimit, rules, signing, valio, voice)
+from . import (agent, ask, auth, catalogue, config, gate, httpsig, live, mandates, menu, orders, profile, progress,
+               quantity, ratelimit, rules, signing, valio, vision, voice)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -45,6 +45,7 @@ def health() -> dict:
         "commit": os.getenv("RENDER_GIT_COMMIT") or None,
         "valio_key_configured": bool(config.VALIO_API_KEY),
         "gemini_key_configured": bool(config.GEMINI_API_KEY),
+        "talk": config.TALK_ENABLED and bool(config.GEMINI_API_KEY),
         "catalogue": catalogue.status(),
     }
 
@@ -152,7 +153,8 @@ async def limit_body(request: Request, call_next):
         size = request.headers.get("content-length")
         if size is None and request.headers.get("transfer-encoding"):
             return JSONResponse({"detail": "Content-Length required"}, status_code=411)
-        cap = voice.MAX_BYTES if request.url.path == "/api/voice/transcribe" else MAX_BODY_BYTES  # audio clips
+        cap = {"/api/voice/transcribe": voice.MAX_BYTES,  # audio clips; photos (+ multipart overhead)
+               "/api/vision/read": vision.MAX_BYTES + 64 * 1024}.get(request.url.path, MAX_BODY_BYTES)
         if size is not None and (not size.isdigit() or len(size) > 12 or int(size) > cap):  # no 5,000-digit int()
             return JSONResponse({"detail": f"Request body over {cap} bytes"}, status_code=413)
     return await call_next(request)
@@ -339,6 +341,7 @@ async def demo_reset(who: Annotated[auth.Principal, Depends(auth.valio_admin)], 
     restore = bool(body and body.restore_mandate)
     done = (await orders.demo_reset_buyer(who.name, body.buyer_id, restore) if body and body.buyer_id
             else await orders.demo_reset(who.name, restore))
+    profile.reset(body.buyer_id if body and body.buyer_id else None)  # remembered preferences back to the seeds
     return {**done, **_demo_status()}
 
 
@@ -387,12 +390,22 @@ async def agent_run(req: AgentRunRequest, who: Agent) -> dict:
 
 
 # --- T15 menu → cart: a proposal only (always ASK_HUMAN); the chef orders it by posting order_lines to /api/orders.
+class PortionOverride(BaseModel):
+    """The chef's own portion for one ingredient (the menu screen's editable grams per portion)."""
+    model_config = ConfigDict(extra="forbid")
+    ingredient: str = Field(min_length=1, max_length=80, examples=["butter"])
+    per_cover: float = Field(gt=0, le=5000, examples=[25])
+    unit: Literal["L", "dl", "cl", "ml", "kg", "g", "pcs"] = Field(examples=["g"])
+    dish: str | None = Field(default=None, max_length=120, description="Only in this dish; default: every dish.")
+
+
 class MenuRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     menu_text: str = Field(min_length=1, max_length=4000,
                            examples=["Reindeer stew with mashed potatoes; lingonberry cheesecake"])
     covers: int = Field(ge=1, le=2000, examples=[80])
     requested_date: date = Field(examples=["2026-11-16"])
+    overrides: list[PortionOverride] = Field(default_factory=list, max_length=40)
 
     @field_validator("menu_text")
     @classmethod
@@ -406,12 +419,25 @@ class MenuRequest(BaseModel):
 
 
 @app.post("/api/agent/menu")
-async def agent_menu(req: MenuRequest, who: Agent) -> dict:
+async def agent_menu(req: MenuRequest, who: Agent, request: Request,
+                     x_approver_key: Annotated[str | None, Header()] = None) -> dict:
     """Menu + covers → a proposed cart. Needs X-Agent-Key (the buyer comes from the key; mandate server-side).
     Returns {menu, assumptions, ingredients, lines, cart_total_cents, order_lines, decision, audit_id}; the decision is
     always ASK_HUMAN (MENU_ASSUMPTIONS) and nothing is ordered here."""
     _catalogue_ready()
-    return await menu.propose(req.menu_text, req.covers, req.requested_date, who.buyer_id)
+    # Portions count as "set by the chef" (not doubted) only with the same buyer's approver key too; an agent-only
+    # request's overrides are marked "agent" and still checked by Gemini Decisions (security review).
+    chef = False
+    if req.overrides and x_approver_key:  # the guarded check audits a refused key and keeps its 401/403
+        chef_key = auth._guarded(request, "X-Approver-Key", x_approver_key, auth._approver)
+        if chef_key.buyer_id != who.buyer_id:  # another kitchen's approver: refused and audited, never downgraded
+            orders.security_event("key_used_outside_its_role", f"{request.method} {request.url.path}",
+                                  ratelimit.client_ip(request), buyer_id=chef_key.buyer_id, header="X-Approver-Key",
+                                  key_role="approver", http_status=403)
+            raise HTTPException(403, detail="That approver key belongs to another kitchen.")
+        chef = True
+    return await menu.propose(req.menu_text, req.covers, req.requested_date, who.buyer_id,
+                              overrides=[o.model_dump() for o in req.overrides], by_chef=chef)
 
 
 # --- The chef's rules in plain language (T09 compiler). Human acts: X-Approver-Key only; an agent key can never
@@ -452,6 +478,44 @@ async def compile_mandate_route(req: CompileRequest, who: Approver) -> dict:
 
 def _if_match(value: str | None) -> str | None:
     return value.removeprefix("W/").strip().strip('"') if value else None
+
+
+MemoryId = Annotated[str, StringConstraints(pattern=r"^mem_[0-9a-f]{12}$")]
+
+
+class RememberRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["usual_product"] = "usual_product"
+    product_id: ProductId
+    scope: Literal["this_order", "always"] = "always"
+    text: str | None = Field(default=None, max_length=200)
+
+
+@app.delete("/api/profile/memories/{memory_id}")
+def forget_memory(memory_id: MemoryId, who: Approver) -> dict:
+    """Forget one remembered preference (the memory panel's revoke button). Needs X-Approver-Key: forgetting a
+    kitchen preference is the human's call, never the agent's. 404 for an unknown id, one already forgotten, or
+    another buyer's. A forgotten seeded memory stays forgotten across restarts; the demo reset restores it.
+    → the updated profile (same shape as GET /api/profile)."""
+    try:
+        profile.revoke(who.buyer_id, memory_id)
+    except KeyError:
+        raise HTTPException(404, detail="No such remembered preference for this kitchen.") from None
+    return profile.context(who.buyer_id)
+
+
+@app.post("/api/profile/memories")
+def remember(req: RememberRequest, who: Approver) -> dict:
+    """'Remember this': the chef keeps a product they chose (e.g. a pricier option guests like), for this order only
+    (today's orders) or always. Needs X-Approver-Key. It only breaks near-ties between equally good matches: never past
+    the confidence threshold or the front door's limits. 422 if the product isn't in the catalogue.
+    → {memory, profile}."""
+    _catalogue_ready()
+    try:
+        memory = profile.remember(who.buyer_id, req.product_id, req.scope, req.text)
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e)) from None
+    return {"memory": memory, "profile": profile.context(who.buyer_id)}
 
 
 @app.get("/api/profile")
@@ -529,6 +593,12 @@ async def agent_ask(req: AskRequest, who: Agent) -> dict:
     return await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump())
 
 
+# --- Talk: a spoken conversation over Gemini Live (live.py). Auth is the first message: browsers can't set headers.
+@app.websocket("/api/live")
+async def talk(ws: WebSocket) -> None:
+    await live.session(ws)
+
+
 # --- Voice: push-to-talk audio → the chef's words (Gemini Live via our backend; the key never reaches the browser).
 @app.post("/api/voice/transcribe")
 async def voice_transcribe(request: Request, who: Agent) -> dict:
@@ -541,6 +611,21 @@ async def voice_transcribe(request: Request, who: Agent) -> dict:
         if len(body) > voice.MAX_BYTES:
             raise HTTPException(413, detail=f"Recordings may be at most {voice.MAX_BYTES // 1000} KB.")
     return await voice.transcribe(bytes(body), request.headers.get("content-type", ""))
+
+
+@app.post("/api/vision/read")
+async def vision_read(request: Request, who: Agent) -> dict:
+    """A photo of a handwritten shopping list, a menu board or a whiteboard of menu ideas (multipart field `image`,
+    or the raw image as the body; JPEG / PNG / WEBP / HEIC, at most 8 MB) → {kind: order_list|menu|other, text,
+    items, covers, unreadable, language, suspicious, message, model}. Gemini reads the image as untrusted DATA:
+    instruction-like text in it is only text. This route places NOTHING and stores no image: the UI sends `text` on
+    through POST /api/agent/ask, where every rule and the front door apply. Needs X-Agent-Key; rate-limited."""
+    body = bytearray()
+    async for chunk in request.stream():  # bounded read, as for voice
+        body += chunk
+        if len(body) > vision.MAX_BYTES + 64 * 1024:
+            raise HTTPException(413, detail=f"Photos may be at most {vision.MAX_BYTES // 1_000_000} MB.")
+    return await vision.read(bytes(body), request.headers.get("content-type", ""))
 
 
 _STREAM_TASKS: set = set()
