@@ -1,6 +1,15 @@
 # Voice: push-to-talk ordering with Gemini Live (spike + design)
 
-Status: **spike done, not built.** The chef holds a button and speaks. The words go into the same `POST /api/agent/ask` flow as typed text, and the agent reads back the decision in one short sentence.
+Status: **transcription built** (`POST /api/voice/transcribe`, below). The read-back stays with the browser's speechSynthesis for now; Live audio-out is measured (~0.5 s to first audio) but not wired.
+
+## Built: `POST /api/voice/transcribe`
+
+- **Request:** `X-Agent-Key`; the body is the raw recording (Content-Type `audio/webm`, `audio/ogg`, `audio/mp4`, `audio/mpeg`, `audio/aac`, `audio/wav` or `audio/flac`); at most **1 MB / 30 s**; rate-limited per key like agent runs.
+- **Response:** `200 {"text": "…", "seconds": 3.0, "model": "gemini-3.5-transcribe-live"}`. The UI shows the text and sends it to `POST /api/agent/ask`; nothing is ordered here.
+- **Errors:** 4xx/503 with a plain `detail` sentence the UI can show: 415 wrong type, 413 too big, 422 unreadable / too short / over 30 s / no words heard, 503 voice unavailable ("type the order instead"), 401 no key.
+- **How it works:** PyAV (pip wheels bundle ffmpeg; no system package on Render) decodes any browser format to 16 kHz mono PCM16, because the Live API accepts only `audio/pcm` (WebM and Ogg are refused with 1007). The clip is streamed as one push-to-talk turn (manual activityStart / activityEnd). The transcribe model ends with `generationComplete` / `ACTIVITY_END`, never `turnComplete`, and the backend finishes on whichever comes first. `GEMINI_LISTEN_MODEL` switches models (default `gemini-3.5-transcribe-live`, the one that keeps Finnish numbers).
+- **Live latency (real clips through the endpoint code):** 3 s English as WebM/Opus, Ogg/Opus and WAV: **1.26–1.34 s** total (decode ~10 ms, the rest is the Live round trip including setup), each "1,000 L of lactose-free milk for Monday."; Finnish WebM: 1.37 s, "Sata litraa laktoositonta maitoa maanantaiksi."; `say` "Twenty kilos of butter for Monday": 1.15 s, "20 kilos of butter for Monday.". Test: `RUN_LIVE_VOICE=1 .venv/bin/python -m pytest -q tests/test_voice.py -k live -s`.
+ The chef holds a button and speaks. The words go into the same `POST /api/agent/ask` flow as typed text, and the agent reads back the decision in one short sentence.
 
 ## What the spike measured (Sat 14 Nov 2026, our key, from the backend)
 

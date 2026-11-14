@@ -92,6 +92,18 @@ const keyHeader = (name: string, value: string): HeadersInit => (value ? { [name
 
 export const getHealth = () => (MOCK ? mock().then((m) => m.health()) : api<Health>('/api/health'))
 
+// Voice: audio in, the chef's words out. The real endpoint comes from Room 3 (Gemini Live through our backend);
+// until it's switched on with VITE_VOICE=1 the mic only appears in mock mode, so no made-up words reach a real order.
+export const VOICE_READY = MOCK || import.meta.env.VITE_VOICE === '1'
+export const transcribe = (audio: Blob): Promise<string> =>
+  MOCK
+    ? mock().then((m) => m.transcribe(audio))
+    : fetch(`${BASE}/api/voice/transcribe`, { method: 'POST', body: audio, headers: { 'Content-Type': audio.type || 'audio/webm', 'X-Agent-Key': getKeys().agentKey } })
+        .then(async (r) => {
+          if (!r.ok) throw new Error(`Couldn’t understand the recording (${r.status}). Try again, or type it.`)
+          return ((await r.json()) as { text: string }).text
+        })
+
 // One box: the backend works out whether it's an order or a menu. requested_date only when the chef overrode it.
 export const askAgent = (input: AskInput) =>
   MOCK ? mock().then((m) => m.ask(input)) : api<AskResponse>('/api/agent/ask', { ...post(input), headers: keyHeader('X-Agent-Key', getKeys().agentKey) }, 'agent')

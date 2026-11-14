@@ -254,7 +254,7 @@ main.roomy { padding-block-start: 96px; }
 .ask.first .ask-label { font: var(--t-answer); letter-spacing: -0.02em; margin-block-end: var(--s2); }
 .greeting { color: var(--ink-2); margin-block-end: var(--s3); }
 .try { font: var(--t-small); color: var(--ink-3); }
-.link.inline { min-height: 0; padding: 0; font: inherit; color: var(--accent); }
+.link.inline { min-height: 0; padding: 0; font: inherit; color: var(--accent); text-align: start; }
 .recent { margin-block-start: var(--s8); }
 .recent .feed-day { margin: 0; }
 .recent-row { padding-block: var(--s3); border-block-end: 1px solid var(--line); }
@@ -289,6 +289,36 @@ main.roomy { padding-block-start: 96px; }
 .guests-input, .covers input { appearance: textfield; -moz-appearance: textfield; }
 .guests-input::-webkit-inner-spin-button, .guests-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .guests-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+
+/* --- Voice: a mic in the box's corner (right above the main action on a phone, in the thumb zone). */
+.ask-box { position: relative; }
+.ask-field.with-mic { padding-inline-end: 64px; }
+.mic {
+  position: absolute; inset-inline-end: 10px; inset-block-end: 12px; width: 44px; height: 44px; border-radius: 50%;
+  display: grid; place-items: center; border: 1px solid var(--field-line); background: var(--surface); color: var(--ink-2);
+  cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+  --level: 0;
+  transition: transform 140ms var(--ease-out), background-color 160ms ease, color 160ms ease;
+}
+.mic:active { transform: scale(0.95); }
+.mic:disabled { opacity: 0.5; cursor: default; }
+/* Listening: solid accent, and a soft ring that grows with the voice level. Nothing else moves. */
+.mic.on {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+  box-shadow: 0 0 0 calc(4px + var(--level) * 12px) rgba(11, 92, 173, 0.16);
+}
+.mic.busy { color: var(--accent); }
+.voice-status { min-height: 1.45em; font: var(--t-small); color: var(--ink-2); }
+.voice-status.live { color: var(--accent); font-weight: 500; }
+.voice-status.readback { margin-block-start: var(--s5); }
+.voice-note { display: grid; gap: var(--s3); padding: var(--s4); border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); }
+@media (max-width: 600px) {
+  .mic { width: 52px; height: 52px; inset-block-end: 10px; }
+  .ask-field.with-mic { padding-inline-end: 72px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mic.on { box-shadow: 0 0 0 calc(4px + var(--level) * 12px) rgba(11, 92, 173, 0.16); transition: none; }
+}
 
 /* --- Messages. */
 .banner { margin-block: 0 var(--s6); }

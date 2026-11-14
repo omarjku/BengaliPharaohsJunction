@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import ask, agent, auth, catalogue, config, gate, mandates, menu, orders, quantity, ratelimit, rules, signing, valio
+from . import ask, agent, auth, catalogue, config, gate, mandates, menu, orders, quantity, ratelimit, rules, signing, valio, voice
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -146,8 +146,9 @@ async def limit_body(request: Request, call_next):
         size = request.headers.get("content-length")
         if size is None and request.headers.get("transfer-encoding"):
             return JSONResponse({"detail": "Content-Length required"}, status_code=411)
-        if size is not None and (not size.isdigit() or int(size) > MAX_BODY_BYTES):
-            return JSONResponse({"detail": f"Request body over {MAX_BODY_BYTES} bytes"}, status_code=413)
+        cap = voice.MAX_BYTES if request.url.path == "/api/voice/transcribe" else MAX_BODY_BYTES  # audio clips
+        if size is not None and (not size.isdigit() or int(size) > cap):
+            return JSONResponse({"detail": f"Request body over {cap} bytes"}, status_code=413)
     return await call_next(request)
 
 
@@ -477,3 +478,12 @@ async def agent_ask(req: AskRequest, who: Agent) -> dict:
     runs. Needs X-Agent-Key."""
     _catalogue_ready()
     return await ask.ask(req.text, req.requested_date, who.buyer_id)
+
+
+# --- Voice: push-to-talk audio → the chef's words (Gemini Live via our backend; the key never reaches the browser).
+@app.post("/api/voice/transcribe")
+async def voice_transcribe(request: Request, who: Agent) -> dict:
+    """Body: the raw recording (Content-Type audio/webm, audio/ogg, audio/mp4, audio/wav...; at most 1 MB / 30 s).
+    → {text, seconds, model}. The UI shows the text and sends it to POST /api/agent/ask; nothing is ordered here.
+    Needs X-Agent-Key; rate-limited like agent runs."""
+    return await voice.transcribe(await request.body(), request.headers.get("content-type", ""))
