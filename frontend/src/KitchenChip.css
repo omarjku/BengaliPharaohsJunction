@@ -1,0 +1,2 @@
+.kitchen-chip { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); font: var(--t-small); color: var(--ink-2); margin-block-end: var(--s3); }
+.kitchen-switch { min-height: 44px; }

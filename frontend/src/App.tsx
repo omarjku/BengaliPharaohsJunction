@@ -13,13 +13,18 @@ import { ValioView } from './Valio'
 import { useVoice, voiceSupported } from './useVoice'
 import { usePhaseLine } from './usePhaseLine'
 import { DictationMic, MicButton, VoiceStatus } from './Voice'
+import { HeaderMenu } from './HeaderMenu'
+import './Keys.css'
 import { PhotoButton } from './PhotoButton'
 import { Composer } from './Composer'
 import { Onboarding } from './Onboarding'
 import { useOnboarded } from './onboardingApi'
+import { KitchenChip } from './KitchenChip'
+import { onboardingSkippedFor, skipOnboardingFor, useKitchen } from './useKitchen'
 import { Conversation, type VoiceLayout } from './Conversation'
 import { Orb } from './Orb'
 import { useLive } from './useLive'
+import { useLiveWarm } from './liveWarm'
 import { useTalk, useTalkPhotoAvailable } from './useTalk'
 
 type View = 'order' | 'rules' | 'history' | 'valio'
@@ -123,27 +128,22 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   // and Talk never hold the mic at once: starting Talk cancels dictation, and the mic button is gone while Talk is on.
   // First run: Room 2's onboarding (Onboarding.tsx) asks about the kitchen once keys are set; skippable (remembered on
   // this device), and reachable later from the memory panel ("Update my kitchen").
+  // Skipped / done is remembered per KITCHEN (the key's buyer id), not per device: another kitchen on the same phone
+  // (a setup link) still gets asked. Until the kitchen is known it isn't opened (no flicker).
+  const kitchen = useKitchen(savedKeys.agentKey)
   const onboarding = useOnboarded()
-  const [onboardingSkipped, setOnboardingSkipped] = useState(() => {
-    try {
-      return localStorage.getItem('valio-aimo-onboarding-skipped') === '1'
-    } catch {
-      return false
-    }
-  })
+  const [, bumpSkip] = useState(0)
+  const onboardingSkipped = kitchen ? onboardingSkippedFor(kitchen) : true
   const [onboardingAsked, setOnboardingAsked] = useState(false) // opened from the memory panel
   const onboardingOpen = onboardingAsked || (onboarding.onboarded === false && !onboardingSkipped)
   function closeOnboarding() {
     setOnboardingAsked(false)
-    setOnboardingSkipped(true)
-    try {
-      localStorage.setItem('valio-aimo-onboarding-skipped', '1')
-    } catch {
-      // storage blocked: skipped for this page only
-    }
+    if (kitchen) skipOnboardingFor(kitchen)
+    bumpSkip((n) => n + 1)
   }
   const caps = useTalkPhotoAvailable()
   const talk = useTalk()
+  useLiveWarm(caps.talk && !talk.session && view === 'order' && !!savedKeys.agentKey) // HOOK: the idle /api/live socket, ready before the tap
   const orbRef = useRef<HTMLButtonElement>(null)
   const [layout, setLayout] = useState<VoiceLayout>(() => {
     try {
@@ -407,31 +407,35 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   return (
     <>
       <header className="top">
-        <span className="brand">
-          <DoorGlyph /> Front Door
-        </span>
-        <span className="brand-for">{view === 'valio' ? 'Valio Aimo' : buyer ? buyerLabel(buyer) : ''}</span>
-        <nav aria-label={u.nav.main}>
-          {!needsSetup &&
-            (['order', 'history', 'rules'] as const).map((v) => (
-              <button key={v} type="button" className="link" aria-current={view === v ? 'page' : undefined} onClick={() => setView(v)}>
-                {u.nav[v]}
+        <div className="top-bar">
+          <div className="top-bar-in">
+            <span className="brand">
+              <DoorGlyph /> Front Door
+            </span>
+            <span className="brand-for">{view === 'valio' ? 'Valio Aimo' : buyer ? buyerLabel(buyer) : ''}</span>
+            <HeaderMenu onSwitchLang={onSwitchLang} />
+          </div>
+        </div>
+        <div className="top-nav">
+          <nav aria-label={u.nav.main}>
+            {!needsSetup &&
+              (['order', 'history', 'rules'] as const).map((v) => (
+                <button key={v} type="button" className="link" aria-current={view === v ? 'page' : undefined} onClick={() => setView(v)}>
+                  {u.nav[v]}
+                </button>
+              ))}
+            {!needsSetup && (
+              <button type="button" className="link" onClick={() => keysDialog.current?.showModal()}>
+                {u.nav.keys}
               </button>
-            ))}
-          {!needsSetup && (
-            <button type="button" className="link" onClick={() => keysDialog.current?.showModal()}>
-              {u.nav.keys}
-            </button>
-          )}
-          {adminKey && (
-            <button type="button" className="link" aria-current={view === 'valio' ? 'page' : undefined} onClick={() => setView('valio')}>
-              {u.valio.nav}
-            </button>
-          )}
-          <button type="button" className="link lang" onClick={onSwitchLang} aria-label={u.lang.label} title={u.lang.switchTo}>
-            {u.lang.short}
-          </button>
-        </nav>
+            )}
+            {adminKey && (
+              <button type="button" className="link" aria-current={view === 'valio' ? 'page' : undefined} onClick={() => setView('valio')}>
+                {u.valio.nav}
+              </button>
+            )}
+          </nav>
+        </div>
       </header>
 
       <dialog ref={keysDialog} className="sheet" aria-labelledby="keys-dialog-title">
@@ -510,6 +514,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
           <>
             <section hidden={view !== 'order'} aria-label={u.nav.order}>
               <h1 className="sr-only">{u.nav.order}</h1>
+              {/* HOOK: which kitchen this device is signed in as (KitchenChip.tsx, useKitchen.ts) */}
+              <KitchenChip kitchen={kitchen} onSwitch={() => keysDialog.current?.showModal()} />
               {onboardingOpen ? (
                 <Onboarding
                   onDone={() => {
@@ -799,36 +805,63 @@ function DoorGlyph() {
   )
 }
 
+function KeyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="15" r="4" />
+      <path d="M11 12l9-9M16 7l3 3M14 9l2 2" />
+    </svg>
+  )
+}
+
+function EyeIcon({ off }: { off: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+      {off && <path d="M4 4l16 16" />}
+    </svg>
+  )
+}
+
+// Two keys in one nested card: a soft outer shell, a white card inside. Keys are trimmed on save (pasted spaces and newlines break requests).
 function KeysForm({
   title, titleId, intro, submitLabel, onSaved, onCancel,
 }: { title: string; titleId?: string; intro?: string; submitLabel?: string; onSaved: () => void; onCancel?: () => void }) {
   const k = useCopy().UI.keys
   const [keys, setDraft] = useState<ApiKeys>(getKeys)
+  const ready = !!keys.agentKey.trim() && !!keys.approverKey.trim()
   function save(e: FormEvent) {
     e.preventDefault()
-    setKeys(keys)
+    if (!ready) return
+    setKeys({ ...keys, agentKey: keys.agentKey.trim(), approverKey: keys.approverKey.trim() })
     onSaved()
   }
   return (
-    <form className="setup" onSubmit={save}>
-      <div className="field">
-        <h1 className="title" id={titleId}>
-          {title}
-        </h1>
-        {intro && <p className="note">{intro}</p>}
-        <p className="note small">{k.tip}</p>
-      </div>
-      <SecretField id="agent-key" label={k.agent} help={k.agentHelp} value={keys.agentKey} onChange={(v) => setDraft({ ...keys, agentKey: v })} />
-      <SecretField id="approver-key" label={k.approver} help={k.approverHelp} value={keys.approverKey} onChange={(v) => setDraft({ ...keys, approverKey: v })} />
-      <div className="actions">
-        <button type="submit" className="btn" disabled={!keys.agentKey.trim() || !keys.approverKey.trim()}>
-          {submitLabel ?? k.save}
-        </button>
-        {onCancel && (
-          <button type="button" className="btn plain" onClick={onCancel}>
-            {k.cancel}
+    <form className="setup keys-shell" onSubmit={save}>
+      <div className="keys-card">
+        <div className="keys-head">
+          <span className="keys-badge">
+            <KeyIcon />
+          </span>
+          <h1 className="title" id={titleId}>
+            {title}
+          </h1>
+          {intro && <p className="note">{intro}</p>}
+          <p className="note small">{k.tip}</p>
+        </div>
+        <SecretField id="agent-key" label={k.agent} help={k.agentHelp} value={keys.agentKey} onChange={(v) => setDraft({ ...keys, agentKey: v })} />
+        <SecretField id="approver-key" label={k.approver} help={k.approverHelp} value={keys.approverKey} onChange={(v) => setDraft({ ...keys, approverKey: v })} />
+        <div className="keys-actions">
+          <button type="submit" className="btn" disabled={!ready}>
+            {submitLabel ?? k.save}
           </button>
-        )}
+          {onCancel && (
+            <button type="button" className="btn plain" onClick={onCancel}>
+              {k.cancel}
+            </button>
+          )}
+        </div>
       </div>
     </form>
   )
@@ -838,25 +871,30 @@ function SecretField({ id, label, help, value, onChange }: { id: string; label: 
   const k = useCopy().UI.keys
   const [shown, setShown] = useState(false)
   return (
-    <div className="field">
+    <div className="field keys-field">
       <label htmlFor={id}>{label}</label>
-      <p className="field-help" id={`${id}-help`}>
-        {help}
-      </p>
-      <div className="secret">
+      <div className="secret keys-secret">
+        <span className="keys-lead">
+          <KeyIcon />
+        </span>
         <input
           id={id}
           type={shown ? 'text' : 'password'}
           autoComplete="off"
+          autoCapitalize="off"
+          autoCorrect="off"
           spellCheck={false}
           aria-describedby={`${id}-help`}
           value={value}
           onChange={(e) => onChange(e.target.value)}
         />
-        <button type="button" className="secret-toggle" aria-pressed={shown} aria-controls={id} onClick={() => setShown((s) => !s)}>
-          {shown ? k.hide : k.show}
+        <button type="button" className="secret-toggle" aria-pressed={shown} aria-controls={id} aria-label={shown ? k.hide : k.show} title={shown ? k.hide : k.show} onClick={() => setShown((s) => !s)}>
+          <EyeIcon off={shown} />
         </button>
       </div>
+      <p className="field-help" id={`${id}-help`}>
+        {help}
+      </p>
     </div>
   )
 }

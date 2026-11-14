@@ -237,6 +237,7 @@ const ja = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).j
 // --- Every other word on screen.
 export const UI = {
   nav: { main: 'Päävalikko', order: 'Tilaa', history: 'Historia', rules: 'Säännöt', keys: 'Avaimet' },
+  hmenu: { open: 'Valikko', close: 'Sulje valikko', language: 'Kieli', theme: 'Ulkoasu', light: 'Vaalea', dark: 'Tumma', fi: 'Suomi', en: 'English' },
   lang: { switchTo: 'In English', short: 'EN', label: 'EN, in English' },
   greeting: (part: 'morning' | 'afternoon' | 'evening', name: string | null, waiting: number) =>
     `${{ morning: 'Huomenta', afternoon: 'Päivää', evening: 'Iltaa' }[part]}${name ? `, ${name}` : ''}. ` +
@@ -529,6 +530,10 @@ export const UI = {
       ordered: 'Tilattu', rejected: 'Hylätty', rules: 'Säännöt muutettu', notOrdered: 'Ei tilattu', held: 'Odottaa hyväksyntääsi',
       sent: 'Lähetetty Valiolle', needed: 'Tarvitsi hyväksyntäsi',
     },
+  },
+  kitchen: {
+    signedIn: (name: string) => `Kirjautuneena: ${name}`,
+    switch: 'Vaihda keittiö',
   },
   conv: {
     field: 'Viesti agentille',

@@ -216,6 +216,7 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : many)
 // --- Every other word on screen.
 export const UI = {
   nav: { main: 'Main', order: 'Order', history: 'History', rules: 'Rules', keys: 'Keys' },
+  hmenu: { open: 'Menu', close: 'Close menu', language: 'Language', theme: 'Appearance', light: 'Light', dark: 'Dark', fi: 'Suomi', en: 'English' },
   lang: { switchTo: 'Suomeksi', short: 'FI', label: 'FI, suomeksi' }, // the switch offers the other language, in that language
   greeting: (part: 'morning' | 'afternoon' | 'evening', name: string | null, waiting: number) =>
     `${{ morning: 'Morning', afternoon: 'Afternoon', evening: 'Evening' }[part]}${name ? `, ${name}` : ''}. ` +
@@ -509,6 +510,10 @@ export const UI = {
       ordered: 'Ordered', rejected: 'Rejected', rules: 'Rules changed', notOrdered: 'Not ordered', held: 'Held for your OK',
       sent: 'Sent to Valio', needed: 'Needed your OK',
     },
+  },
+  kitchen: {
+    signedIn: (name: string) => `Signed in as ${name}`,
+    switch: 'Switch kitchen',
   },
   conv: {
     field: 'Message the agent',

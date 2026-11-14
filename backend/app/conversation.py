@@ -8,6 +8,7 @@ from the stored request and the server-side mandate. The request then re-runs th
 Also here: speak(), the one-sentence spoken version of any /ask response.
 """
 import json
+import hashlib
 import os
 import re
 import threading
@@ -189,6 +190,196 @@ def take(cid: str, buyer_id: str) -> dict:
     if entry is None or entry["buyer_id"] != buyer_id or entry["expires"] <= time.time():
         raise HTTPException(404, detail="That question has expired or isn't yours. Please say the whole order again.")
     return entry
+
+
+# The v2 reading context is deliberately separate from the open follow-up store above.  Follow-up ids are short-lived
+# workflow state; these buyer-scoped files are only the small amount of recent conversation context needed to understand
+# the next message.
+TURNS_TTL_S = 30 * 60
+MAX_TURNS = 10
+MAX_TURN_TEXT = 1_000
+_turns_lock = threading.Lock()
+
+
+def _history_path(buyer_id: str):
+    digest = hashlib.sha256(str(buyer_id).encode("utf-8")).hexdigest()
+    return config.DATA_DIR / "conversations" / f"{digest}.json"
+
+
+def _read_history(path) -> dict:
+    try:
+        value = json.loads(path.read_text()) if path.exists() else {}
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _bounded_text(text: str) -> str:
+    return str(text or "").strip()[:MAX_TURN_TEXT]
+
+
+def _project_ingredient(ingredient) -> dict | None:
+    if isinstance(ingredient, str):
+        name = _bounded_text(ingredient)
+        return {"name": name} if name else None
+    if not isinstance(ingredient, dict):
+        return None
+    name = ingredient.get("name") or ingredient.get("product", {}).get("name_en") if isinstance(ingredient.get("product"), dict) else ingredient.get("name")
+    name = _bounded_text(name)
+    if not name:
+        return None
+    result = {"name": name}
+    for key in ("amount", "unit"):
+        if ingredient.get(key) is not None:
+            result[key] = ingredient[key]
+    return result
+
+
+def _project_line(line) -> dict | None:
+    if not isinstance(line, dict):
+        return None
+    product = line.get("product") if isinstance(line.get("product"), dict) else {}
+    name = line.get("name") or product.get("name_en") or product.get("name") or product.get("name_fi")
+    name = _bounded_text(name)
+    if not name:
+        return None
+    result = {"name": name}
+    price = line.get("price_cents", line.get("line_total_cents"))
+    if price is not None:
+        result["price_cents"] = price
+    confidence = line.get("confidence", line.get("match_confidence"))
+    if confidence is not None:
+        result["confidence"] = confidence
+    why = line.get("why") or line.get("reason")
+    if why:
+        result["why"] = _bounded_text(why)
+    available = line.get("available")
+    if available is None and isinstance(line.get("quote"), dict):
+        available = line["quote"].get("orderable")
+    if available is not None:
+        result["available"] = bool(available)
+    quantity_value = line.get("quantity")
+    if isinstance(quantity_value, dict):
+        requested = quantity_value.get("requested") if isinstance(quantity_value.get("requested"), dict) else quantity_value
+        quantity = {key: requested[key] for key in ("amount", "unit") if requested.get(key) is not None}
+        if quantity:
+            result["quantity"] = quantity
+    return result
+
+
+def compact_card(body: dict | None) -> dict | None:
+    """Keep only the bounded cart facts the next understanding pass may quote back to the chef."""
+    if not isinstance(body, dict):
+        return None
+    result = {}
+    ingredients = [_project_ingredient(item) for item in body.get("ingredients", [])]
+    ingredients = [item for item in ingredients if item]
+    if ingredients:
+        result["ingredients"] = ingredients[:20]
+    for source, target in (("lines", "lines"), ("held_lines", "held_lines")):
+        lines = [_project_line(item) for item in body.get(source, [])]
+        lines = [item for item in lines if item]
+        if lines:
+            result[target] = lines[:50]
+    for key in ("cart_total_cents", "requested_date", "question"):
+        value = body.get(key)
+        if value is not None and value != "":
+            result[key] = _bounded_text(value) if isinstance(value, str) else value
+    return result
+
+
+def _pruned_history(data: dict, now: float) -> tuple[dict, bool]:
+    changed = False
+    cutoff = now - TURNS_TTL_S
+    rows = []
+    for row in data.get("turns", []):
+        if not isinstance(row, dict) or row.get("role") not in {"user", "assistant"}:
+            changed = True
+            continue
+        try:
+            timestamp = float(row.get("time", 0))
+        except (TypeError, ValueError):
+            changed = True
+            continue
+        if timestamp < cutoff:
+            changed = True
+            continue
+        text = _bounded_text(row.get("text"))
+        if text != row.get("text"):
+            changed = True
+        rows.append({"role": row["role"], "text": text, "time": timestamp})
+    bounded = rows[-MAX_TURNS:]
+    if bounded != rows:
+        changed = True
+    data["turns"] = bounded
+    card_time = data.get("last_card_time")
+    if card_time is not None:
+        try:
+            expired = float(card_time) < cutoff
+        except (TypeError, ValueError):
+            expired = True
+        if expired:
+            data.pop("last_card", None)
+            data.pop("last_card_time", None)
+            changed = True
+    return data, changed
+
+
+def _write_history(path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def record_turn(buyer_id: str, role: str, text: str, card: dict | None = None) -> None:
+    """Atomically append one bounded turn and optionally replace the buyer's compact last card."""
+    if role not in {"user", "assistant"}:
+        raise ValueError("role must be user or assistant")
+    now = time.time()
+    path = _history_path(buyer_id)
+    with _turns_lock:
+        data, _ = _pruned_history(_read_history(path), now)
+        data["turns"].append({"role": role, "text": _bounded_text(text), "time": now})
+        data["turns"] = data["turns"][-MAX_TURNS:]
+        if card is not None:
+            projected = compact_card(card)
+            if projected and any(key in projected for key in ("lines", "ingredients", "held_lines",
+                                                               "cart_total_cents", "order")):
+                data["last_card"] = projected
+                data["last_card_time"] = now
+        _write_history(path, data)
+
+
+def turns(buyer_id: str) -> list[dict]:
+    """Return this buyer's unexpired turns in chronological order."""
+    now = time.time()
+    path = _history_path(buyer_id)
+    with _turns_lock:
+        data = _read_history(path)
+        data, changed = _pruned_history(data, now)
+        if changed and path.exists():
+            _write_history(path, data)
+        return list(data.get("turns", []))
+
+
+def last_card(buyer_id: str) -> dict | None:
+    """Return the unexpired compact result card for this buyer, if one exists."""
+    now = time.time()
+    path = _history_path(buyer_id)
+    with _turns_lock:
+        data = _read_history(path)
+        data, changed = _pruned_history(data, now)
+        if changed and path.exists():
+            _write_history(path, data)
+        card = data.get("last_card")
+        return json.loads(json.dumps(card, ensure_ascii=False)) if isinstance(card, dict) else None
 
 
 # --- the spoken sentence

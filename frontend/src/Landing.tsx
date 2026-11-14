@@ -4,9 +4,9 @@ import { Dithering } from '@paper-design/shaders-react'
 const Shader = memo(Dithering)
 
 /** First screen: dark, one dithered swirl, the app name in pixel type, one way in. */
-export default function Landing({ onEnter }: { onEnter: () => void }) {
+export default function Landing({ onEnter, leaving = false }: { onEnter: () => void; leaving?: boolean }) {
   return (
-    <main className="landing">
+    <section className={`landing${leaving ? ' leaving' : ''}`}>
       <div className="landing-copy">
         <h1 className="landing-name">
           Front
@@ -33,6 +33,6 @@ export default function Landing({ onEnter }: { onEnter: () => void }) {
           style={{ width: '100%', height: '100%' }}
         />
       </div>
-    </main>
+    </section>
   )
 }

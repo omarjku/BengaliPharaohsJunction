@@ -224,6 +224,11 @@ async def _decisions_grouped(requests: list[tuple[str, str, dict]]) -> dict[str,
     return out
 
 
+async def guard_decisions(requests: list[tuple[str, str, dict]]) -> dict[str, dict]:
+    """Batch independent guard questions that read the exact same input, preserving candidate calibration."""
+    return await _decisions_grouped(requests)
+
+
 def _yes(answer: dict) -> float | None:
     """P(yes) of a noul answer, the number we threshold. (The API's `confidence` is the probability of the TOP
     answer, so for a likely 'no' it is high too; it must not be read as 'confidence that it is fine'.)"""
@@ -272,14 +277,13 @@ async def plausible(kitchen: str, item_text: str, p: dict, qty_explanation: str,
     """Gemini Decisions guard: is this order size believable for this kitchen? Only ever adds a question for the
     chef (fat-finger orders: an extra zero), never permits anything. → P(yes) or None."""
     money = f" Order line total: {gate.eur(total_cents)} net." if total_cents is not None else ""
-    answers = await _decisions(
-        f"{UNTRUSTED}\nThe buyer is {kitchen}.\n{_wrap(item_text)}\nProduct: {_describe(p)}.\n"
-        f"Quantity: {qty_explanation}{money}", {"plausible": {
-            "type": "noul", "instructions": "Could this kitchen plausibly need this much in one delivery? Small or "
-                                            "top-up orders always count as plausible; only judge whether it is too much.",
-            "criteria": {"true_description": "Not too much: a small, normal, or large but believable order.",
-                         "false_description": "Implausibly large: most likely a typo or a misunderstanding (an extra "
-                                              "zero, the wrong unit)."}}})
+    input_text = (f"{UNTRUSTED}\nThe buyer is {kitchen}.\n{_wrap(item_text)}\nProduct: {_describe(p)}.\n"
+                  f"Quantity: {qty_explanation}{money}")
+    answers = await _decisions(input_text, {"plausible": {"type": "noul", "instructions": "Could this kitchen "
+        "plausibly need this much in one delivery? Small or top-up orders always count as plausible; only judge whether "
+        "it is too much.", "criteria": {"true_description": "Not too much: a small, normal, or large but believable "
+        "order.", "false_description": "Implausibly large: most likely a typo or a misunderstanding (an extra zero, "
+        "the wrong unit)."}}})
     return _yes(answers["plausible"]) if answers else None
 
 
@@ -311,12 +315,12 @@ async def date_intent(text: str, requested: date, today: date) -> float | None:
     delivery date we are using the one they meant? Only asked if such a word is present; only ever adds a question."""
     if not _RELATIVE_DATE.search(text):
         return None
-    answers = await _decisions(
-        f"{UNTRUSTED}\nToday is {today:%A %d %B %Y}.\n{_wrap(text)}\n"
-        f"The order is set for delivery on {requested:%A %d %B %Y}.", {"date": {
-            "type": "noul", "instructions": "Is the delivery date the date the buyer meant?",
-            "criteria": {"true_description": "Yes: it matches what the buyer wrote, read from today's date.",
-                         "false_description": "No: the buyer most likely meant a different day."}}})
+    input_text = (f"{UNTRUSTED}\nToday is {today:%A %d %B %Y}.\n{_wrap(text)}\n"
+                  f"The order is set for delivery on {requested:%A %d %B %Y}.")
+    answers = await _decisions(input_text, {"date": {"type": "noul", "instructions":
+        "Is the delivery date the date the buyer meant?", "criteria": {
+            "true_description": "Yes: it matches what the buyer wrote, read from today's date.",
+            "false_description": "No: the buyer most likely meant a different day."}}})
     return _yes(answers["date"]) if answers else None
 
 
@@ -1373,9 +1377,11 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
                                "may not order on its own.", None, "Set up a mandate for this buyer, then retry."))
     excluded = set().union(*(gate._allergen_codes(str(v)) for v in gate._rules(m, RuleKind.EXCLUDED_ALLERGEN)))
 
+    steer_task = _given(pre.get("steer"), none) if pre.get("steer_checked") else steering(text)
+    meant_task = (_given(pre.get("meant"), none) if pre.get("meant_checked") else date_intent(
+        text, requested, datetime.now(ZoneInfo("Europe/Helsinki")).date()))
     (request, parsed_by_gemini), steer, meant = await asyncio.gather(
-        _given(pre.get("parsed"), lambda: parse(text)), _given(pre.get("steer"), lambda: steering(text)),
-        _given(pre.get("meant"), lambda: date_intent(text, requested, datetime.now(ZoneInfo("Europe/Helsinki")).date())))
+        _given(pre.get("parsed"), lambda: parse(text)), steer_task, meant_task)
     if meant is not None and meant < DATE_MIN:
         reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"Did you mean delivery on {requested:%A %d %B}? The request's "
                                f"wording suggests another day (Gemini Decisions: {_pct(meant)} that this is the day "

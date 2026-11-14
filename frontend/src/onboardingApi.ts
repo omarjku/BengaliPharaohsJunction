@@ -59,8 +59,10 @@ export const saveAnswers = (answers: Record<string, AnswerValue>): Promise<Saved
 export function useOnboarded(): { onboarded: boolean | null; refresh: () => void } {
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
   const [tick, setTick] = useState(0)
+  const agentKey = getKeys().agentKey // a different key (setup link, keys sheet) is a different kitchen: ask again
   useEffect(() => {
-    if (!MOCK && !getKeys().agentKey) return
+    setOnboarded(null)
+    if (!MOCK && !agentKey) return
     let live = true
     getOnboarding()
       .then((o) => live && setOnboarded(o.onboarded))
@@ -68,7 +70,7 @@ export function useOnboarded(): { onboarded: boolean | null; refresh: () => void
     return () => {
       live = false
     }
-  }, [tick])
+  }, [tick, agentKey])
   return { onboarded, refresh: useCallback(() => setTick((n) => n + 1), []) }
 }
 

@@ -25,7 +25,7 @@ import websockets
 from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 
-from . import ask, auth, catalogue, config, httpsig, orders, ratelimit, valio
+from . import ask, auth, catalogue, config, httpsig, kitchen, orders, ratelimit, valio
 from .voice import LIVE_URL
 
 connect = websockets.connect  # tests replace this with a fake Live socket
@@ -61,9 +61,12 @@ food wholesaler. Speak like a friendly, brief colleague, in the same language th
   first, e.g. "One second, I'll check Valio's prices." / "Hetki, tarkistan Valiolta."
 - Never invent products, prices, stock or delivery days: say only what a tool returned. Speak money naturally
   ("about fifteen euros sixty"), never read out ids or codes.
+- For questions about the current cart, answer only from the ask_agent tool result; never invent a cart line,
+  availability, price, or reason.
 - If the chef asks about something outside food or kitchen supplies (for example LEGO, flights, poems or weather),
   politely decline in one sentence, say you order food and kitchen supplies from Valio, steer back to the kitchen, and
   do not call tools.
+- Kitchen history may be simulated demo data; say so when it is.
 - Keep every answer to one or two sentences. If ask_agent returns a question, ask the chef exactly that, then pass
   the chef's answer back to ask_agent with the same conversation_id.
 - You can't approve orders: if an order needs approval, say the chef approves it on screen."""
@@ -77,8 +80,14 @@ TOOLS = [{"functionDeclarations": [
          "required": ["text"]}},
     {"name": "search_catalogue", "description": "Read-only: the top Valio products for a query, with live price "
      "and whether they can be delivered tomorrow. Orders nothing.",
-     "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}}, "required": ["query"]}}]}]
-LABELS = {"ask_agent": "Checking Valio prices and stock…", "search_catalogue": "Searching Valio's catalogue…"}
+         "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}}, "required": ["query"]}}]},
+         {"functionDeclarations": [
+    {"name": "kitchen_context", "description": "Read the kitchen's covers, revenue, leftovers, spend and usual products."
+     " Say when the returned history is simulated.", "parameters": {"type": "OBJECT", "properties": {}}},
+    {"name": "kitchen_log", "description": "Append facts from the chef's kitchen report to the kitchen log.",
+     "parameters": {"type": "OBJECT", "properties": {"text": {"type": "STRING"}}, "required": ["text"]}}]}]
+LABELS = {"ask_agent": "Checking Valio prices and stock…", "search_catalogue": "Searching Valio's catalogue…",
+          "kitchen_context": "Reading kitchen history…", "kitchen_log": "Logging kitchen report…"}
 
 
 def _eur(cents) -> str | None:
@@ -95,7 +104,8 @@ async def ask_agent(buyer_id: str, args: dict) -> tuple[dict, dict | None]:
         return {"error": str(e.detail)}, None
     body = jsonable_encoder(body)
     order = body.get("order") or {}
-    short = {"say": body.get("speak"), "question": body.get("question"), "conversation_id": body.get("conversation_id"),
+    short = {"say": body.get("reply") or body.get("speak"), "question": body.get("question"),
+             "conversation_id": body.get("conversation_id"),
              "order_status": order.get("status"), "total": _eur(order.get("total_cents") or body.get("cart_total_cents"))}
     return {k: v for k, v in short.items() if v is not None}, body
 
@@ -109,6 +119,15 @@ async def search_catalogue(args: dict) -> dict:
         quotes = {}
     return {"products": [{"name": p.get("name_en") or p.get("name_fi"), "price": (quotes.get(p["id"]) or {}).get("price"),
                           "deliverable_tomorrow": (quotes.get(p["id"]) or {}).get("orderable")} for p in hits]}
+
+
+async def kitchen_context(buyer_id: str) -> dict:
+    return {"summary": kitchen.summary(buyer_id)}
+
+
+async def kitchen_log(buyer_id: str, args: dict) -> dict:
+    out = await kitchen.log_from_text(buyer_id, str(args.get("text") or "")[:2000])
+    return {"logged": len(out["entries"]), "unclear": out["unclear"]}
 
 
 def _setup() -> dict:
@@ -210,9 +229,12 @@ async def _live_to_client(ws: WebSocket, live, buyer_id: str, bucket: str) -> No
                     out = {"error": "Too many requests in one conversation; start a new one."}
                 elif ratelimit.wait_s("agent", bucket) > 0:  # every call costs a token, like an HTTP agent request
                     out = {"error": "Too many requests right now; wait a moment, then ask again."}
-                elif name in ("ask_agent", "search_catalogue"):
-                    job = asyncio.create_task(ask_agent(buyer_id, args) if name == "ask_agent"
-                                              else search_catalogue(args))
+                elif name in ("ask_agent", "search_catalogue", "kitchen_context", "kitchen_log"):
+                    job = asyncio.create_task(
+                        ask_agent(buyer_id, args) if name == "ask_agent" else
+                        search_catalogue(args) if name == "search_catalogue" else
+                        kitchen_context(buyer_id) if name == "kitchen_context" else
+                        kitchen_log(buyer_id, args))
                     _TOOL_TASKS.add(job)  # runs to the end (order + audit) even if the chef hangs up meanwhile
                     job.add_done_callback(_TOOL_TASKS.discard)
                     res = await asyncio.shield(job)

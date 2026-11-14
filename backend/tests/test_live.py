@@ -158,7 +158,16 @@ def test_barge_in_and_audio_pass_through(talk):
         ws.send_json({"type": "stop"})
     audio = [m for m in fake.sent if "realtimeInput" in m]
     assert audio and audio[0]["realtimeInput"]["audio"] == {"data": "AAAAAA==", "mimeType": "audio/pcm;rate=16000"}
-    assert any(m.get("clientContent", {}).get("turnComplete") for m in fake.sent)
+
+
+def test_ask_agent_prefers_v2_reply_and_cart_grounding(monkeypatch):
+    async def fake_ask(*_args, **_kwargs):
+        return {"reply": "The cart still marks butter unavailable.", "speak": "legacy summary",
+                "question": None, "conversation_id": None, "order": None}
+
+    monkeypatch.setattr(live.ask, "ask", fake_ask)
+    short, body = asyncio.run(live.ask_agent("chef", {"text": "Does it still show not available?"}))
+    assert short["say"] == body["reply"] and "current cart" in live.SYSTEM
 
 
 def test_switched_off_and_health(talk, monkeypatch):

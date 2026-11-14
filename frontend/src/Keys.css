@@ -1,0 +1,25 @@
+/* Keys: a soft outer shell with a white card inside, key icons in the fields, one full-width primary action. */
+.keys-shell { width: min(26rem, 100%); margin-inline: auto; padding: var(--s2); border: 1px solid var(--line); border-radius: 28px; background: var(--wash); display: block; }
+.keys-card { display: grid; gap: var(--s5); padding: var(--s5) var(--s4); border-radius: 22px; background: var(--surface); box-shadow: 0 2px 4px rgb(0 0 0 / 0.08); }
+.keys-head { display: grid; justify-items: center; gap: var(--s2); text-align: center; }
+.keys-head .title, .keys-head .note { margin: 0; }
+.keys-badge { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: var(--bubble-mine); color: #fff; margin-block-end: var(--s1); }
+.keys-field { display: grid; gap: var(--s2); }
+.keys-field label { font-weight: 600; }
+.keys-field .field-help { margin: 0; }
+.keys-secret { position: relative; margin: 0; }
+.keys-secret input { width: 100%; min-height: 48px; padding-inline: 44px 48px; border-radius: 12px; border: 1px solid var(--field-line); background: var(--surface); color: var(--ink); transition: border-color 160ms ease, box-shadow 160ms ease; }
+.keys-secret input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.keys-lead { position: absolute; inset-inline-start: 14px; inset-block-start: 50%; transform: translateY(-50%); color: var(--ink-3); pointer-events: none; display: grid; }
+.keys-secret .secret-toggle { position: absolute; inset-inline-end: 2px; inset-block: 2px; width: 44px; display: grid; place-items: center; border: 0; border-radius: 10px; background: none; color: var(--ink-2); cursor: pointer; padding: 0; }
+.keys-secret .secret-toggle:focus-visible { outline: 3px solid var(--accent); outline-offset: -2px; }
+.keys-actions { display: grid; gap: var(--s2); }
+.keys-actions .btn { width: 100%; min-height: 48px; justify-content: center; }
+
+/* The dialog eases in instead of popping. */
+dialog.sheet[open] { animation: sheet-in 240ms var(--ease-out); }
+dialog.sheet[open]::backdrop { animation: sheet-fade 240ms ease; }
+@keyframes sheet-in { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes sheet-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { dialog.sheet[open], dialog.sheet[open]::backdrop { animation: none; } }
+.keys-secret input::-ms-reveal, .keys-secret input::-ms-clear { display: none; }
