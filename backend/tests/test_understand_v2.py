@@ -101,6 +101,29 @@ def test_usual_order_without_weekday_uses_the_only_standing_order(monkeypatch):
     assert expanded["slots"]["date"] == "2026-11-20"
 
 
+def test_standing_order_keeps_saved_lines_stated_and_adds_named_extra_once(monkeypatch):
+    monkeypatch.setattr(understand, "_fallback_items", lambda _text, **_kwargs: [{"name": "pasta", "amount": None,
+                                                                                   "unit": None, "diets": []}])
+    monkeypatch.setattr(profile, "standing_orders", lambda _buyer: [{
+        "weekday": "friday",
+        "source": "you told me",
+        "lines": [
+            {"text": "20 L milk", "quantity": 20, "unit": "L"},
+            {"text": "5 kg butter", "quantity": 5, "unit": "kg"},
+        ],
+    }])
+    action = understand._fallback_action("our usual Friday order plus pasta", TODAY, None)
+
+    expanded = understand._expand_standing_order(action, "our usual Friday order plus pasta", "chef", today=TODAY)
+    parsed, _ = ask._parsed_action(expanded, "gemini", expanded["_expanded_text"])
+
+    assert [item["name"] for item in expanded["slots"]["items"]] == ["milk", "butter", "pasta"]
+    assert [item["amount"] for item in expanded["slots"]["items"][:2]] == [20, 5]
+    assert all(not item.get("amount_assumed") for item in parsed["items"][:2])
+    assert all(item.get("standing_order") is True for item in parsed["items"][:2])
+    assert sum(bool(item.get("standing_approval")) for item in parsed["items"]) == 1
+
+
 def test_usual_order_without_weekday_asks_when_standing_days_are_ambiguous(monkeypatch):
     monkeypatch.setattr(profile, "standing_orders", lambda _buyer: [
         {"weekday": "monday", "lines": [{"text": "20 L milk"}]},
@@ -390,6 +413,34 @@ def test_v2_ask_kitchen_uses_context_without_search(monkeypatch, tmp_path):
     assert "120" in body["reply"]
 
 
+def test_v2_order_and_last_friday_question_return_both_replies(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(conversation, "STORE", tmp_path / "conversations.json")
+    _patch_v2_guards(monkeypatch)
+
+    async def fake_understand(*_args):
+        return {"source": "gemini", "actions": [
+            _action(name="butter", amount=10, unit="kg"),
+            _action("ask_kitchen", name=None),
+        ]}
+
+    async def fake_run(*_args, **_kwargs):
+        return _order_card("Valio butter unsalted", price=1400)
+
+    monkeypatch.setattr(ask.understand, "understand", fake_understand)
+    monkeypatch.setattr(ask, "kitchen_context", lambda _buyer: {
+        "covers": {"avg_per_weekday": {"fri": 120}, "last_7_days": 500},
+        "usual_products": [], "leftovers_recent": [], "simulated": True,
+    })
+    monkeypatch.setattr(agent, "run", fake_run)
+
+    body = run(ask.ask("Order 10 kg butter for Monday, and how many guests did we serve last Friday?",
+                       None, "chef"))
+
+    assert body["lines"][0]["product"]["name_en"] == "Valio butter unsalted"
+    assert "120" in body["reply"] and "simulated" in body["reply"].lower()
+
+
 def test_v2_plan_meal_vegan_is_a_cart_path(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     _patch_v2_guards(monkeypatch)
@@ -409,6 +460,25 @@ def test_v2_plan_meal_vegan_is_a_cart_path(monkeypatch, tmp_path):
     monkeypatch.setattr(ask.menu, "propose", fake_propose)
     body = run(ask.ask("vegan pizza for 20", None, "chef"))
     assert body["cart_total_cents"] == 1234 and body["intent"] == "menu"
+
+
+def test_v2_vague_party_request_offers_tappable_menu_choices(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    _patch_v2_guards(monkeypatch)
+
+    async def fake_gemini(*_args, **_kwargs):
+        return {"actions": [{"intent": "plan_meal", "slots": {
+            "items": [], "dishes": [], "guests": 30, "date": "2026-11-21",
+            "diets": [], "exclusions": [], "language": "en"
+        }}]}
+
+    monkeypatch.setattr(agent, "_gemini", fake_gemini)
+    body = run(ask.ask("stuff for a party of 30 on Saturday", None, "chef"))
+
+    assert body["question"].startswith("What kind of food")
+    assert 3 <= len(body["choices"]) <= 4
+    assert {choice["label"] for choice in body["choices"]} >= {"Finger food", "Pizza night", "Barbecue"}
+    assert "cart_total_cents" not in body and "order_lines" not in body
 
 
 def test_v2_plan_period_uses_next_monday_and_kitchen_covers(monkeypatch, tmp_path):
@@ -455,6 +525,29 @@ def test_v2_cart_questions_use_only_last_card(monkeypatch, tmp_path):
     availability = run(ask.ask("Does it still show not available?", None, "chef"))
     assert "usual product" in why["reply"] or "not available" in why["reply"]
     assert "not available" in availability["reply"]
+
+
+def test_v2_cart_quantity_reads_chosen_line_and_pending_status(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(conversation, "STORE", tmp_path / "conversations.json")
+    conversation.record_turn("chef", "assistant", "old cart", card={
+        "lines": [{"product": {"name_en": "Arla whole milk 1 l"}, "chosen": False,
+                   "quantity": {"requested": {"amount": 4, "unit": "L"}}, "line_total_cents": 600},
+                  {"product": {"name_en": "Valio semi-skimmed milk 1 l"}, "chosen": True,
+                   "quantity": {"requested": {"amount": 20, "unit": "L"}}, "line_total_cents": 2800}],
+        "order": {"status": "pending_approval"}, "requested_date": "2026-11-20",
+    })
+    _patch_v2_guards(monkeypatch)
+
+    async def fake_understand(*_args):
+        return {"source": "gemini", "actions": [_action("ask_about_cart", name=None)]}
+
+    monkeypatch.setattr(ask.understand, "understand", fake_understand)
+
+    body = run(ask.ask("How much milk is in the cart?", None, "chef"))
+
+    assert "20 × Valio semi-skimmed milk 1 l" in body["reply"]
+    assert "20 L" in body["reply"] and "waiting for your approval" in body["reply"]
 
 
 def test_v2_change_cart_reprices_changed_line(monkeypatch, tmp_path):

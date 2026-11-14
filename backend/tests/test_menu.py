@@ -1,9 +1,9 @@
 """T15 menu → cart on the offline shop: Gemini faked, Valio faked (conftest.py), Decisions faked (test_agent)."""
-from conftest import REQ
+from conftest import REQ, product, quote
 from fastapi.testclient import TestClient
 from test_agent import decisions, shop1  # noqa: F401 - pytest fixtures
 
-from app import agent, menu, orders
+from app import agent, conversation, menu, orders
 from app.main import app
 
 c = TestClient(app, raise_server_exceptions=False)
@@ -177,6 +177,36 @@ def test_order_lines_never_exceed_the_front_door_cap(shop1, monkeypatch):
     body = post("Porridge", covers=2000).json()  # 1,800 L: fine
     assert body["order_lines"] == [{"product_id": "463335", "quantity": 1800}]
     assert body["cart_total_cents"] == 1800 * 140
+
+
+def test_partial_menu_shows_cart_check_and_not_found_for_every_ingredient(shop1, monkeypatch, decisions):
+    cheese = product("407", "Plain cheese", claims=(), contains=())
+    cheese.update(base_unit="ST", units={"ST": 1.0}, volume={"unit": "LTR", "value": 1.0}, net_weight=None)
+    shop1.products["407"], shop1.quotes["407"] = cheese, quote("407", price=2.0)
+    dishes = [{"name": "Partial menu", "ingredients": [
+        {"name": "milk", "per_cover": 0.2, "unit": "L", "assumption": "200 ml", "dietary": []},
+        {"name": "cheese", "per_cover": 0.05, "unit": "kg", "assumption": "50 g", "dietary": ["vegan"]},
+        {"name": "unicorn spice", "per_cover": 0.01, "unit": "kg", "assumption": "10 g", "dietary": []},
+    ]}]
+
+    async def fake(system, prompt, schema, *_):
+        if schema is menu._MENU_SCHEMA:
+            return {"dishes": dishes}
+        return {"queries": []}
+
+    async def all_hits(item, hits):
+        return [p["id"] for p in hits]
+
+    monkeypatch.setattr(agent, "_gemini", fake)
+    monkeypatch.setattr(agent, "match", all_hits)
+    body = post("Partial menu with milk, cheese and unicorn spice").json()
+
+    coverage = body["cart_coverage"]
+    assert coverage["ingredients"] == 3 and coverage["in_cart"] == 1 and coverage["to_check"] == 1
+    assert coverage["not_found"] == ["unicorn spice"]
+    assert {line["status"] for line in body["check_lines"]} == {"check", "not_found"}
+    spoken = conversation.speak(body, "en")
+    assert "1 of 3" in spoken and "Cart ready" not in spoken
 
 
 def test_menu_steering_classifier_flags(shop1, monkeypatch, decisions):

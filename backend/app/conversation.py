@@ -271,6 +271,8 @@ def _project_line(line) -> dict | None:
         available = line["quote"].get("orderable")
     if available is not None:
         result["available"] = bool(available)
+    if "chosen" in line:
+        result["chosen"] = bool(line.get("chosen"))
     quantity_value = line.get("quantity")
     if isinstance(quantity_value, dict):
         requested = quantity_value.get("requested") if isinstance(quantity_value.get("requested"), dict) else quantity_value
@@ -294,6 +296,10 @@ def compact_card(body: dict | None) -> dict | None:
         lines = [item for item in lines if item]
         if lines:
             result[target] = lines[:50]
+    order = body.get("order") if isinstance(body.get("order"), dict) else {}
+    order_status = order.get("status") or body.get("status")
+    if order_status:
+        result["order_status"] = order_status
     for key in ("cart_total_cents", "requested_date", "question"):
         value = body.get(key)
         if value is not None and value != "":
@@ -429,6 +435,14 @@ def speak(body: dict, lang: str) -> str:
             return f"Tarvitsee hyväksyntäsi: {what}, {_eur(order.get('total_cents'))}."
         return f"Needs your OK: {what}, {_eur(order.get('total_cents'))}. {reason.split('. ')[0]}."
     if body.get("cart_total_cents") is not None:  # menu proposal
+        coverage = body.get("cart_coverage") or {}
+        ingredients, in_cart = coverage.get("ingredients"), coverage.get("in_cart")
+        to_check = coverage.get("to_check") or 0
+        not_found = len(coverage.get("not_found") or [])
+        if ingredients is not None and in_cart is not None and (in_cart < ingredients or to_check or not_found):
+            outstanding = to_check + not_found
+            return (f"Partial cart: {in_cart} of {ingredients} ingredients are in the cart; "
+                    f"{outstanding} need your look." + (f" {not_found} are not found yet." if not_found else ""))
         return (f"Ostoskori valmis: {_eur(body['cart_total_cents'])}, tarkista oletukset." if lang == "fi"
                 else f"Cart ready: {_eur(body['cart_total_cents'])}. Check the assumptions before ordering.")
     primary = decision.get("primary_reason") or {}

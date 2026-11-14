@@ -154,6 +154,53 @@ def test_f6_accepts_a_friendly_redirect_without_a_cart():
     assert result["passed"] is True
 
 
+def test_f1_amount_checker_does_not_reject_benign_stock_prose():
+    record = {
+        "reply": "The stock note is recorded; the pasta amount remains 3 kg.",
+        "cart_lines": [{"name": "Pasta", "amount": 3, "unit": "kg"}],
+    }
+
+    passed, reason = acceptance._check_f1_amount(record, [])
+
+    assert passed is True, reason
+
+
+def test_f9_treats_count_sales_units_as_base_litres_for_a_one_litre_product():
+    record = acceptance._record(
+        "agent",
+        "large_milk",
+        "1000 L lactose-free milk for Monday",
+        response({
+            "status": "pending_approval",
+            "total_cents": 156000,
+            "lines": [{
+                "chosen": True,
+                "product": {"name_en": "Eila lactose-free milk 1 l"},
+                "quantity": {"quantity": 1000, "sales_unit": "ST"},
+            }],
+        }),
+    )
+
+    passed, reason = acceptance._check_f9_large_milk(record)
+
+    assert passed is True, reason
+
+
+def test_f10_accepts_beyond_one_kitchen_scale_explanation_without_cart():
+    record = acceptance._record(
+        "agent",
+        "fifty_million",
+        "Food for 50 million people tomorrow",
+        response({
+            "question": "50,000,000 guests is beyond one kitchen; shall I plan for 500?",
+        }),
+    )
+
+    passed, reason = acceptance.check_flow_turn("F10", "fifty_million", record)
+
+    assert passed is True, reason
+
+
 def test_f9_approves_with_approver_key_and_verifies_signed_statement():
     statement = {"v": 1, "order_id": "order-9", "status": "confirmed"}
     signature = {"kid": "front-door", "alg": "Ed25519", "value": "signature"}

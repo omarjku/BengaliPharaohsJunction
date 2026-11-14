@@ -117,7 +117,10 @@ def test_phone_transcript_reaches_ask_as_four_unconfirmed_lines(shop, monkeypatc
     async def fake_run(text, when, buyer_id, pre=None):
         captured.update(text=text, when=when, buyer_id=buyer_id, request=pre["parsed"][0])
         return {"request": pre["parsed"][0], "lines": [],
-                "decision": {"outcome": "ASK_HUMAN", "reasons": []}, "order": None, "held_items": []}
+                "decision": {"outcome": "ASK_HUMAN", "reasons": [{
+                    "code": "QTY_AMBIGUOUS", "message": "How much milk?", "facts": {
+                        "amount_question": "How much milk?", "unit": "L"}}]},
+                "order": None, "held_items": []}
 
     # The onboarding preview above is now accepted; the subsequent ask deliberately exercises the fallback path.
     monkeypatch.setattr(agent, "_gemini", down)
@@ -129,7 +132,8 @@ def test_phone_transcript_reaches_ask_as_four_unconfirmed_lines(shop, monkeypatc
     items = captured["request"]["items"]
     assert [(item["query"], item["amount"], item["unit"]) for item in items] == [
         ("milk", 20.0, "L"), ("butter", 10.0, "kg"), ("cream", 5.0, "L"), ("milk", None, None)]
-    assert all(item.get("amount_assumed") for item in items[:3])
+    assert all(not item.get("amount_assumed") for item in items[:3])
+    assert all(item.get("standing_order") for item in items[:3])
     assert items[3].get("amount_assumed") is not True
     assert "20 L milk" in captured["text"] and "milk" in captured["text"]
     assert result["order"] is None and result["question"]

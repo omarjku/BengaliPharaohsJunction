@@ -342,6 +342,53 @@ def test_unrelated_pending_reply_starts_new_request_and_keeps_old_question(monke
     assert cid in json.loads(conversation.STORE.read_text())
 
 
+def test_pending_change_supersedes_the_question_and_drops_it(monkeypatch):
+    cid = conversation.save("chef", "amount", {
+        "text": "20 L milk for Friday", "requested": "2026-11-20", "question": "Use 20 L milk?",
+        "request": {"summary": "milk", "items": [{"query": "milk", "amount": 20, "unit": "L"}]},
+        "item": 0, "options": [], "unit": "L", "line_only": True,
+    })
+    seen = {}
+
+    async def fake_understand(message, *_args, pending=None):
+        seen.update(message=message, pending=pending)
+        return {"source": "gemini", "actions": [{"intent": "change_cart", "slots": {
+            "items": [{"name": "oat milk", "amount": 20, "unit": "L"}], "dishes": [], "guests": None,
+            "date": "2026-11-20", "diets": [], "exclusions": [], "language": "en",
+        }}]}
+
+    async def fake_flow(_text, _requested, _buyer_id, **kwargs):
+        seen["reading"] = kwargs.get("reading")
+        return {"intent": "order", "question": None, "requested_date": "2026-11-20", "lines": [],
+                "order": None, "decision": {"reasons": []}}
+
+    monkeypatch.setattr(ask.understand, "understand", fake_understand)
+    monkeypatch.setattr(ask, "_flow", fake_flow)
+
+    asyncio.run(ask.ask("", None, "chef", {"to": cid, "answer": "Actually, I want oat milk instead of normal milk"}))
+
+    assert seen["pending"] is None
+    assert seen["reading"]["actions"][0]["intent"] == "change_cart"
+    assert cid not in json.loads(conversation.STORE.read_text())
+
+
+def test_change_cart_replaces_the_current_milk_line_instead_of_keeping_cow_milk(monkeypatch):
+    async def fake_run(*_args, **_kwargs):
+        return {"lines": [{"name": "Oat drink 1 l", "chosen": True}], "order": None,
+                "cart_total_cents": 1000, "decision": {"reasons": []}}
+
+    monkeypatch.setattr(ask.agent, "run", fake_run)
+    action = {"intent": "change_cart", "slots": {"items": [{"name": "oat milk", "amount": 20, "unit": "L"}],
+                                                        "date": "2026-11-20"}}
+    old = {"requested_date": "2026-11-20", "lines": [{"name": "Eila milk 1 l", "chosen": True}],
+           "cart_total_cents": 2000}
+
+    result = asyncio.run(ask._execute_action(action, "oat milk instead of normal milk", None, "chef",
+                                              date(2026, 11, 14), "gemini", 0.0, old))
+
+    assert [line["name"] for line in result["lines"]] == ["Oat drink 1 l"]
+
+
 def test_end_of_week_date_is_the_next_friday():
     assert ask.date_from_text("end of the week", date(2026, 11, 14)) == date(2026, 11, 20)
 

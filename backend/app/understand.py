@@ -14,7 +14,7 @@ INTENTS = ("order_items", "plan_meal", "plan_period", "urgent", "change_cart", "
            "tell_kitchen", "greeting", "unclear", "out_of_scope", "unrealistic", "confirm", "answer", "reject", "cancel")
 _UNITS = {"l": "L", "litre": "L", "litres": "L", "liter": "L", "liters": "L", "dl": "dl", "cl": "cl",
           "ml": "ml", "kg": "kg", "kilo": "kg", "kilos": "kg", "kilogram": "kg", "kilograms": "kg",
-          "g": "g", "gram": "g", "grams": "g", "pcs": "pcs", "pc": "pcs", "piece": "pcs",
+          "g": "g", "gram": "g", "grams": "g", "st": "pcs", "pcs": "pcs", "pc": "pcs", "piece": "pcs",
           "pieces": "pcs", "kpl": "pcs"}
 _MAX_TEXT = 500
 _MAX_NAME = 120
@@ -50,6 +50,11 @@ _STANDING_TRIGGER = re.compile(r"\b(?:usual|regular|normal|same\s+as|tavallinen|
                                r"\b(?:every|joka)\b", re.I)
 _NON_FOOD = re.compile(r"\b(?:lego|legos|flight|flights|airplane|weather|poem|poems|football|vacation|holiday)\b",
                        re.I)
+_VAGUE_EVENT = re.compile(r"\b(?:party|event|celebration|gathering|occasion|wedding|birthday)\b", re.I)
+_VAGUE_EVENT_WORDS = {"a", "an", "and", "for", "of", "on", "the", "party", "event", "celebration",
+                      "gathering", "occasion", "wedding", "birthday", "stuff", "things", "food", "meal",
+                      "meals", "menu", "catering", "saturday", "sunday", "monday", "tuesday", "wednesday",
+                      "thursday", "friday"}
 
 
 def _slots_schema() -> dict:
@@ -96,8 +101,9 @@ next occurrence, and "in 30 minutes" means today. Do not invent a required produ
 question field only when code cannot safely assume it. Choices must be two or three short tappable answers with the
 right unit. For cart questions, use only the supplied compact last card. Kitchen reports are facts to log, not rules to
 learn silently. A plan_meal is a cart proposal, not an order. When the chef asks for the usual, regular, normal, or
-same-as-every-weekday order, use the matching standing order in the supplied profile; any remembered quantity is an
-assumption that code will hold for chef confirmation. This applies in the chef's language.
+same-as-every-weekday order, use the matching standing order in the supplied profile; quantities on those saved lines
+are chef-stated data. Code holds the resulting cart for one approval tap, while a newly named item with no amount may
+still need one amount question. This applies in the chef's language.
 When pending_question is present, first interpret the new message as its answer in that context. Return confirm when
 the chef accepts the proposal, including sentences that begin with "no" but then approve it ("No, that amount is
 good"). Return answer with one of date, amount, product, or choice and the final value when the chef supplies it, or
@@ -362,7 +368,7 @@ def _sanitize_choices(values) -> list[dict]:
     out = []
     if not isinstance(values, list):
         return out
-    for value in values[:3]:
+    for value in values[:4]:
         if not isinstance(value, dict):
             continue
         label = _clean_text(value.get("label"), 120)
@@ -371,7 +377,22 @@ def _sanitize_choices(values) -> list[dict]:
         amount = _number(value.get("amount"))
         unit = _unit(value.get("unit"))
         out.append({"label": label, "amount": amount, "unit": unit})
-    return out[:3]
+    return out[:4]
+
+
+def _vague_event_choices() -> list[dict]:
+    return [{"label": label, "amount": None, "unit": None} for label in
+            ("Finger food", "Pizza night", "Barbecue", "Tell me the menu")]
+
+
+def _is_vague_event(message: str, slots: dict) -> bool:
+    if not _VAGUE_EVENT.search(message) or slots.get("items"):
+        return False
+    dishes = slots.get("dishes") or []
+    if not dishes:
+        return True
+    words = set(re.findall(r"[\wäöå]+", " ".join(dishes).lower()))
+    return not (words - _VAGUE_EVENT_WORDS - set(_DAY_WORDS) - {str(slots.get("guests") or "")})
 
 
 def _sanitize_action(raw, message: str, today: date) -> dict | None:
@@ -426,6 +447,10 @@ def _sanitize_action(raw, message: str, today: date) -> dict | None:
     action = {"intent": intent, "slots": clean, "question": _clean_text(raw.get("question"), 240) or None,
               "choices": _sanitize_choices(raw.get("choices")), "reply": _clean_text(raw.get("reply"), 500) or None,
               "topic": _clean_topic(raw.get("topic")), "interpretation": interpretation}
+    if intent in ("plan_meal", "plan_period") and clean["guests"] is not None and _is_vague_event(message, clean):
+        clean["dishes"] = []
+        action["question"] = f"What kind of food would you like for the party of {clean['guests']}?"
+        action["choices"] = _vague_event_choices()
     if intent == "answer":
         answer = raw.get("answer")
         if not isinstance(answer, dict) or answer.get("slot") not in ("date", "amount", "product", "choice"):
@@ -460,14 +485,14 @@ def _sanitize_action(raw, message: str, today: date) -> dict | None:
     return action
 
 
-def _fallback_items(message: str) -> list[dict]:
+def _fallback_items(message: str, *, keep_unknown: bool = False) -> list[dict]:
     from . import agent as buyer_agent
     out = []
     reverse = {tag: next((name for name, pair in buyer_agent.DIETARY.items() if tag in pair[0] or tag in pair[1]), tag)
                for tag in buyer_agent.DIETARY}
     clean_message = re.sub(r"^\s*(?:i|we)\s+need\s+|^\s*(?:please\s+)?(?:order|buy|get|find)\s+", "", message, flags=re.I)
     for item in buyer_agent.fallback_parse(clean_message):
-        if not re.search(r"\d", clean_message) and not catalogue.search(item["query"], [], [], False, None, 1):
+        if not keep_unknown and not re.search(r"\d", clean_message) and not catalogue.search(item["query"], [], [], False, None, 1):
             continue
         tags = [reverse[tag] for tag, pair in buyer_agent.DIETARY.items()
                 if set(pair[0]) <= set(item.get("claims") or []) and set(pair[1]) <= set(item.get("exclude_allergens") or [])]
@@ -512,7 +537,7 @@ def _standing_item(line: dict) -> dict | None:
     amount = line.get("quantity") if line.get("quantity") is not None else first.get("amount")
     unit = _unit(line.get("unit")) or _unit(first.get("unit"))
     return {"name": _clean_text(name, _MAX_NAME), "amount": amount, "unit": unit, "_standing_order": True,
-            "_standing_text": text}
+            "_standing_product_id": product_id, "_standing_text": text}
 
 
 def _same_standing_item(candidate: dict, standing: dict, *, name_only: bool = False) -> bool:
@@ -574,6 +599,8 @@ def _expand_standing_order(action: dict, message: str, buyer_id: str, requested:
     if saved:
         standing_items = [item for line in saved.get("lines") or [] if isinstance(line, dict)
                           if (item := _standing_item(line))]
+        for item in standing_items:
+            item["_standing_order_day"] = day
         slots = dict(action.get("slots") or _default_slots(message))
         if not slots.get("date") and requested is None:
             reference = today or date.today()
@@ -581,7 +608,9 @@ def _expand_standing_order(action: dict, message: str, buyer_id: str, requested:
             slots["date"] = (reference + timedelta(days=(target - reference.weekday() - 1) % 7 + 1)).isoformat()
         current = [item for item in slots.get("items") or [] if isinstance(item, dict) and item.get("name")]
         current = [item for item in current if not re.search(r"\b(?:usual|regular|normal|order|tilaus|tavallinen)\b", item["name"], re.I)]
-        fallback_extras = _fallback_items(_standing_remainder(message, marker))
+        extra_requested = bool(re.search(r"\b(?:plus|add|adding|also\s+add|also\s+want\s+to\s+add|lisää|lisätään|lisäksi|myös)\b",
+                                         message, re.I))
+        fallback_extras = _fallback_items(_standing_remainder(message, marker), keep_unknown=extra_requested)
         extras = current or fallback_extras
         if current:
             for standing_item in standing_items:
@@ -596,7 +625,9 @@ def _expand_standing_order(action: dict, message: str, buyer_id: str, requested:
                         extras.pop(named)
         slots["items"] = standing_items + extras
         action = dict(action, intent="order_items", slots=slots,
-                      interpretation=action.get("interpretation") or f"Expanded your saved {day} standing order.")
+                      interpretation=action.get("interpretation") or f"Expanded your saved {day} standing order.",
+                      _standing_order_day=day,
+                      _standing_order_reason=f"From your saved {day.capitalize()} order: approve to place.")
         expanded = [item.get("_standing_text") or item.get("name") for item in standing_items]
         expanded += [f"{item['amount']:g} {item['unit']} {item['name']}" if item.get("amount") is not None and item.get("unit")
                      else item["name"] for item in extras]
@@ -605,7 +636,9 @@ def _expand_standing_order(action: dict, message: str, buyer_id: str, requested:
 
     recent = profile.recent_order_for_weekday(buyer_id, day)
     day_name = day.capitalize()
-    extras = _fallback_items(_standing_remainder(message, marker))
+    extra_requested = bool(re.search(r"\b(?:plus|add|adding|also\s+add|also\s+want\s+to\s+add|lisää|lisätään|lisäksi|myös)\b",
+                                     message, re.I))
+    extras = _fallback_items(_standing_remainder(message, marker), keep_unknown=extra_requested)
     if extras:
         slots = dict(action.get("slots") or _default_slots(message))
         slots["items"] = extras
@@ -673,10 +706,11 @@ def _fallback_action(message: str, today: date, last_card: dict | None) -> dict:
         intent = "greeting"
     else:
         intent = "unclear"
+    vague_event = intent in ("plan_meal", "plan_period") and covers is not None and _VAGUE_EVENT.search(message) and not items
     slots = _default_slots(message)
     slots["items"] = [{k: item.get(k) for k in ("name", "amount", "unit")} for item in items]
     slots["diets"] = list(dict.fromkeys(tag for item in items for tag in item.get("diets") or []))
-    slots["dishes"] = [message[:_MAX_NAME]] if intent in ("plan_meal", "plan_period") else []
+    slots["dishes"] = [] if vague_event else [message[:_MAX_NAME]] if intent in ("plan_meal", "plan_period") else []
     slots["guests"] = covers
     slots["date"] = stated.isoformat() if stated and today <= stated <= today + timedelta(days=60) else None
     if intent == "urgent" and slots["date"] is None:
@@ -684,6 +718,9 @@ def _fallback_action(message: str, today: date, last_card: dict | None) -> dict:
     topic = _topic(message)
     action = {"intent": intent, "slots": slots, "question": None, "choices": [], "reply": None, "topic": topic,
               "interpretation": None}
+    if vague_event:
+        action["question"] = f"What kind of food would you like for the party of {covers}?"
+        action["choices"] = _vague_event_choices()
     if intent == "unclear":
         action["reply"] = "Sorry, I didn't catch that, could you say it again?"
         action["question"] = action["reply"]

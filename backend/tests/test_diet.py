@@ -259,6 +259,35 @@ def test_vegan_menu_prices_natural_ingredients_and_drops_animal_cheese(shop, mon
     assert all("AM" not in (line["product"].get("allergens") or {}).get("contains", []) for line in chosen)
 
 
+def test_overconservative_vegan_risk_keeps_plain_flour_and_olive_oil(shop, monkeypatch, decisions):
+    _catalogue_product(shop, "natural-flour", "Plain wheat flour")
+    _catalogue_product(shop, "natural-oil", "Olive oil")
+    dishes = [{"name": "Vegan pizza", "ingredients": [
+        {"name": "flour", "per_cover": 0.2, "unit": "kg", "assumption": "200 g flour", "dietary": []},
+        {"name": "olive oil", "per_cover": 0.01, "unit": "L", "assumption": "10 ml oil", "dietary": []},
+    ]}]
+
+    async def fake(system, prompt, schema, *_):
+        if schema is menu._MENU_SCHEMA:
+            return {"dishes": dishes}
+        if schema is diet._RISK_SCHEMA:
+            return {"vegan": [_risk("flour"), _risk("olive oil")]}
+        return {"queries": []}
+
+    async def all_hits(item, hits):
+        return [p["id"] for p in hits]
+
+    monkeypatch.setattr(agent, "_gemini", fake)
+    monkeypatch.setattr(agent, "match", all_hits)
+    diet._RISK_CACHE.clear()
+    result = asyncio.run(menu.propose("Vegan pizza for 20 people", 20, REQ, "chef"))
+
+    chosen = {line["product"]["id"]: line for line in result["lines"] if line["chosen"]}
+    assert chosen["natural-flour"]["diet_checks"][0]["level"] == "safe_by_nature"
+    assert chosen["natural-oil"]["diet_checks"][0]["level"] == "safe_by_nature"
+    assert {line["product_id"] for line in result["order_lines"]} >= {"natural-flour", "natural-oil"}
+
+
 def test_gluten_free_menu_keeps_natural_foods_and_explains_flour_swap(shop, monkeypatch, decisions):
     for pid, name, contains in (("salmon", "Salmon fillet", ("AF",)), ("carrot", "Carrot", ()),
                                 ("leek", "Leek", ()), ("dill", "Dill", ())):

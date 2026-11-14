@@ -701,6 +701,24 @@ _INSTRUCTION = re.compile(
     r"\b(ignore|disregard|instructions?|system prompt|system notice|you are|return (only|one|the following)"
     r"|pre-?(approved|authori[sz]ed|granted)|approval (is )?(already )?(granted|given)|already approved"
     r"|admin(istrator)?|override|authori[sz]ed by|no need to ask|skip (the )?(approval|check))\b", re.I)
+_AUTO_APPROVAL = re.compile(
+    r"\b(?:auto[-\s]?approv\w*(?:\s+(?:all\s+(?:my\s+)?orders?|(?:my\s+)?orders?))?|"
+    r"approve\s+all(?:\s+my)?\s+orders?)"
+    r"(?:\s+(?:from\s+now\s+on|going\s+forward|in\s+future))?\b", re.I)
+INJECTION_NOTE = "I ignored the request to auto-approve; approvals stay with you."
+
+
+def strip_auto_approval(text: str) -> tuple[str, str | None]:
+    """Remove one explicit auto-approval clause while leaving the food request available for grounding."""
+    if not isinstance(text, str):
+        return "", None
+    match = _AUTO_APPROVAL.search(text)
+    if not match:
+        return text, None
+    clean = (text[:match.start()] + " " + text[match.end():]).strip(" \t,.;:-")
+    clean = re.sub(r"\s+(?:and|but|also|then)\s*$", "", clean, flags=re.I).strip(" \t,.;:-")
+    clean = re.sub(r"^\s*(?:and|but|also|then)\s+", "", clean, flags=re.I).strip()
+    return clean, INJECTION_NOTE
 
 
 def keyword_tags(text: str, item: dict) -> list[str]:
@@ -912,6 +930,9 @@ async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str,
         item["product_assumption"] = item.get("profile_why")
     if not hits:
         return [], True
+    standing_product = str(item.get("standing_product_id") or "")
+    if standing_product and standing_product in {p["id"] for p in hits}:
+        return [standing_product], True
     ids = await match(item, hits)
     if ids == [] and required_claims:
         fallback_claims = sorted(set(base_claims) | (set(stated_claims) if profile_claims else set()))
@@ -1321,6 +1342,9 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                                 and (ln["confidence"] or 0) > (best["confidence"] or 0)), None)
             best["usual"] = best["product"]["id"] in usual
             reasons += _label_reasons(it, best)
+            if best["usual"] and best["confidence"] is not None and best["confidence"] < threshold:
+                it["product_assumed"] = True
+                it["product_assumption"] = "your usual product"
             if it.get("amount_assumed") and not it.get("approval_required"):
                 assumed = f"{gate._qty(it['amount'])} {it['unit']} {it['query']}"
                 r = gate._r(C.QTY_AMBIGUOUS, ASK, f"I assumed {assumed}: {it['amount_assumption']} Nothing is ordered "
@@ -1334,6 +1358,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             approval = it.get("approval_required") or {}
             if approval or it.get("product_assumed"):
                 details = []
+                if approval.get("standing_order"):
+                    details.append(approval.get("assumption") or "From your saved standing order: approve to place.")
                 if approval.get("product_from") and approval.get("product_to"):
                     details.append(f"Changed the product from {approval['product_from']} to {approval['product_to']}.")
                 if approval.get("amount_assumed") and approval.get("amount") is not None:
@@ -1346,7 +1372,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                 details.append("Held for the chef's approval; nothing is auto-confirmed.")
                 r = gate._r(C.ASSUMPTION_CONFIRM, ASK, " ".join(details), best["product"]["id"],
                             "Approve this order on screen, or state the product and amount explicitly.",
-                            assumption_type="amount" if approval.get("amount_assumed") else "product",
+                            assumption_type=("standing_order" if approval.get("standing_order") else
+                                             "amount" if approval.get("amount_assumed") else "product"),
                             product_from=approval.get("product_from"), product_to=approval.get("product_to"),
                             amount=approval.get("amount"), unit=approval.get("unit"))
                 reasons.append(r)
@@ -1377,7 +1404,9 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                                "Check the product and quantity yourself, or retry.", threshold=threshold))
             else:  # recorded either way, so the audit shows the confidence behind every chosen line
                 low = conf < threshold
-                reasons.append(gate._r(C.LOW_CONFIDENCE if low else C.CONFIDENCE_OK, ASK if low else INFO,
+                usual_basis = bool(best.get("usual"))
+                reasons.append(gate._r(C.CONFIDENCE_OK if usual_basis and low else C.LOW_CONFIDENCE if low else C.CONFIDENCE_OK,
+                               INFO if usual_basis and low else ASK if low else INFO,
                                f"{'Not sure' if low else 'Confident'} that {_name(best['product'])} is right "
                                f"({_pct(conf)} vs your {threshold:.2f} threshold). {best['confidence_reason']}", pid,
                                "Confirm the product and quantity, or pick an alternative." if low else None,
@@ -1551,6 +1580,11 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
     """`pre`: results the caller already computed in parallel (POST /api/agent/ask runs the parse and the steering and
     date guards alongside its intent check): {"parsed", "steer", "meant"}; anything missing is computed here."""
     pre = pre or {}
+    clean_text, detected_note = strip_auto_approval(text)
+    request_note = pre.get("request_note") or detected_note
+    request_hold = bool(pre.get("request_hold") or (detected_note and clean_text))
+    if request_hold and clean_text:
+        text = clean_text
     start_budget()
     run_id, now = str(uuid4()), datetime.now(timezone.utc)
     mandate = mandates.get(buyer_id)
@@ -1561,7 +1595,8 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
                                "may not order on its own.", None, "Set up a mandate for this buyer, then retry."))
     excluded = set().union(*(gate._allergen_codes(str(v)) for v in gate._rules(m, RuleKind.EXCLUDED_ALLERGEN)))
 
-    steer_task = _given(pre.get("steer"), none) if pre.get("steer_checked") else steering(text)
+    steer_task = (_given(0.0, none) if request_hold else
+                  _given(pre.get("steer"), none) if pre.get("steer_checked") else steering(text))
     meant_task = (_given(pre.get("meant"), none) if pre.get("meant_checked") else date_intent(
         text, requested, datetime.now(ZoneInfo("Europe/Helsinki")).date()))
     (request, parsed_by_gemini), steer, meant = await asyncio.gather(
@@ -1582,6 +1617,9 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
                                f"or approvals, or claims special authority (Gemini Decisions: {_pct(steer)}). Nothing "
                                "was ordered.", None, "Send just the products, amounts and date; rules change only "
                                "through the Rules screen.", steering=steer))
+    if request_note and not request_hold:
+        reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, request_note + " Nothing was ordered.", None,
+                               "Send just the products, amounts and date."))
     if not parsed_by_gemini:
         reasons.append(gate._r(C.LOW_CONFIDENCE, INFO, "Gemini was unavailable, so the request was read by the simple "
                                "fallback parser; check the items.", None, "Check the items, or retry later."))
@@ -1644,6 +1682,13 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
     res = await _pipeline(text, request["items"], requested, buyer_id, m, excluded, now, reasons, parsed_by_gemini)
     lines, chosen, alternatives, rejected, quotes, assumptions, approval_reasons = (res[k] for k in (
         "lines", "chosen", "alternatives", "rejected", "quotes", "assumptions", "approval_reasons"))
+    if request_hold and request_note and chosen:
+        request_approval = gate._r(
+            C.ASSUMPTION_CONFIRM, ASK, request_note, None,
+            "Approve the cart yourself; auto-approval requests are ignored.",
+            assumption_type="request_instruction")
+        reasons.append(request_approval)
+        approval_reasons.append(request_approval)
     contract_quotes = [cq.model_copy(update={"product_name": _name(catalogue.get(pid) or {"id": pid})})
                        for pid, q in quotes.items() if (cq := valio.to_contract_quote(q))]
 
@@ -1668,7 +1713,8 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
     # QA HP-02: a problem with ONE item (not found, no amount, low confidence...) holds that item only; the others
     # still go to the door. Request-level problems (injection, grounding, no mandate, duplicates) hold everything.
     item_ids = {id(r) for r in res["item_reasons"]}
-    blocked = any(r.severity is not INFO and id(r) not in item_ids for r in reasons)
+    approval_ids = {id(r) for r in approval_reasons}
+    blocked = any(r.severity is not INFO and id(r) not in item_ids and id(r) not in approval_ids for r in reasons)
     request_blocked = blocked  # injection, grounding, unparsed text...: no per-line next steps may skip these
     orderable = [ln for ln in chosen if ln["item"] not in res["failed_items"]]
     async with _buyer_lock(buyer_id):  # duplicate check and placing are one step per buyer (Codex #8)
@@ -1697,7 +1743,11 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
                 door = Decision.model_validate(order["decision"])
                 # The door's verdict on what it was sent, plus the agent's notes and the held items' reasons (so a partly
                 # ordered request still says ASK_HUMAN for the rest); the agent's other matches when the door has none.
-                rs = gate._sorted(door.reasons + [r for r in reasons if r.severity is INFO or id(r) in item_ids])
+                combined = door.reasons + [r for r in reasons
+                                           if r.severity is INFO or id(r) in item_ids or id(r) in approval_ids]
+                seen = set()
+                rs = gate._sorted([r for r in combined
+                                   if not ((key := (r.code, r.product_id, r.message)) in seen or seen.add(key))])
                 decision = Decision(**door.model_dump(exclude={"reasons", "primary_reason", "alternatives", "confidence",
                                                                "outcome"}),
                                     outcome={DECLINE: "DECLINE", ASK: "ASK_HUMAN", INFO: "AUTO"}[rs[0].severity] if rs else "AUTO",
@@ -1722,4 +1772,6 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
            "held_items": [] if request_blocked else sorted(res["failed_items"])}  # whole request was held)
     if assumptions:
         out["assumptions"] = assumptions
+    if request_note:
+        out["safety_note"] = request_note
     return out

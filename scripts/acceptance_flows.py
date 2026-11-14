@@ -303,6 +303,15 @@ def _reply_lower(record: dict[str, Any]) -> str:
     return str(record.get("reply") or "").casefold()
 
 
+def _product_search_failure(text: str) -> bool:
+    """Recognise stock language only when it says the requested product is unavailable."""
+    return bool(re.search(
+        r"(?:doesn['’]t|does not|don't|do not|cannot|can't|can’t)\s+(?:seem\s+to\s+)?stock\b"
+        r"|\b(?:no|not)\s+(?:currently\s+)?in\s+stock\b",
+        text,
+    ))
+
+
 def _all_text(record: dict[str, Any]) -> str:
     body = record.get("body") if isinstance(record.get("body"), dict) else {}
     return " ".join([_reply_lower(record), _clip(body.get("requested_date")), _clip(body.get("date_source"))]).casefold()
@@ -434,7 +443,7 @@ def _check_f1_usual_plus_pasta(record: dict[str, Any]) -> tuple[bool, str]:
 
 def _check_f1_amount(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
     text = _reply_lower(record)
-    if "doesn't seem to stock" in text or "stock " in text:
+    if _product_search_failure(text):
         return False, "accepted amount reply contains a stock failure"
     current = _matching_lines(record, "pasta")
     previous = []
@@ -454,7 +463,28 @@ def _check_f1_amount(record: dict[str, Any], history: list[dict[str, Any]]) -> t
 def _check_f9_large_milk(record: dict[str, Any]) -> tuple[bool, str]:
     if record.get("status") != "pending_approval":
         return False, f"status is {record.get('status')}, not pending_approval"
-    if not _has_line(record, ("milk", "maito"), 1000, "L"):
+
+    def base_litres(line: dict[str, Any]) -> float | None:
+        amount = _amount(line.get("amount"))
+        if amount is None:
+            return None
+        unit = _normal_unit(line.get("unit"))
+        if unit == "l":
+            return amount
+        if unit != "pcs":
+            return None
+        pack = re.search(r"(\d+(?:[.,]\d+)?)\s*(ml|l)\b", _name(line))
+        if not pack:
+            return None
+        size = float(pack.group(1).replace(",", "."))
+        return amount * (size / 1000 if pack.group(2) == "ml" else size)
+
+    milk_volume = any(
+        abs(volume - 1000) <= 1e-6
+        for line in _matching_lines(record, "milk", "maito")
+        if (volume := base_litres(line)) is not None
+    )
+    if not milk_volume:
         return False, "cart has no 1000 L milk line"
     cents = _total_cents(record)
     if cents is None or not 130000 <= cents <= 180000:
@@ -539,6 +569,7 @@ def _specific_check(flow_id: str, check: str, record: dict[str, Any], history: l
     if check == "scale_guard":
         scale = (any(word in text for word in ("too many", "too much", "realistic", "smaller", "scale", "alternative",
                                                 "not possible", "not feasible", "maximum", "limit"))
+                 or "beyond one kitchen" in text
                  or ("million" in text and any(word in text for word in ("large", "huge", "realistic", "smaller", "scale"))))
         return (True, "scale is explained or reduced without a cart") if scale and not lines else (False, "impossible scale was not handled without a cart")
     if check == "party_proposal":

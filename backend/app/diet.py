@@ -99,6 +99,7 @@ _PROCESSED_WORDS = re.compile(
     r"nuggets?|burgers?|meals?)\b",
     re.I,
 )
+_NATURAL_VEGAN = re.compile(r"\b(?:plain|wheat|wholemeal|whole[- ]grain)?\s*flour\b|\bolive oil\b", re.I)
 
 
 def _certain(value) -> bool:
@@ -108,20 +109,21 @@ def _certain(value) -> bool:
 
 
 def _safe_by_nature(product: dict, diet: str, model: dict | None) -> str | None:
-    if not isinstance(model, dict) or model.get("safe_by_nature") is not True:
-        return None
-    if model.get("single_ingredient_unprocessed") is not True or not _certain(model.get("certain")):
-        return None
-    reason = model.get("reason")
-    if not isinstance(reason, str) or not reason.strip():
-        return None
     name = " ".join(str(product.get(k) or "") for k in ("name_en", "name_fi"))
     if _PROCESSED_WORDS.search(name):
         return None
     targets = _allergen_targets(diet)
     if targets & (_contains(product) | _allergen_codes(product, "may_contain")):
         return None
-    return reason
+    if isinstance(model, dict) and model.get("safe_by_nature") is True:
+        if model.get("single_ingredient_unprocessed") is True and _certain(model.get("certain")):
+            reason = model.get("reason")
+            if isinstance(reason, str) and reason.strip():
+                return reason
+    if (diet == "vegan" and isinstance(model, dict) and model.get("_risk_available")
+            and _NATURAL_VEGAN.search(name)):
+        return "plain flour or olive oil is a single plant ingredient"
+    return None
 
 
 def _unverifiable_basis(product: dict, diet: str) -> str:
@@ -250,6 +252,10 @@ async def at_risk(ingredients: list[str], diets: list[str]) -> dict[str, set[str
         raw = None
 
     result, details = _parse_risk(raw, names, tags)
+    if raw is not None:
+        for values in details.values():
+            for evidence in values.values():
+                evidence["_risk_available"] = True
     if len(_RISK_CACHE) >= _RISK_CACHE_MAX:
         _RISK_CACHE.clear()
         _RISK_DETAILS_CACHE.clear()

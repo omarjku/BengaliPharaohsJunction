@@ -186,15 +186,21 @@ async def ask(text: str, requested: date | None, buyer_id: str, follow_up: dict 
         answer = follow_up["answer"]
         entry = conversation.peek(follow_up["to"], buyer_id)
         today = datetime.now(TZ).date()
+        supersedes = _pending_change(answer, entry)
         try:
             reading = await understand.understand(answer, buyer_id, conversation.turns(buyer_id),
                                                   conversation.last_card(buyer_id), today,
-                                                  pending=_pending_context(entry))
+                                                  pending=None if supersedes else _pending_context(entry))
         except Exception:
             log.exception("pending understanding failed; using offline answer fallback")
             reading = None
         actions = reading.get("actions") if isinstance(reading, dict) else None
-        if isinstance(reading, dict) and reading.get("source") == "gemini" and actions:
+        if supersedes:
+            if entry:
+                conversation.take(follow_up["to"], buyer_id)
+            out = await _flow(answer, requested, buyer_id, reading=reading)
+            text = answer
+        elif isinstance(reading, dict) and reading.get("source") == "gemini" and actions:
             follow_up_actions = {"confirm", "answer", "reject", "cancel"}
             if all(action.get("intent") in follow_up_actions for action in actions):
                 entry = conversation.take(follow_up["to"], buyer_id)
@@ -271,8 +277,13 @@ def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict
         if not out.get("question") and out["next_steps"]:  # a multi-line order: the first held line's question leads
             out["question"], out["conversation_id"] = out["next_steps"][0]["question"], out["next_steps"][0]["conversation_id"]
     out["speak"] = out.get("reply") or conversation.speak(out, conversation.language(text))
+    if out.get("safety_note"):
+        out["reply"] = f"{out['safety_note']} {out.get('reply') or out['speak']}".strip()
+        out["speak"] = out["reply"]
     if out.get("covers_source") == "kitchen":
         out["speak"] = " ".join(filter(None, [out["speak"], out.get("covers_assumption"), out.get("kitchen_note")]))
+    if out.get("cart_total_cents") is not None and not out.get("reply"):
+        out["reply"] = out["speak"]
     if v2:
         first_card = {k: v for k, v in out.items() if k not in {"cards", "understood", "reply", "choices"}}
         cards[0] = first_card
@@ -709,16 +720,21 @@ def _parsed_action(action: dict, source: str, text: str) -> tuple[dict, bool]:
         parsed = agent._item(item["name"], item.get("amount"), item.get("unit"), agent._diet_tags(item, tags),
                              source=item.get("source") or item["name"])
         if item.get("_standing_order"):
-            assumption = "from your saved standing order; confirm this remembered line before ordering"
-            parsed.update(amount_assumed=True, amount_assumption=assumption)
-            if parsed.get("amount") is not None and parsed.get("unit"):
-                parsed["approval_required"] = {"amount_assumed": True, "amount": parsed["amount"],
-                                                 "unit": parsed["unit"], "assumption": assumption}
+            parsed["standing_order"] = True
+            parsed["standing_order_day"] = item.get("_standing_order_day") or action.get("_standing_order_day")
+            if item.get("_standing_product_id"):
+                parsed["standing_product_id"] = item["_standing_product_id"]
         for key in ("approval_required", "product_assumed", "product_assumption", "amount_assumed", "amount_assumption"):
             if key in item:
                 value = item[key]
                 parsed[key] = dict(value) if key == "approval_required" and isinstance(value, dict) else value
         items.append(parsed)
+    standing = [item for item in items if item.get("standing_order")]
+    if standing:
+        day = standing[0].get("standing_order_day") or "standing"
+        reason = action.get("_standing_order_reason") or f"From your saved {day.capitalize()} order: approve to place."
+        standing[0]["standing_approval"] = reason
+        standing[0]["approval_required"] = {"standing_order": True, "assumption": reason}
     return {"summary": text, "items": items}, source == "gemini"
 
 
@@ -742,8 +758,16 @@ def _cart_reply(text: str, card: dict | None) -> str:
     if not card:
         return "There is nothing in the cart yet."
     lines = [line for line in card.get("lines") or [] if isinstance(line, dict)]
+    chosen = [line for line in lines if line.get("chosen")]
+    if chosen:
+        lines = chosen
+    elif any("chosen" in line for line in lines):
+        lines = []
     low = text.lower()
     target = next((line for line in lines if line.get("name", "").lower() in low), lines[0] if lines else None)
+    if target is None and lines:
+        query_words = set(re.findall(r"[\wäöå]+", low))
+        target = max(lines, key=lambda line: len(query_words & set(re.findall(r"[\wäöå]+", line.get("name", "").lower()))))
     if re.search(r"\bwhy\b|\blocked at\b|\blook at\b", low):
         if target and target.get("why"):
             return f"I looked at {target['name']} because {target['why']}."
@@ -754,8 +778,49 @@ def _cart_reply(text: str, card: dict | None) -> str:
         if target and target.get("available") is True:
             return f"{target['name']} is still marked available."
         return "The last cart does not include a current availability result."
+    if re.search(r"\bhow much\b|\bhow many\b|\bamount\b|\bquantity\b", low):
+        if not target:
+            return "The last cart has no item lines with a quantity."
+        quantity = target.get("quantity") if isinstance(target.get("quantity"), dict) else {}
+        amount, unit = quantity.get("amount"), quantity.get("unit")
+        if amount is None or not unit:
+            return f"{target.get('name', 'That item')} is in the cart, but its amount is not recorded."
+        amount_text = f"{amount:g}" if isinstance(amount, (int, float)) else str(amount)
+        status = card.get("order_status") or ((card.get("order") or {}).get("status")
+                                               if isinstance(card.get("order"), dict) else None)
+        status_text = {"pending_approval": "waiting for your approval", "confirmed": "confirmed"}.get(
+            status, "in the current cart")
+        return f"{amount_text} × {target['name']} ({amount_text} {unit}), {status_text}."
     names = ", ".join(line["name"] for line in lines[:5] if line.get("name"))
-    return f"The last cart included {names}." if names else "The last cart has no item lines."
+    status = card.get("order_status")
+    suffix = f" ({status.replace('_', ' ')})" if status else ""
+    return f"The last cart included {names}{suffix}." if names else "The last cart has no item lines."
+
+
+def _pending_change(text: str, entry: dict | None) -> bool:
+    """A replacement/change is a new cart instruction, even when a question is open for the old line."""
+    if not entry:
+        return False
+    return bool(re.search(r"\b(?:instead\s+of|rather\s+than|replace|replacing|swap|switch|change|make\s+it|remove|delete|add|plus)\b",
+                         text, re.I))
+
+
+def _changed_line_names(text: str, item_names: set[str], old: dict | None) -> set[str]:
+    """Return old cart line names a replacement phrase supersedes, in addition to the new item name."""
+    if not old or not re.search(r"\b(?:instead\s+of|rather\s+than|replace|replacing|swap|switch|change|make\s+it)\b",
+                               text, re.I):
+        return set(item_names)
+    fragments = []
+    fragments.extend(re.findall(r"\b(?:instead\s+of|rather\s+than)\s+([^,.!?]+)", text, re.I))
+    fragments.extend(re.findall(r"\b(?:replace|replacing|swap|switch)\s+([^,.!?]+?)\s+with\b", text, re.I))
+    old_tokens = {token for fragment in fragments for token in re.findall(r"[\wäöå-]+", fragment.lower())
+                  if len(token) > 2}
+    changed = set(item_names)
+    for line in old.get("lines") or []:
+        name = str(line.get("name") or "").strip()
+        if name and old_tokens.intersection(re.findall(r"[\wäöå-]+", name.lower())):
+            changed.add(name.lower())
+    return changed
 
 
 def _kitchen_reply(text: str, context: dict) -> str:
@@ -771,7 +836,8 @@ def _kitchen_reply(text: str, context: dict) -> str:
         return f"Usual products include {names}." if names else "There are no usual products recorded yet."
     if "friday" in low or "perjantai" in low:
         value = covers.get("fri")
-        return f"We usually feed about {value:g} people on Fridays." if isinstance(value, (int, float)) else \
+        simulated = " (simulated demo history)" if (context or {}).get("simulated") else ""
+        return f"We usually feed about {value:g} people on Fridays{simulated}." if isinstance(value, (int, float)) else \
             "There is no Friday cover history recorded."
     last = ((context or {}).get("covers") or {}).get("last_7_days")
     return f"The kitchen recorded {last:g} covers in the last seven days." if isinstance(last, (int, float)) else \
@@ -794,7 +860,7 @@ def _merge_changed_card(old: dict | None, fresh: dict, names: set[str], removed:
 
 async def _execute_action(action: dict, text: str, requested: date | None, buyer_id: str, today: date,
                           source: str, steer: float | None, last_card: dict | None,
-                          meant: float | None = None) -> dict:
+                          meant: float | None = None, request_note: str | None = None) -> dict:
     intent = action["intent"]
     slots = action.get("slots") or {}
     if intent == "unclear":
@@ -835,6 +901,7 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
         if not last_card:
             return _simple_card(intent, "There is nothing in the cart to change.")
         changed = {str(item.get("name") or "").lower() for item in slots.get("items") or [] if item.get("name")}
+        changed = _changed_line_names(text, changed, last_card)
         removed = changed if re.search(r"\b(remove|delete|poista)\b", text, re.I) else set()
         if not changed and (slots.get("date") or requested):
             return dict(last_card, intent="order", requested_date=(slots.get("date") or
@@ -852,7 +919,8 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
         parsed, parsed_by_gemini = _parsed_action({"slots": slots}, source, text)
         fresh = await agent.run(text, when, buyer_id, pre={"parsed": (parsed, parsed_by_gemini), "steer": steer,
                                                            "steer_checked": steer is not None, "meant": meant,
-                                                           "meant_checked": meant is not None})
+                                                           "meant_checked": meant is not None, "request_note": request_note,
+                                                           "request_hold": bool(request_note)})
         return _merge_changed_card(last_card, fresh | {"intent": "order", "requested_date": when.isoformat()}, changed, set())
 
     when, date_source = _action_date(action, requested, today)
@@ -908,7 +976,8 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
     parsed, parsed_by_gemini = _parsed_action(action, source, request_text)
     body = await agent.run(request_text, when, buyer_id, pre={"parsed": (parsed, parsed_by_gemini), "steer": steer,
                                                        "steer_checked": steer is not None, "meant": meant,
-                                                       "meant_checked": meant is not None})
+                                                       "meant_checked": meant is not None, "request_note": request_note,
+                                                       "request_hold": bool(request_note)})
     try:
         urgent_options = urgent.urgent_options(text, buyer_id, when, datetime.now(TZ), body.get("lines", []))
     except (KeyError, TypeError):
@@ -920,9 +989,10 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
 
 async def _safe_action(action: dict, text: str, requested: date | None, buyer_id: str, today: date,
                        source: str, steer: float | None, last_card: dict | None,
-                       meant: float | None = None) -> dict:
+                       meant: float | None = None, request_note: str | None = None) -> dict:
     try:
-        return await _execute_action(action, text, requested, buyer_id, today, source, steer, last_card, meant)
+        return await _execute_action(action, text, requested, buyer_id, today, source, steer, last_card, meant,
+                                     request_note)
     except Exception:  # one malformed action must not cancel sibling actions
         log.exception("ask action failed")
         return _error_card(action)
@@ -937,8 +1007,12 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
     today = datetime.now(TZ).date()
     t0 = time.monotonic()
     progress.phase("understanding")
+    clean_text, request_note = agent.strip_auto_approval(text)
+    request_hold = bool(request_note and clean_text)
+    processing_text = clean_text if request_hold else text
     steer = await agent.steering(text)
-    if agent._INSTRUCTION.search(text) or agent._BILLING.search(text) or (steer is not None and steer >= agent.INJECTION_MAX):
+    if (agent._INSTRUCTION.search(text) or agent._BILLING.search(text) or (request_note and not clean_text) or
+            (steer is not None and steer >= agent.INJECTION_MAX)) and not request_hold:
         return {"_v2": {"cards": [_ask("order", None, requested, "request" if requested else None,
                                          "This request seems to try to steer the agent (instructions, approvals, billing "
                                          "or authority claims). Nothing was ordered.", C.LOW_CONFIDENCE,
@@ -955,7 +1029,8 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
             for item in parsed[0].get("items") or []:
                 row = {"name": item["query"], "amount": item.get("amount"), "unit": item.get("unit")}
                 for key in ("source", "claims", "exclude_allergens", "approval_required", "product_assumed",
-                            "product_assumption", "amount_assumed", "amount_assumption"):
+                            "product_assumption", "amount_assumed", "amount_assumption", "standing_order",
+                            "standing_order_day", "standing_product_id", "standing_approval"):
                     if key in item:
                         value = item[key]
                         row[key] = dict(value) if key == "approval_required" and isinstance(value, dict) else value
@@ -965,7 +1040,7 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
     elif reading is not None:
         actions, source = reading.get("actions") or [], reading.get("source", "fallback")
     else:
-        reading = await understand.understand(text, buyer_id, conversation.turns(buyer_id),
+        reading = await understand.understand(processing_text, buyer_id, conversation.turns(buyer_id),
                                                conversation.last_card(buyer_id), today, None, requested)
         actions, source = reading.get("actions") or [], reading.get("source", "fallback")
     if len(actions) > 5:
@@ -983,13 +1058,15 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
     async def date_check(action):
         try:
             when, reason = _action_date(action, requested, today)
-            return await agent.date_intent(text, when, today) if when is not None and reason != "conflict" else None
+            return await agent.date_intent(processing_text, when, today) if when is not None and reason != "conflict" else None
         except Exception:
             log.exception("date guard failed")
             return None
 
     date_checks = await asyncio.gather(*(date_check(action) for action in actions))
-    results = await asyncio.gather(*(_safe_action(action, text, requested, buyer_id, today, source, steer, last_card, meant)
+    run_steer = 0.0 if request_hold else steer
+    results = await asyncio.gather(*(_safe_action(action, processing_text, requested, buyer_id, today, source, run_steer,
+                                                   last_card, meant, request_note)
                                      for action, meant in zip(actions, date_checks)))
     cards = [dict(result) if index == 0 else _public_card(result) for index, result in enumerate(results)]
     replies = [str(result.get("reply")).strip() for result in results if result.get("reply")]

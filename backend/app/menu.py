@@ -493,18 +493,47 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
     cart_total = sum(int((Decimal(price[p]) * Decimal(str(q))).quantize(Decimal(1), ROUND_HALF_UP))
                      for p, q in qty.items())
     in_cart = {ln["item"] for ln in chosen if ln["product"]["id"] in qty}
-    priced = {ln["item"] for ln in res["chosen"]}
-    missing = [ing["query"] for n, ing in enumerate(ingredients) if n not in priced and not ing.get("have")]
-    coverage = {"ingredients": len(ingredients), "in_cart": len(in_cart), "to_check": len(check),
-                "check_total_cents": sum(ln.get("line_total_cents") or 0 for ln in check), "not_found": missing,
-                "have": len(left)}
-    if check or missing:  # the headline total must never look like the whole menu when it isn't
+    checked_items = {ln["item"] for ln in check}
+    check_lines = [{"product_id": ln["product"]["id"], "quantity": ln["quantity"]["quantity"],
+                    "name": agent._name(ln["product"])} for ln in check]
+    candidate_checks = []
+    candidate_check_totals = []
+    missing = []
+    for n, ing in enumerate(ingredients):
+        if n in in_cart or ing.get("have"):
+            continue
+        candidates_for_item = [ln for ln in lines if ln.get("item") == n and ln.get("product")]
+        if candidates_for_item:
+            if n in checked_items:
+                continue
+            best = next((ln for ln in candidates_for_item if ln.get("chosen")), candidates_for_item[0])
+            checked_items.add(n)
+            candidate_checks.append({"status": "check", "ingredient": ing["query"],
+                                     "product_id": best["product"]["id"],
+                                     "quantity": best.get("quantity") and best["quantity"].get("quantity"),
+                                     "name": agent._name(best["product"]), "reason": best.get("why")})
+            candidate_check_totals.append(best.get("line_total_cents") or 0)
+        else:
+            missing.append(ing["query"])
+    if candidate_checks:
+        reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, "Left out of the order lines until you check them: "
+                               + "; ".join(line["name"] for line in candidate_checks) + ". Add them back once the "
+                               "doubt on each line is cleared.", None, "Check those lines, then add them to the order."))
+    check_total = sum(ln.get("line_total_cents") or 0 for ln in check)
+    check_total += sum(candidate_check_totals)
+    check_lines += candidate_checks
+    check_lines += [{"status": "not_found", "ingredient": name, "product_id": None, "quantity": None,
+                     "name": name, "reason": "No product was found in the catalogue."} for name in missing]
+    check_count = len(checked_items)
+    coverage = {"ingredients": len(ingredients), "in_cart": len(in_cart), "to_check": check_count,
+                "check_total_cents": check_total, "not_found": missing, "have": len(left)}
+    if check_count or missing:  # the headline total must never look like the whole menu when it isn't
         reasons.append(gate._r(C.MENU_ASSUMPTIONS, gate.INFO, f"EUR {cart_total / 100:,.2f} covers {len(in_cart)} of "
-                               f"{len(ingredients)} ingredients" + (f"; {len(check)} need your look (about EUR "
-                               f"{coverage['check_total_cents'] / 100:,.2f})" if check else "")
+                f"{len(ingredients)} ingredients" + (f"; {check_count} need your look (about EUR "
+                               f"{coverage['check_total_cents'] / 100:,.2f})" if check_count else "")
                                + (f"; no product found yet for {', '.join(missing)}" if missing else "") + ".",
                                None, "Check the held lines, then add them to the order.",
-                               in_cart=len(in_cart), to_check=len(check)))
+                               in_cart=len(in_cart), to_check=check_count))
     confs = [ln["confidence"] for ln in chosen]
     confidence = min(confs) if confs and None not in confs else None
     decision = agent._decision(run_id, reasons, res["alternatives"], now, confidence)
@@ -526,6 +555,5 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
             # computed like the front door will (unit price x summed quantity), so the chef sees what they'll pay
             "cart_total_cents": cart_total, "cart_coverage": coverage,
             "order_lines": [{"product_id": p, "quantity": q} for p, q in qty.items()],
-            "check_lines": [{"product_id": ln["product"]["id"], "quantity": ln["quantity"]["quantity"],
-                             "name": agent._name(ln["product"])} for ln in check],
+            "check_lines": check_lines,
             "decision": decision.model_dump(mode="json"), "audit_id": entry.id}
