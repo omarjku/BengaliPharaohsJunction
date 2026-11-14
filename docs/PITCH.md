@@ -32,18 +32,19 @@ agents. The buyer's agent is the visitor, and Valio wants a front door.*
 It is not fully autonomous on purpose: the agent acts alone only when it is sure and within the buyer's limits.
 Otherwise it asks the chef, with the reason and alternatives."
 
-**0:40 Demo 1: the happy path, end to end (50 s). J1, J2.**
-1. Type "1000 L lactose-free milk for Monday".
-2. "Gemini read the request, and Gemini's Decisions API judged each candidate: all three milks are what the chef
-   asked for, around 0.9 or higher. So the cheapest wins: €1,400, within the chef's limit, confirmed by itself."
-   (**J2**: exactly what the buyer asked for.)
-3. "Every quote is live from Valio's API: price, stock, cut-off. Here are the facts: on time 100%, 1.1 kg CO2 per
-   kg, Finnish."
-4. Now "1500 L": "€2,100 is over the chef's €1,500 limit and the €2,000 per-line cap, so the door holds it." Switch
-   to the approver key and approve. "The agent key can't approve; only the human can." (**J1**: request → lookup →
-   order → approval, for real.)
-5. If time allows: "10 kg sugar for baking". "Gemini doubts the 5-gram sachets, below 0.5, and picks caster sugar,
-   around 0.9. The first match isn't what you meant."
+**0:40 Demo 1: autonomy, then control (50 s). J1, J2.**
+1. **Voice, in Finnish** (on the phone, push-to-talk): "Sata litraa laktoositonta maitoa maanantaiksi."
+   "Mid-service, hands busy: the words appear in a second. Gemini judges each milk, and the one it's sure of is
+   within the chef's limits, so it's ordered by itself: €156." (**J2**: exactly what was asked, in the chef's
+   language.)
+2. Now type "1000 L lactose-free milk for Monday": "Same milk, but €60 over the chef's €1,500 limit, so the door
+   holds it." Open "Other options": "whole milk was a near-tie; the milk *drink* it judged a different product."
+3. Approve on the phone with the approver key: "The agent's key can't approve; only the human can." (**J1**:
+   request → lookup → order → approval, for real.)
+4. "Every quote is live from Valio's API: price, stock, cut-off. Here are the facts: on time 100%, carbon per kg,
+   Finnish origin."
+5. If time allows: "10 kg sugar for baking" → caster sugar. "Plain caster sugar for baking. Our evaluation keeps
+   5-gram sachets out: they score under 0.4."
 
 **1:30 Demo 2: a trap (30 s). J4.**
 1. Run a Terminal product, for example "60 L Arla lactose-free whole milk drink for Monday".
@@ -52,13 +53,14 @@ Otherwise it asks the chef, with the reason and alternatives."
    allergen-safe and in the same category."
 3. If time allows, show a split: "51 in stock, 1,000 asked: here's the same order covered by a second product,
    proposed to the chef."
-4. **One box for everyone** (live now): the same input takes "20 kg döner kebab meat for the rotisserie" (it finds
-   Well Kebab beef kebab meat) and "100 litraa laktoositonta maitoa maanantaiksi" (Finnish, understood). Then paste a
-   menu without a guest count. The agent asks "For how many guests?"; answer "80". Gemini proposes ingredients with
+4. **One box for everyone:** the same input takes "20 kg döner kebab meat for the rotisserie" (it finds Well Kebab
+   kebab meat, and asks first because Gemini is only about 0.6 sure). Then paste a menu without a guest count. The
+   agent asks "For how many guests?"; answer "80" for a cart of about €881. Gemini proposes ingredients with
    per-portion assumptions, and each one is quoted live. The cart always asks the chef, because recipe amounts are guesses, and Gemini's doubts flag the lines to check
    (for example brown sugar *sachets* for a cheesecake).
 
-5. **Urgent, in Helsinki** (if time allows; switch to the `helsinki-bistro` keys): "5 kg butter ASAP". Delivery is
+5. **Urgent, in Helsinki** (if time allows; switch to the `helsinki-bistro` keys): say "Five kilos of butter, as soon as possible"
+   (not "cream": plain cream isn't found for this buyer). Delivery is
    about 24 h on agreed days, so the agent suggests the Cash & Carry walk-in and Click & Collect (ready in about
    4 hours). Both are clearly marked as suggestions: it never places a pickup order.
 
@@ -74,8 +76,8 @@ the options we rejected and why, goes to an append-only audit log." Open the aud
 - a Peppol order mapping;
 - an MCP server, so Claude, ChatGPT or Gemini CLI can plug into the same door.
 
-Every assumption and data trap is written down, and the path to production is concrete: Postgres, signed requests
-under RFC 9421, AP2-style signed mandates."
+Agents can already sign their requests under RFC 9421, as an option per buyer. Every assumption and data trap is
+written down, and the path to production is concrete: Postgres, then AP2-style signed mandates."
 
 **2:40 Gemini and Codex (15 s).**
 "Gemini isn't decoration here.
@@ -87,13 +89,18 @@ under RFC 9421, AP2-style signed mandates."
 
 ## The 10 hardest questions
 
+0. **"How do you know the agent picks the right product?"** Our own QA caught it picking *coffee* milk for a plain
+   lactose-free milk order: it was the cheapest, and Gemini was barely confident about it. Calibrated confidence plus
+   ranking fixed it: confidence leads, and price only breaks near-ties. Coffee milk and coffee cream are now labelled
+   traps in the evaluation, so it can't quietly come back.
+
 1. **"Your API keys sit in the browser. Isn't that insecure?"**
    - The keys in the UI are demo keys for one demo buyer. They live in the browser's localStorage, which is readable
      by any script on that page (noted as a `ponytail:` comment in `frontend/src/api.ts`). They can only order or
      approve within that buyer's mandate.
    - Valio's API key and the Gemini key never reach the browser; only the backend holds them.
-   - In production each agent gets its own identity: OAuth client credentials, or signed requests under RFC 9421.
-     Approvers sign in as people.
+   - A buyer can already require RFC 9421 signatures from its agent (an Ed25519 key per agent, optional today). In
+     production every agent signs, or uses OAuth client credentials, and approvers sign in as people.
 
 2. **"What if Gemini is down?"**
    - Parsing falls back to a simple parser and keyword search, and the answer says so.
@@ -142,7 +149,7 @@ under RFC 9421, AP2-style signed mandates."
 
 9. **"What's the path to production?"** In order:
    1. Postgres, with a tamper-evident audit.
-   2. Per-agent identity, using RFC 9421 or mTLS.
+   2. Per-agent identity for every buyer: RFC 9421 signing, which is already optional, made mandatory, or mTLS.
    3. Buyers editing their own versioned mandates.
    4. Multi-worker locking.
    5. Signed quotes.
