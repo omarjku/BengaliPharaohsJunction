@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getKeys, getKitchenContext, MOCK, VOICE_READY } from './api'
+import { KcGroup } from './KcCards'
 import { MemoryPanel } from './MemoryPanel'
 import { useCopy } from './i18n'
 import { Onboarding } from './Onboarding'
@@ -107,82 +108,127 @@ export function Kitchen({ refreshKey }: { refreshKey: number }) {
           <p className="quiet">{t.historyEmpty}</p>
         ) : (
           <div className="kitchen-history">
-            <div className="kitchen-summary">
-              <p className="kitchen-metric">
-                <span>{t.coversLast7(c.count(history.covers.last_7_days))}</span>
-              </p>
-              <p className="kitchen-metric">
-                <span>{t.trend(trend)}</span>
-              </p>
-              <p className="kitchen-metric">
-                <span>{t.busiest(busiest)}</span>
-              </p>
-            </div>
+            <KcGroup
+              heading=""
+              closeLabel={t.kcClose}
+              items={[
+                {
+                  key: 'covers', label: t.kcLblCovers, title: c.count(history.covers.last_7_days), big: true,
+                  popupTitle: t.kcLblCovers, detail: <p>{t.coversLast7(c.count(history.covers.last_7_days))}</p>,
+                },
+                {
+                  key: 'trend', label: t.kcLblTrend, title: trend, big: true,
+                  popupTitle: t.kcLblTrend, detail: <p>{t.trend(trend)}</p>,
+                },
+                {
+                  key: 'busiest', label: t.kcLblBusiest, title: busiest, big: true,
+                  popupTitle: t.kcLblBusiest, detail: <p>{t.busiest(busiest)}</p>,
+                },
+                {
+                  key: 'revenue', label: t.kcLblRevenue, big: true,
+                  title: history.revenue.last_7_days_eur === null ? t.notReported : c.price(history.revenue.last_7_days_eur),
+                  popupTitle: t.kcLblRevenue,
+                  detail: (
+                    <>
+                      <p>{t.revenueLast7(history.revenue.last_7_days_eur === null ? t.notReported : c.price(history.revenue.last_7_days_eur))}</p>
+                      <p className="quiet small">{t.sourceValue(history.revenue.source || t.notReported)}</p>
+                    </>
+                  ),
+                },
+                {
+                  key: 'sources', label: t.kcLblSources, title: history.sources.length ? history.sources.join(', ') : t.notReported,
+                  popupTitle: t.kcLblSources, detail: <p className="quiet small">{t.sourcesValue(history.sources.length ? history.sources.join(', ') : t.notReported)}</p>,
+                },
+              ]}
+            />
 
-            <div className="kitchen-history-block">
-              <h3 className="title">{t.averageWeekday}</h3>
-              <ul className="kitchen-weekdays">
-                {DAYS.map((day) => {
-                  const value = history.covers.avg_per_weekday[day]
-                  return (
-                    <li key={day}>
-                      <span>{t.weekdays[day]}</span>
-                      <span className="kitchen-metric-value num">{value === null ? t.notReported : c.count(value)}</span>
-                    </li>
-                  )
-                })}
-              </ul>
-            </div>
+            <KcGroup
+              heading={t.averageWeekday}
+              closeLabel={t.kcClose}
+              items={[
+                {
+                  key: 'weekday', title: t.averageWeekday, popupTitle: t.averageWeekday,
+                  line: (() => {
+                    const top = DAYS.filter((day) => history.covers.avg_per_weekday[day] !== null).sort((a, b) => (history.covers.avg_per_weekday[b] ?? 0) - (history.covers.avg_per_weekday[a] ?? 0))[0]
+                    return top ? `${t.weekdays[top]}: ${c.count(history.covers.avg_per_weekday[top] as number)}` : undefined
+                  })(),
+                  detail: (
+                    <ul className="kc-detail-list">
+                      {DAYS.map((day) => {
+                        const value = history.covers.avg_per_weekday[day]
+                        return (
+                          <li key={day}>
+                            <span>{t.weekdays[day]}</span>
+                            <span className="num">{value === null ? t.notReported : c.count(value)}</span>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  ),
+                },
+              ]}
+            />
 
-            <div className="kitchen-history-block">
-              <p className="kitchen-history-line">{t.revenueLast7(history.revenue.last_7_days_eur === null ? t.notReported : c.price(history.revenue.last_7_days_eur))}</p>
-              <p className="quiet small">{t.sourceValue(history.revenue.source || t.notReported)}</p>
-            </div>
+            <KcGroup
+              heading={t.recentLeftovers}
+              closeLabel={t.kcClose}
+              items={
+                history.leftovers_recent.length
+                  ? history.leftovers_recent.map((leftover, index) => {
+                      const text = t.leftover(leftover.item, leftover.amount === null || leftover.unit === null ? t.notReported : t.amount(leftover.amount, leftover.unit))
+                      return {
+                        key: `${leftover.date}-${leftover.item}-${index}`, title: leftover.item, line: t.leftoverDate(c.day(leftover.date)),
+                        popupTitle: leftover.item,
+                        detail: (
+                          <>
+                            <p>{text}</p>
+                            <p className="quiet small">{t.leftoverDate(c.day(leftover.date))}</p>
+                          </>
+                        ),
+                      }
+                    })
+                  : [{ key: 'none', title: t.notReported, popupTitle: t.recentLeftovers, detail: <p className="quiet">{t.notReported}</p> }]
+              }
+            />
 
-            <div className="kitchen-history-block">
-              <h3 className="title">{t.recentLeftovers}</h3>
-              {history.leftovers_recent.length ? (
-                <ul className="kitchen-items">
-                  {history.leftovers_recent.map((leftover, index) => (
-                    <li key={`${leftover.date}-${leftover.item}-${index}`}>
-                      <p>{t.leftover(leftover.item, leftover.amount === null || leftover.unit === null ? t.notReported : t.amount(leftover.amount, leftover.unit))}</p>
-                      <p className="quiet small">{t.leftoverDate(c.day(leftover.date))}</p>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="quiet">{t.notReported}</p>
-              )}
-            </div>
+            <KcGroup
+              heading={t.usualProducts}
+              closeLabel={t.kcClose}
+              items={
+                history.usual_products.length
+                  ? history.usual_products.map((product, index) => ({
+                      key: `${product.name}-${index}`, title: product.name, popupTitle: product.name, detail: <p>{product.name}</p>,
+                    }))
+                  : [{ key: 'none', title: t.notReported, popupTitle: t.usualProducts, detail: <p className="quiet">{t.notReported}</p> }]
+              }
+            />
 
-            <div className="kitchen-history-block">
-              <h3 className="title">{t.usualProducts}</h3>
-              {history.usual_products.length ? (
-                <ul className="kitchen-products">
-                  {history.usual_products.map((product, index) => <li key={`${product.name}-${index}`}>{product.name}</li>)}
-                </ul>
-              ) : (
-                <p className="quiet">{t.notReported}</p>
-              )}
-            </div>
-
-            <div className="kitchen-history-block">
-              <h3 className="title">{t.spendPerWeek}</h3>
-              {history.spend.per_week_cents.length ? (
-                <ul className="kitchen-spend">
-                  {history.spend.per_week_cents.map((week) => (
-                    <li key={week.week}>{t.spendWeek(week.week, c.money(week.cents))}</li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="quiet">{t.notReported}</p>
-              )}
-              <p className="quiet small">{t.sourceValue(history.spend.source || t.notReported)}</p>
-            </div>
-
-            <div className="kitchen-sources">
-              <p className="quiet small">{t.sourcesValue(history.sources.length ? history.sources.join(', ') : t.notReported)}</p>
-            </div>
+            <KcGroup
+              heading={t.spendPerWeek}
+              closeLabel={t.kcClose}
+              items={[
+                {
+                  key: 'spend', title: t.spendPerWeek, popupTitle: t.spendPerWeek,
+                  line: history.spend.per_week_cents.length
+                    ? t.spendWeek(history.spend.per_week_cents[history.spend.per_week_cents.length - 1].week, c.money(history.spend.per_week_cents[history.spend.per_week_cents.length - 1].cents))
+                    : t.notReported,
+                  detail: (
+                    <>
+                      {history.spend.per_week_cents.length ? (
+                        <ul className="kc-detail-list">
+                          {history.spend.per_week_cents.map((week) => (
+                            <li key={week.week}>{t.spendWeek(week.week, c.money(week.cents))}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="quiet">{t.notReported}</p>
+                      )}
+                      <p className="quiet small">{t.sourceValue(history.spend.source || t.notReported)}</p>
+                    </>
+                  ),
+                },
+              ]}
+            />
           </div>
         )}
       </section>

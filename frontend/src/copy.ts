@@ -1,7 +1,7 @@
 // Everything the chef reads that isn't data lives here, so wording can be tuned in one place.
 // Voice: a calm colleague. Short sentences, plain words, the number that matters, no system-speak.
 import { flagLabel, formatCents, formatDateTime, formatDay, formatEuro, ownWords, stockText } from './format'
-import type { Mandate, RuleChange, Reason } from './types'
+import type { Mandate, RuleChange, Reason, RuleCat } from './types'
 
 const euro = (cents: number) => {
   const whole = cents % 100 === 0
@@ -137,32 +137,32 @@ const words = (v: unknown) => String(v).toLowerCase().replace(/_/g, ' ')
 
 // The rules in force, one plain sentence each, with the chef's own words when the rule came from them.
 // `words`, when set, is how the line is written back into the editable text (exact ids and dates).
-export function ruleLines(m: Mandate): { text: string; said: string | null; words?: string }[] {
-  const out: { text: string; said: string | null; words?: string }[] = []
+export function ruleLines(m: Mandate): { text: string; said: string | null; words?: string; cat: RuleCat }[] {
+  const out: { text: string; said: string | null; words?: string; cat: RuleCat }[] = []
   for (const r of m.hard_rules) {
     const said = ownWords(m, r.source_text)
     switch (r.kind) {
-      case 'excluded_allergen': out.push({ text: `Never anything with ${allergen(r.value)}.`, said }); break
-      case 'required_claim': out.push({ text: `Only products that are ${words(r.value)}.`, said }); break
+      case 'excluded_allergen': out.push({ text: `Never anything with ${allergen(r.value)}.`, said, cat: 'safety' }); break
+      case 'required_claim': out.push({ text: `Only products that are ${words(r.value)}.`, said, cat: 'safety' }); break
       case 'auto_approve_limit_cents':
-        out.push({ text: `Orders up to ${cents(r.value)} go through on their own. Above that, you’re asked.`, said }); break
-      case 'max_unit_price_cents': out.push({ text: `Never more than ${cents(r.value)} per unit.`, said }); break
+        out.push({ text: `Orders up to ${cents(r.value)} go through on their own. Above that, you’re asked.`, said, cat: 'spending' }); break
+      case 'max_unit_price_cents': out.push({ text: `Never more than ${cents(r.value)} per unit.`, said, cat: 'spending' }); break
       case 'min_delivery_reliability':
-        out.push({ text: `You’re asked before anything that’s on time less than ${Math.round(Number(r.value) * 100)}% of the time.`, said }); break
-      default: out.push({ text: said ?? `${words(r.kind)}: ${r.value}`, said: null })
+        out.push({ text: `You’re asked before anything that’s on time less than ${Math.round(Number(r.value) * 100)}% of the time.`, said, cat: 'suppliers' }); break
+      default: out.push({ text: said ?? `${words(r.kind)}: ${r.value}`, said: null, cat: 'other' })
     }
   }
-  out.push({ text: `At most ${euro(m.per_line_cap_cents)} for one product in an order.`, said: null })
-  if (m.weekly_budget_cents) out.push({ text: `A budget of ${euro(m.weekly_budget_cents)} a week.`, said: null })
+  out.push({ text: `At most ${euro(m.per_line_cap_cents)} for one product in an order.`, said: null, cat: 'spending' })
+  if (m.weekly_budget_cents) out.push({ text: `A budget of ${euro(m.weekly_budget_cents)} a week.`, said: null, cat: 'spending' })
   if (m.blocklist.length)
-    out.push({ text: `${m.blocklist.length} product${m.blocklist.length > 1 ? 's are' : ' is'} never ordered.`, said: null, words: `Never order product ${m.blocklist.join(', ')}.` })
+    out.push({ text: `${m.blocklist.length} product${m.blocklist.length > 1 ? 's are' : ' is'} never ordered.`, said: null, words: `Never order product ${m.blocklist.join(', ')}.`, cat: 'safety' })
   out.push({
     text: { ask: 'When the agent can’t check something, it asks you.', decline: 'When the agent can’t check something, it doesn’t order.', approve: 'When the agent can’t check something, it orders anyway.' }[m.uncertainty_policy] ?? '',
-    said: null,
+    said: null, cat: 'approvals',
   })
-  for (const g of m.guidance) out.push({ text: `Preference: ${g.text}`, said: null })
+  for (const g of m.guidance) out.push({ text: `Preference: ${g.text}`, said: null, cat: 'other' })
   if (m.expires_at)
-    out.push({ text: `These rules end on ${new Date(m.expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}.`, said: null, words: `These rules end on ${m.expires_at.slice(0, 10)}.` })
+    out.push({ text: `These rules end on ${new Date(m.expires_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}.`, said: null, words: `These rules end on ${m.expires_at.slice(0, 10)}.`, cat: 'other' })
   return out
 }
 
@@ -435,6 +435,13 @@ export const UI = {
   },
   rules: {
     title: 'Your rules',
+    rpAvatar: (name: string): string => `Avatar for ${name}`,
+    rpFilters: 'Show rules by kind',
+    rpAll: 'All',
+    rpCats: { spending: 'Spending', safety: 'Safety', suppliers: 'Suppliers', approvals: 'Approvals', other: 'Other' },
+    rpKitchenLine: (name: string): string => `Ordering for ${name}.`,
+    rpRulesLine: (n: number, first: string): string => `${n} ${n === 1 ? 'rule' : 'rules'} in force. ${first}`,
+    rpToTell: 'Tell the agent your rules',
     intro: 'What the agent follows on every order. Valio’s front door checks them again.',
     needKey: 'Add your approver key under Keys to see and change your rules.',
     know: 'What I know about your kitchen',
@@ -542,6 +549,14 @@ export const UI = {
     scope: { always: 'always', this_order: 'this order only' } as Record<string, string>,
     revoke: 'Revoke',
     revoking: 'Revoking…',
+    kcClose: 'Close',
+    kcRemembered: 'Remembered',
+    kcSource: (source: string): string => `Source: ${source}`,
+    kcLblCovers: 'Covers, last 7 days',
+    kcLblTrend: 'Trend',
+    kcLblBusiest: 'Busiest days',
+    kcLblRevenue: 'Revenue, last 7 days',
+    kcLblSources: 'Sources',
     revokeFailed: 'That memory could not be revoked.',
     revokeNeedsKey: 'Add your approver key under Keys to revoke a remembered preference.',
     usualFromHistory: (n: number): string => `${n} usual ${n === 1 ? 'product' : 'products'} from your order history`,

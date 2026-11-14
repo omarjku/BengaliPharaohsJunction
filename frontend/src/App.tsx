@@ -30,7 +30,6 @@ import { Composer } from './Composer'
 import { Onboarding } from './Onboarding'
 import { useOnboarded } from './onboardingApi'
 import { Kitchen } from './Kitchen'
-import { KitchenChip } from './KitchenChip'
 import { onboardingSkippedFor, skipOnboardingFor, useKitchen } from './useKitchen'
 import { Conversation, type VoiceLayout } from './Conversation'
 import { Orb } from './Orb'
@@ -526,8 +525,6 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
           <>
             <section hidden={view !== 'order'} aria-label={u.nav.order}>
               <h1 className="sr-only">{u.nav.order}</h1>
-              {/* HOOK: which kitchen this device is signed in as (KitchenChip.tsx, useKitchen.ts) */}
-              <KitchenChip kitchen={kitchen} onSwitch={() => keysDialog.current?.showModal()} />
               {onboardingOpen ? (
                 <Onboarding
                   onDone={() => {
@@ -645,6 +642,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                 refreshKey={auditKey}
                 onAction={refreshAudit}
                 onAnnounce={setAnnounce}
+                kitchen={kitchen}
+                onSwitch={() => keysDialog.current?.showModal()}
               />
             </section>
 
