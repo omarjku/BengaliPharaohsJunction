@@ -209,6 +209,18 @@ details[open]::details-content { block-size: auto; }
   .split-row .qty { grid-column: 1; grid-row: 2; text-align: start; color: var(--ink-2); font: var(--t-small); }
 }
 
+/* --- Menu: covers next to the date; dishes and the cart grouped by ingredient. */
+.ask-inputs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s5); }
+.covers { display: inline-flex; align-items: center; gap: var(--s2); color: var(--ink-2); }
+.covers input {
+  width: 5.5rem; min-height: var(--tap); padding: 0 var(--s3); border: 1px solid var(--field-line); border-radius: var(--radius);
+  font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.covers input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+.dish { font-weight: 600; margin-block-start: var(--s4); }
+.cart-group { padding-block-end: var(--s3); }
+.cart-group details { border-block-end: 0; }
+
 /* --- Messages. */
 .banner { margin-block: 0 var(--s6); }
 .empty { margin-block-start: var(--s6); }

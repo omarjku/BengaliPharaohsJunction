@@ -7,7 +7,7 @@
 //   anything else                        -> AUTO, order confirmed (small butter order)
 import type {
   AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
-  Product, Quote, QuantityResolution, Reason, RunInput, Substitute,
+  MenuInput, MenuRun, Product, Quote, QuantityResolution, Reason, RunInput, Substitute,
 } from './types'
 
 const NOW = '2026-11-14T10:00:00+00:00'
@@ -318,7 +318,92 @@ function log(actor: string, buyer_id: string, text: string, d: Decision): string
 
 const orders = new Map<string, { buyer: string; res: OrderResponse; signedOffBy?: string }>()
 
+// Menu → cart (POST /api/agent/menu): two dishes for 80 covers. Amounts per cover are the agent's estimates.
+const menuLine = (
+  item: number, dishes: string[], p: Product, price: number, amount: number, unit: string, units: number, per: number, chosen = true,
+): Line => ({
+  product: p,
+  quote: quote({ product_id: p.id, price, sales_unit: p.sales_unit, available_amount: 9999999999, order_cutoff: '2026-11-15T13:00:00+02:00' }),
+  quantity: qty(p.id, amount, unit, p.sales_unit ?? 'ST', units, per, `${amount} ${unit} ÷ ${per} ${unit} per ${p.sales_unit} = ${units} ${p.sales_unit}.`),
+  line_total_cents: Math.round(price * 100 * units),
+  why: chosen ? 'Best match for this ingredient, in stock for Monday.' : 'Also matches, but costs more.',
+  chosen,
+  confidence: chosen ? 0.93 : 0.88,
+  confidence_reason: null,
+  facts: { delivery_reliability: p.delivery_reliability, carbon_kg_per_kg: p.carbon_kg_per_kg, origin: 'fi' },
+  item,
+  dishes,
+})
+const SOUP = 'Creamy salmon soup'
+const PIE = 'Lingonberry quark pie'
+const MENU: Omit<MenuRun, 'audit_id'> = {
+  menu: {
+    dishes: [
+      {
+        name: SOUP,
+        ingredients: [
+          { name: 'whipping cream', per_cover: 0.05, unit: 'L', assumption: 'About 0.5 dl of cream per bowl.' },
+          { name: 'milk', per_cover: 0.15, unit: 'L', assumption: 'A 2.5 dl bowl, a bit over half of it milk.' },
+        ],
+      },
+      {
+        name: PIE,
+        ingredients: [
+          { name: 'soft quark', per_cover: 0.06, unit: 'kg', assumption: 'One slice from a 12-slice pie.' },
+          { name: 'whipping cream', per_cover: 0.03, unit: 'L', assumption: 'Cream in the filling.' },
+          { name: 'butter', per_cover: 0.02, unit: 'kg', assumption: 'Butter in the crust.' },
+        ],
+      },
+    ],
+  },
+  assumptions: [
+    { ingredient: 'whipping cream', dish: SOUP, per_cover: 0.05, unit: 'L', text: 'About 0.5 dl of cream per bowl.' },
+    { ingredient: 'milk', dish: SOUP, per_cover: 0.15, unit: 'L', text: 'A 2.5 dl bowl, a bit over half of it milk.' },
+    { ingredient: 'soft quark', dish: PIE, per_cover: 0.06, unit: 'kg', text: 'One slice from a 12-slice pie.' },
+    { ingredient: 'whipping cream', dish: PIE, per_cover: 0.03, unit: 'L', text: 'Cream in the filling.' },
+    { ingredient: 'butter', dish: PIE, per_cover: 0.02, unit: 'kg', text: 'Butter in the crust.' },
+  ],
+  ingredients: [
+    { query: 'whipping cream', amount: 6.4, unit: 'L', claims: [], exclude_allergens: [], dishes: [SOUP, PIE] },
+    { query: 'milk', amount: 12, unit: 'L', claims: [], exclude_allergens: [], dishes: [SOUP] },
+    { query: 'soft quark', amount: 4.8, unit: 'kg', claims: [], exclude_allergens: [], dishes: [PIE] },
+    { query: 'butter', amount: 1.6, unit: 'kg', claims: [], exclude_allergens: [], dishes: [PIE] },
+  ],
+  lines: [
+    menuLine(0, [SOUP, PIE], product({ id: '464194', name_en: 'Valio whipping cream 1 l UHT lactose free', sales_unit: 'ST', delivery_reliability: 1 }), 4.35, 6.4, 'L', 7, 1),
+    menuLine(0, [SOUP, PIE], product({ id: '464699', name_en: 'Valio whipping cream 1 l lactose free, organic', sales_unit: 'ST', delivery_reliability: 0.947 }), 5.9, 6.4, 'L', 7, 1, false),
+    menuLine(1, [SOUP], product({ id: '463335', name_en: 'Valio Eila® 3 % milk drink 1 l lactose free', sales_unit: 'ST', delivery_reliability: 1 }), 1.56, 12, 'L', 12, 1),
+    menuLine(2, [PIE], product({ id: '463196', name_en: 'Valio soft quark 250 g', sales_unit: 'KI', claims: [], delivery_reliability: 0.98 }), 9.8, 4.8, 'kg', 2, 3),
+    menuLine(3, [PIE], product({ id: '464411', name_en: 'Valio butter 500 g unsalted', sales_unit: 'ST', claims: [], delivery_reliability: 1 }), 4.85, 1.6, 'kg', 4, 0.5),
+  ],
+  cart_total_cents: 3045 + 1872 + 1960 + 1940,
+  order_lines: [
+    { product_id: '464194', quantity: 7 },
+    { product_id: '463335', quantity: 12 },
+    { product_id: '463196', quantity: 2 },
+    { product_id: '464411', quantity: 4 },
+  ],
+  decision: decision(
+    'ASK_HUMAN',
+    [
+      reason('MENU_ASSUMPTIONS', 'ASK_HUMAN', 'This cart is a proposal for 80 covers: the quantities rest on per-cover assumptions (listed with the cart). Nothing is ordered until you confirm.', {
+        suggested_fix: 'Check the amounts per cover, then order the cart.',
+      }),
+    ],
+    [],
+    0.93,
+  ),
+}
+
 export const mockApi = {
+  async menu(input: MenuInput): Promise<MenuRun> {
+    await wait()
+    if (input.menu_text.toLowerCase().includes('error')) throw new Error('Request failed (500): mock backend error')
+    const m = structuredClone(MENU)
+    m.decision.reasons[0].message = m.decision.reasons[0].message.replace('80 covers', `${input.covers} covers`)
+    return { ...m, audit_id: log('buyer_agent', 'lapland-kitchen', `Menu for ${input.covers} covers: ${input.menu_text}`, m.decision) }
+  },
+
   async health(): Promise<Health> {
     await wait()
     return { status: 'ok', valio_key_configured: true, gemini_key_configured: true, catalogue: { ready: true, products: 17546, error: null } }
@@ -359,7 +444,7 @@ export const mockApi = {
   async place(input: OrderInput): Promise<OrderResponse> {
     await wait()
     const known = new Map<string, { name: string; unit: string | null; cents: number | null }>()
-    for (const f of [MILK, BUTTER, CREAM, SHORT]) {
+    for (const f of [MILK, BUTTER, CREAM, SHORT, { lines: MENU.lines, substitutes: [] }]) {
       for (const l of f.lines) known.set(l.product.id, { name: l.product.name_en ?? l.product.id, unit: l.product.sales_unit, cents: l.quote?.price != null ? Math.round(l.quote.price * 100) : null })
       for (const s of f.substitutes ?? []) known.set(s.product_id, { name: s.name, unit: s.unit, cents: s.unit_price_cents })
     }

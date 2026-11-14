@@ -94,6 +94,8 @@ export type Line = {
   confidence?: number | null // Gemini Decisions API: P(this product is what the buyer asked for)
   confidence_reason?: string | null
   facts?: LineFacts
+  item?: number // index into the request's items (menu: into ingredients)
+  dishes?: string[] // menu runs: the dishes this line is for
 }
 
 // gate._substitutes: up to 3 allergen-safe substitutes per refused line, best first.
@@ -149,6 +151,20 @@ export type AgentRun = {
   order: OrderResponse | null
   audit_id: string
 }
+
+// POST /api/agent/menu: a proposed cart for a menu (always ASK_HUMAN; nothing is ordered until order_lines are posted).
+export type MenuIngredient = { name: string; per_cover: number | null; unit: string | null; assumption: string | null }
+export type MenuRun = {
+  menu: { dishes: { name: string; ingredients: MenuIngredient[] }[] }
+  assumptions: { ingredient: string; dish: string; per_cover: number; unit: string | null; text: string }[]
+  ingredients: (RequestItem & { dishes: string[] })[]
+  lines: Line[]
+  cart_total_cents: number
+  order_lines: { product_id: string; quantity: number }[]
+  decision: Decision
+  audit_id: string
+}
+export type MenuInput = { menu_text: string; covers: number; requested_date: string }
 
 export type RunInput = { text: string; requested_date: string; buyer_id?: string }
 export type OrderInput = { requested_date: string; lines: { product_id: string; quantity: number }[] }

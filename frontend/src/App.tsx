@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { getHealth, getKeys, MOCK, runAgent, setKeys, type ApiKeys } from './api'
 import { AuditLog } from './AuditLog'
+import { MenuPlanner } from './Menu'
 import { EXAMPLE, RUNNING } from './copy'
 import { errorText, formatDay, nextMonday } from './format'
 import { RunResult } from './RunResult'
 import type { AgentRun } from './types'
 
-type View = 'order' | 'history'
+type View = 'order' | 'menu' | 'history'
 
 // "lapland-kitchen" -> "Lapland kitchen": the buyer id is all the API tells us about the buyer.
 const buyerLabel = (id: string) => id.replace(/[-_.]+/g, ' ').replace(/^./, (c) => c.toUpperCase())
@@ -63,6 +64,9 @@ export default function App() {
           <nav aria-label="Main">
             <button type="button" className="link" aria-current={view === 'order' ? 'page' : undefined} onClick={() => setView('order')}>
               Order
+            </button>
+            <button type="button" className="link" aria-current={view === 'menu' ? 'page' : undefined} onClick={() => setView('menu')}>
+              Menu
             </button>
             <button type="button" className="link" aria-current={view === 'history' ? 'page' : undefined} onClick={() => setView('history')}>
               History
@@ -154,6 +158,10 @@ export default function App() {
                   onAnnounce={setAnnounce}
                 />
               )}
+            </section>
+
+            <section hidden={view !== 'menu'} aria-label="Menu">
+              <MenuPlanner onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} />
             </section>
 
             <section hidden={view !== 'history'} aria-label="History">
