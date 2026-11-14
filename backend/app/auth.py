@@ -7,8 +7,9 @@ Keys live in env (config.AGENT_KEYS / APPROVER_KEYS, `key=buyer_id[:name]`), so 
 name come from the key, never from the request body. No keys configured → 503: the door is never open by default.
 ponytail: static shared secrets; per-buyer OAuth / signed mandates before production.
 """
+import hashlib
 import hmac
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated
 
 from fastapi import Header, HTTPException, Request
@@ -20,6 +21,7 @@ from . import config
 class Principal:
     buyer_id: str
     name: str
+    key_id: str = field(default="", compare=False)  # non-secret fingerprint of the credential (scopes idempotency)
 
 
 def _parse(spec: str) -> list[tuple[bytes, Principal]]:
@@ -28,7 +30,7 @@ def _parse(spec: str) -> list[tuple[bytes, Principal]]:
         key, _, who = item.strip().partition("=")
         buyer, _, name = who.partition(":")
         if key and buyer:  # malformed entries grant nothing
-            out.append((key.encode(), Principal(buyer, name or buyer)))
+            out.append((key.encode(), Principal(buyer, name or buyer, hashlib.sha256(key.encode()).hexdigest()[:16])))
     return out
 
 

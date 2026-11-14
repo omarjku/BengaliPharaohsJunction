@@ -39,6 +39,7 @@ _order_lock = asyncio.Lock()
 MAX_RETRIES = 3
 _orders: dict[str, dict] | None = None
 _idem: dict[str, dict] | None = None
+_idem_save = asyncio.Lock()  # snapshot + write in order: a newer snapshot is never overwritten by an older one
 
 
 def _store() -> dict[str, dict]:
@@ -98,7 +99,8 @@ async def idempotent(caller: str, scope: str, fingerprint: str, run) -> tuple[di
         store.pop(scope, None)
         raise
     store[scope]["response"] = resp
-    await asyncio.to_thread(_write, IDEM_FILE, _idem_snapshot())
+    async with _idem_save:
+        await asyncio.to_thread(_write, IDEM_FILE, _idem_snapshot())
     return resp, False
 
 

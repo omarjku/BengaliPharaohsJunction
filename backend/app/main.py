@@ -158,10 +158,12 @@ IdemKey = Annotated[str | None, Header(pattern=r"^[\x21-\x7e]{1,255}$",
 
 
 async def _once(response: Response, who: auth.Principal, scope: str, key: str | None, request: dict, run) -> dict:
-    """Run `run` once per Idempotency-Key (scope = caller + route); a replay says so in Idempotent-Replayed."""
+    """Run `run` once per Idempotency-Key, scoped to the credential + route; `request` = the effective action (so
+    equivalent bodies match). A replay says so in Idempotent-Replayed. Quota per buyer.
+    ponytail: a crash between the order write and the key write can still lose the key; one DB transaction fixes it."""
     if key is None:
         return await run()
-    body, replayed = await orders.idempotent(who.buyer_id, f"{scope}:{key}", hashlib.sha256(signing.canonical(request)).hexdigest(), run)
+    body, replayed = await orders.idempotent(who.buyer_id, f"{scope}:{who.key_id}:{key}", hashlib.sha256(signing.canonical(request)).hexdigest(), run)
     if replayed:
         response.headers["Idempotent-Replayed"] = "true"
     return body
@@ -223,9 +225,12 @@ async def place_order(req: OrderRequest, who: Agent, response: Response, idempot
     ASK_HUMAN → pending_approval, a hard violation or something Valio can't deliver → refused (nothing stored),
     always with reasons, suggested fixes and alternatives. Every run is audited. Needs X-Agent-Key."""
     mandate = _mandate_for(who, req)
-    _catalogue_ready()
-    return await _once(response, who, f"agent:{who.buyer_id}:orders", idempotency_key, req.model_dump(mode="json"),
-                       lambda: orders.place(who.buyer_id, req.requested_date, req.lines, mandate))
+
+    async def act():  # readiness only matters for a new action; a stored replay is served during catalogue startup
+        _catalogue_ready()
+        return await orders.place(who.buyer_id, req.requested_date, req.lines, mandate)
+    effective = {"requested_date": req.requested_date.isoformat(), "lines": [ln.model_dump() for ln in req.lines]}
+    return await _once(response, who, f"agent:{who.buyer_id}:orders", idempotency_key, effective, act)
 
 
 @app.get("/api/orders/{order_id}")
@@ -246,10 +251,13 @@ async def approve_order(order_id: OrderId, who: Approver, response: Response, bo
                         idempotency_key: IdemKey = None) -> dict:
     """Human sign-off as the key's owner; re-runs the gate first (cut-offs pass, prices and stock change).
     Needs X-Approver-Key. The approver's name comes from the key, never the body."""
-    _catalogue_ready()
+    seen = body.decided_at if body else None
+
+    async def act():
+        _catalogue_ready()
+        return await orders.approve(order_id, who, seen)
     return await _once(response, who, f"approver:{who.buyer_id}:approve:{order_id}", idempotency_key,
-                       body.model_dump(mode="json") if body else {},
-                       lambda: orders.approve(order_id, who, body.decided_at if body else None))
+                       {"decided_at": seen.isoformat() if seen else None}, act)
 
 
 @app.post("/api/orders/{order_id}/reject")
