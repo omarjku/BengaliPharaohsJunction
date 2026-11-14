@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: trade-decision
+Version: 0.1.0
+Summary: T06 decision step: pure rules that turn quotes + mandate into AUTO / ASK_HUMAN / DECLINE.
+Requires-Python: >=3.11
+Requires-Dist: trade-contracts
+Requires-Dist: pyyaml
+Requires-Dist: tzdata
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
