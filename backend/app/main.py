@@ -1,14 +1,24 @@
 """Valio Aimo front door: API entry point. OpenAPI spec is served at /openapi.json, docs at /docs."""
+import threading
+from contextlib import asynccontextmanager
 from datetime import date
 from typing import Annotated
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
-from . import config, valio
+from . import catalogue, config, valio
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Build/load the catalogue off the request path: first boot on Render downloads + indexes (~10-20 s).
+    threading.Thread(target=catalogue.load, daemon=True).start()
+    yield
+
 
 app = FastAPI(
+    lifespan=lifespan,
     title="Valio Aimo Front Door",
     description="Open interface for external purchasing agents ordering from Valio Aimo (Junction 2026).",
     version="0.1.0",
@@ -23,6 +33,7 @@ def health() -> dict:
         "status": "ok",
         "valio_key_configured": bool(config.VALIO_API_KEY),
         "gemini_key_configured": bool(config.GEMINI_API_KEY),
+        "catalogue": catalogue.status(),
     }
 
 
@@ -47,3 +58,37 @@ async def quotes(req: QuoteRequest) -> list[dict]:
     """Live price + availability from Valio for specific products, merged into one quote each,
     with explicit trap flags (cutoff_passed, quantity_unknown, undeliverable, out_of_stock, unknown_product)."""
     return await valio.get_quotes(req.product_ids, req.requested_date.isoformat())
+
+
+def _catalogue_ready() -> None:
+    st = catalogue.status()
+    if not st["ready"]:
+        raise HTTPException(503, detail=f"Catalogue loading{': ' + st['error'] if st['error'] else ''}; retry shortly")
+
+
+Code = Annotated[str, StringConstraints(pattern=r"^[A-Z0-9_]{1,40}$")]  # claim / GS1 allergen codes
+
+
+@app.get("/api/products/search")
+def search_products(
+    q: Annotated[str, Query(max_length=200)] = "",
+    claims: Annotated[list[Code], Query(max_length=20)] = [],
+    exclude_allergens: Annotated[list[Code], Query(max_length=20)] = [],
+    strict_may_contain: bool = False,
+    category: Annotated[str | None, Query(max_length=20)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> list[dict]:
+    """Keyword search (English + Finnish names, brand) with hard filters.
+    claims: all must be present (e.g. FREE_FROM_LACTOSE). exclude_allergens: GS1 codes (e.g. AM milk, AW gluten)
+    the product must not CONTAIN (nor MAY_CONTAIN when strict_may_contain=true).
+    Note: lactose-free milk still CONTAINS milk (AM); use the FREE_FROM_LACTOSE claim for lactose intolerance."""
+    _catalogue_ready()
+    return catalogue.search(q, claims, exclude_allergens, strict_may_contain, category, limit)
+
+
+@app.get("/api/products/{product_id}")
+def get_product(product_id: ProductId) -> dict:
+    _catalogue_ready()
+    if not (p := catalogue.get(product_id)):
+        raise HTTPException(404, detail="Unknown product id")
+    return p
