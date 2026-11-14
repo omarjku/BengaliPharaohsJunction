@@ -560,6 +560,7 @@ def test_v2_change_cart_reprices_changed_line(monkeypatch, tmp_path):
         return {"source": "gemini", "actions": [_action("change_cart", amount=30, unit="kg")]}
 
     async def fake_run(_text, _when, _buyer, pre=None):
+        captured["text"] = _text
         captured["amount"] = pre["parsed"][0]["items"][0]["amount"]
         return _order_card(price=300)
 
@@ -567,6 +568,7 @@ def test_v2_change_cart_reprices_changed_line(monkeypatch, tmp_path):
     monkeypatch.setattr(agent, "run", fake_run)
     body = run(ask.ask("make it 30 kg butter", None, "chef"))
     assert captured["amount"] == 30.0 and body["cart_total_cents"] == 300
+    assert "again" in captured["text"]
 
 
 def test_v2_simple_responses_cover_scope_unrealistic_greeting_and_kitchen_log(monkeypatch, tmp_path):
