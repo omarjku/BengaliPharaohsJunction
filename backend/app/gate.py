@@ -81,6 +81,7 @@ class GateResult:
     # {lines: [{product_id, quantity, unit, unit_price_cents, line_total_cents, name, replaces?}], total_cents, summary,
     #  order_lines: [{product_id, quantity}] (the body's `lines` to re-POST, verbatim)}
     alternative_order: dict | None = None
+    mandate_version: str | None = None  # the version of the buyer's mandate this was judged under (mandates.version)
 
 
 def eur(cents: int) -> str:
@@ -526,4 +527,4 @@ async def check(lines: list, requested: date, m: Mandate | None, request_id: str
         if cq := valio.to_contract_quote(q):
             cat = catalogue.get(q["product_id"]) or {}
             contract_quotes.append(cq.model_copy(update={"product_name": cat.get("name_en") or cat.get("name_fi")}))
-    return GateResult(status, decision, rejected + bad_alts, contract_quotes, info, total, subs, alt_order)
+    return GateResult(status, decision, rejected + bad_alts, contract_quotes, info, total, subs, alt_order, m.id)

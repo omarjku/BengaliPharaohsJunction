@@ -147,7 +147,8 @@ async def _audit(actor: str, order_id: str, buyer_id: str, requested_date: str, 
         input=AuditInput(request=request, mandate=mandate, quotes=res.quotes if res else []),
         decision=res.decision if res else decision, rejected_options=res.rejected_options if res else [])
     signer = actor.split(":")[1] if actor.startswith("human:") else None
-    await asyncio.to_thread(_append_audit, entry, {"action": action, "status": status, "signed_off_by": signer})
+    await asyncio.to_thread(_append_audit, entry, {"action": action, "status": status, "signed_off_by": signer,
+                                                   "mandate_version": mandates.version(mandate)})
     return entry.id
 
 
@@ -166,6 +167,7 @@ async def _gate(audit: dict, lines, requested_date, mandate, oid, **kwargs) -> g
         log.exception("front-door gate failed")
         now = kwargs.get("now") or datetime.now(timezone.utc)
         res = gate.engine_error(lines, oid, now)
+        res.mandate_version = mandates.version(mandate)
         await _audit(audit["actor"], oid, audit["buyer_id"], requested_date.isoformat(), res.lines, mandate, res,
                      now=now, action=audit["action"], status=audit["status"])
         raise HTTPException(503, detail="Valio availability check failed; nothing was ordered. Retry shortly.")
@@ -175,6 +177,7 @@ def _response(order_id: str | None, status: str, body: dict, audit_id: str) -> d
     """Every order response carries a signed statement of what the front door decided and the quote facts it used."""
     statement = {"v": 1, "iss": signing.ISSUER, "order_id": order_id, "status": status, "audit_id": audit_id,
                  "total_cents": body["total_cents"], "decision": body["decision"],
+                 "mandate_version": body.get("mandate_version"),
                  "quotes": body.get("quote_facts", []),
                  "lines": [{k: li.get(k) for k in ("product_id", "quantity", "unit", "unit_price_cents", "line_total_cents")}
                            for li in body.get("lines", [])]}
@@ -194,7 +197,8 @@ def _quote_facts(res: gate.GateResult) -> list[dict]:
 def _view(res: gate.GateResult) -> dict:
     return {"total_cents": res.total_cents, "lines": res.lines, "decision": res.decision.model_dump(mode="json"),
             "rejected_options": [r.model_dump(mode="json") for r in res.rejected_options],
-            "substitutes": res.substitutes, "alternative_order": res.alternative_order, "quote_facts": _quote_facts(res)}
+            "substitutes": res.substitutes, "alternative_order": res.alternative_order, "quote_facts": _quote_facts(res),
+            "mandate_version": res.mandate_version}
 
 
 def _busy() -> HTTPException:
@@ -216,6 +220,7 @@ async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | N
                 _store()[oid] = {
                     "id": oid, "buyer_id": buyer_id, "status": res.status, "requested_date": requested_date.isoformat(),
                     "lines": res.lines, "total_cents": res.total_cents, "mandate": mandate.model_dump(mode="json"),
+                    "mandate_version": res.mandate_version,
                     "decision": res.decision.model_dump(mode="json"), "signed_off_by": None,
                     "created_at": now.isoformat(), "updated_at": now.isoformat()}
                 await asyncio.to_thread(_save)
@@ -282,6 +287,8 @@ async def approve(order_id: str, who: Principal, seen_decided_at: datetime | Non
             raise HTTPException(409, detail="The order or the buyer's spend changed while it was being re-checked; "
                                             "review it and approve again.")
         status = _approval_status(o, res)
+        if mandate:  # judged under these (no mandate left = refused, keep the last snapshot for the record)
+            o.update(mandate=mandate.model_dump(mode="json"), mandate_version=res.mandate_version)
         o.update(status=status, lines=res.lines, total_cents=res.total_cents, updated_at=now.isoformat(),
                  decision=res.decision.model_dump(mode="json"),
                  signed_off_by=who.name if status == "confirmed" else None)
@@ -305,7 +312,8 @@ async def reject(order_id: str, who: Principal) -> dict:
                                 Mandate.model_validate(o["mandate"]), None, decision=decision, now=now,
                                 action="rejected", status="rejected")
     return _response(order_id, "rejected", {"total_cents": o["total_cents"], "lines": o["lines"],
-                                            "decision": o["decision"], "rejected_options": []}, audit_id)
+                                            "decision": o["decision"], "rejected_options": [],
+                                            "mandate_version": o.get("mandate_version")}, audit_id)
 
 
 def _buyer(r: dict) -> str | None:
