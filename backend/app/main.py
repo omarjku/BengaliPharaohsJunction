@@ -398,13 +398,14 @@ class PortionOverride(BaseModel):
     unit: Literal["L", "dl", "cl", "ml", "kg", "g", "pcs"] | None = Field(default=None, examples=["g"])
     dish: str | None = Field(default=None, max_length=120, description="Only in this dish; default: every dish.")
     spare_percent: float | None = Field(default=None, ge=0, le=20, description="The chef's spare for this ingredient.")
+    include: bool | None = Field(default=None, description="true: buy it even though the kitchen says it has it.")
 
     @model_validator(mode="after")
     def _something(self):
         if (self.per_cover is None) != (self.unit is None):
             raise ValueError("per_cover and unit go together")
-        if self.per_cover is None and self.spare_percent is None:
-            raise ValueError("set per_cover + unit, or spare_percent")
+        if self.per_cover is None and self.spare_percent is None and self.include is None:
+            raise ValueError("set per_cover + unit, spare_percent or include")
         return self
 
 
@@ -415,6 +416,7 @@ class MenuRequest(BaseModel):
     covers: int = Field(ge=1, le=2000, examples=[80])
     requested_date: date = Field(examples=["2026-11-16"])
     overrides: list[PortionOverride] = Field(default_factory=list, max_length=40)
+    have: list[Annotated[str, StringConstraints(min_length=1, max_length=60)]] | None = Field(default=None, max_length=60, description="What the kitchen already has (this request only): a menu cart leaves it out. Never applied to direct orders.")
 
     @field_validator("menu_text")
     @classmethod
@@ -446,7 +448,7 @@ async def agent_menu(req: MenuRequest, who: Agent, request: Request,
             raise HTTPException(403, detail="That approver key belongs to another kitchen.")
         chef = True
     return await menu.propose(req.menu_text, req.covers, req.requested_date, who.buyer_id,
-                              overrides=[o.model_dump() for o in req.overrides], by_chef=chef)
+                              overrides=[o.model_dump() for o in req.overrides], by_chef=chef, have=req.have)
 
 
 # --- The chef's rules in plain language (T09 compiler). Human acts: X-Approver-Key only; an agent key can never
@@ -619,6 +621,7 @@ class AskRequest(BaseModel):
     text: str = Field(default="", max_length=4000, examples=["milk and 30 croissants for tomorrow"])
     requested_date: date | None = Field(default=None, description="Optional when the text states a day.")
     follow_up: FollowUp | None = Field(default=None, description="Answer a question instead of a new request.")
+    have: list[Annotated[str, StringConstraints(min_length=1, max_length=60)]] | None = Field(default=None, max_length=60, description="What the kitchen already has (this request only): a menu cart leaves it out. Never applied to direct orders.")
 
     @field_validator("text")
     @classmethod
@@ -639,7 +642,8 @@ async def agent_ask(req: AskRequest, who: Agent) -> dict:
     asked (no date, menu without guests, unclear, conflicting dates), only `decision` (ASK_HUMAN) follows and nothing
     runs. Needs X-Agent-Key."""
     _catalogue_ready()
-    return await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump())
+    return await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump(),
+                         req.have)
 
 
 # --- Talk: a spoken conversation over Gemini Live (live.py). Auth is the first message: browsers can't set headers.
@@ -695,7 +699,8 @@ async def agent_ask_stream(req: AskRequest, who: Agent) -> StreamingResponse:
     async def work():
         progress.set_sink(queue.put_nowait)  # inside the task's own context: only this request's phases
         try:
-            queue.put_nowait(("result", await ask.ask(req.text, req.requested_date, who.buyer_id, req.follow_up and req.follow_up.model_dump())))
+            queue.put_nowait(("result", await ask.ask(req.text, req.requested_date, who.buyer_id,
+                                                      req.follow_up and req.follow_up.model_dump(), req.have)))
         except HTTPException as e:
             queue.put_nowait(("error", {"status": e.status_code, "detail": e.detail}))
         except Exception:  # noqa: BLE001 - details stay in the server log

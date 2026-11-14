@@ -7,6 +7,7 @@ mandate limits, reliability floor, Finnish preference). Recipe quantities are gu
 ASK_HUMAN with MENU_ASSUMPTIONS; the chef confirms by posting `order_lines` to POST /api/orders, which re-checks it.
 """
 import asyncio
+from contextvars import ContextVar
 import math
 import re
 from datetime import date, datetime, timezone
@@ -105,6 +106,36 @@ def apply_dietary(menu_text: str, dishes: list[dict]) -> list[Reason]:
 def _key(name: str) -> str:
     """'Potatoes' and 'potato', 'lingonberries' and 'lingonberry' merge; word order doesn't matter."""
     return " ".join(sorted({agent._singular(w) for w in re.findall(r"[\wäöå]+", name.lower())}))
+
+
+HAVE: ContextVar[list[str] | None] = ContextVar("have", default=None)  # /api/agent/ask's per-request pantry list
+_GENERIC = {"wheat", "plain", "all", "purpose", "caster", "granulated", "white", "table", "sea", "fine", "coarse",
+            "unsalted", "fresh", "cooking", "extra", "virgin", "ground", "dried", "baking", "regular", "normal"}
+
+
+def pantry(buyer_id: str, have: list[str] | None) -> list[tuple[str, str]]:
+    """[(words, source)] the kitchen says it has: its profile staples ('kitchen') and this request's list
+    ('this_order'). No list → [] → nothing changes."""
+    out = [(str(w)[:60], "this_order") for w in have or [] if str(w).strip()]
+    for m in profile._memories(buyer_id):
+        if m.kind.value == "preference_note" and m.key == "staples":
+            out += [(str(w)[:60], "kitchen") for w in (m.value.get("items") or []) if str(w).strip()]
+    return out[:60]
+
+
+def have_match(ing: dict, have: list[tuple[str, str]]) -> dict | None:
+    """Does the kitchen already have this ingredient? Deterministic, never a guess: 'wheat flour' ~ 'flour', 'oil' ~
+    'olive oil', but 'salmon fillet' is not 'salmon'. A diet or allergen need is only met if the have-words say it."""
+    words = {agent._singular(w) for w in re.findall(r"[\wäöå]+", ing["query"].lower())}
+    for text, source in have:
+        low = text.lower()
+        if (ing.get("claims") or ing.get("exclude_allergens")) and not any(w in low for w in agent._WORDS):
+            continue
+        hw = {agent._singular(w) for w in re.findall(r"[\wäöå]+", low)} - {w for w in agent._WORDS for w in w.split()}
+        hw -= {"free", "gluten", "lactose"}
+        if hw and (words <= hw or (hw <= words and words - hw <= _GENERIC)):
+            return {"source": source, "matched": text}
+    return None
 
 
 def add_spare(ingredients: list[dict], chosen: list[dict], props: dict, level: str | None,
@@ -261,7 +292,7 @@ async def parse_menu(menu_text: str, buyer_id: str | None = None) -> list[dict] 
 
 
 async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, dishes_task=None,
-                  overrides: list[dict] | None = None, by_chef: bool = False) -> dict:
+                  overrides: list[dict] | None = None, by_chef: bool = False, have: list[str] | None = None) -> dict:
     """`dishes_task`: parse_menu(menu_text) already started by the caller (ask._flow starts it at t=0)."""
     agent.start_budget(agent.DECISIONS_PER_MENU)
     run_id, now = str(uuid4()), datetime.now(timezone.utc)
@@ -357,6 +388,30 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
                                + "; ".join(agent._name(ln["product"]) for ln in check) + ". Add them back once the "
                                "doubt on each line is cleared.", None, "Check those lines, then add them to the order."))
     chosen = [ln for ln in chosen if not ln.get("check")]
+    # Pantry: what the kitchen says it has stays visible (marked have) but out of the order and the total.
+    kitchen_has = pantry(buyer_id, have if have is not None else HAVE.get())
+    back = {_key(o["ingredient"]) for o in overrides or [] if o.get("include")}
+    left = []
+    for n, ing in enumerate(ingredients):
+        if kitchen_has and _key(ing["query"]) not in back and (got := have_match(ing, kitchen_has)):
+            ing["have"] = got
+            left.append(ing["query"])
+    for ln in res["chosen"]:  # every priced line, the doubted ones too: what the kitchen has needs no check
+        if ingredients[ln["item"]].get("have"):
+            ln["have"] = ingredients[ln["item"]]["have"]
+            ln.pop("check", None)
+    chosen = [ln for ln in chosen if not ln.get("have")]
+    if any(ln.get("have") for ln in check):  # re-say the "check them" sentence without what the kitchen has
+        check = [ln for ln in check if not ln.get("have")]
+        reasons[:] = [r for r in reasons if not r.message.startswith("Left out of the order lines until you check")]
+        if check:
+            reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, "Left out of the order lines until you check them: "
+                                   + "; ".join(agent._name(ln["product"]) for ln in check) + ". Add them back once the "
+                                   "doubt on each line is cleared.", None, "Check those lines, then add them to the order."))
+    if left:
+        reasons.append(gate._r(C.MENU_ASSUMPTIONS, gate.INFO, "Left out because you have it: " + ", ".join(left)
+                               + ". Add one back if you're short.", None, "Add it back with include.",
+                               left_out=", ".join(left)))
     for ln in chosen:  # the chef confirms the whole cart, so two ingredients on one product become one order line
         qty[ln["product"]["id"]] = qty.get(ln["product"]["id"], 0) + ln["quantity"]["quantity"]
         price[ln["product"]["id"]] = gate.eur_to_cents(ln["quote"]["price"])
@@ -365,6 +420,21 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
                                f"{agent._name(catalogue.get(pid) or {'id': pid})} is over the "
                                f"{gate._qty(gate.MAX_LINE_QTY)} per-line limit; it is left out of the order lines.",
                                pid, "Check the amounts for that ingredient."))
+    cart_total = sum(int((Decimal(price[p]) * Decimal(str(q))).quantize(Decimal(1), ROUND_HALF_UP))
+                     for p, q in qty.items())
+    in_cart = {ln["item"] for ln in chosen if ln["product"]["id"] in qty}
+    priced = {ln["item"] for ln in res["chosen"]}
+    missing = [ing["query"] for n, ing in enumerate(ingredients) if n not in priced and not ing.get("have")]
+    coverage = {"ingredients": len(ingredients), "in_cart": len(in_cart), "to_check": len(check),
+                "check_total_cents": sum(ln.get("line_total_cents") or 0 for ln in check), "not_found": missing,
+                "have": len(left)}
+    if check or missing:  # the headline total must never look like the whole menu when it isn't
+        reasons.append(gate._r(C.MENU_ASSUMPTIONS, gate.INFO, f"EUR {cart_total / 100:,.2f} covers {len(in_cart)} of "
+                               f"{len(ingredients)} ingredients" + (f"; {len(check)} need your look (about EUR "
+                               f"{coverage['check_total_cents'] / 100:,.2f})" if check else "")
+                               + (f"; no product found yet for {', '.join(missing)}" if missing else "") + ".",
+                               None, "Check the held lines, then add them to the order.",
+                               in_cart=len(in_cart), to_check=len(check)))
     confs = [ln["confidence"] for ln in chosen]
     confidence = min(confs) if confs and None not in confs else None
     decision = agent._decision(run_id, reasons, res["alternatives"], now, confidence)
@@ -384,8 +454,7 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
                  "assumption": i.get("assumption")} for i in d["ingredients"]]} for d in kept]},
             "assumptions": assumptions, "ingredients": ingredients, "lines": lines,
             # computed like the front door will (unit price x summed quantity), so the chef sees what they'll pay
-            "cart_total_cents": sum(int((Decimal(price[p]) * Decimal(str(q))).quantize(Decimal(1), ROUND_HALF_UP))
-                                    for p, q in qty.items()),
+            "cart_total_cents": cart_total, "cart_coverage": coverage,
             "order_lines": [{"product_id": p, "quantity": q} for p, q in qty.items()],
             "check_lines": [{"product_id": ln["product"]["id"], "quantity": ln["quantity"]["quantity"],
                              "name": agent._name(ln["product"])} for ln in check],
