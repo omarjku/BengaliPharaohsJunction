@@ -419,13 +419,22 @@ class MenuRequest(BaseModel):
 
 
 @app.post("/api/agent/menu")
-async def agent_menu(req: MenuRequest, who: Agent) -> dict:
+async def agent_menu(req: MenuRequest, who: Agent,
+                     x_approver_key: Annotated[str | None, Header()] = None) -> dict:
     """Menu + covers → a proposed cart. Needs X-Agent-Key (the buyer comes from the key; mandate server-side).
     Returns {menu, assumptions, ingredients, lines, cart_total_cents, order_lines, decision, audit_id}; the decision is
     always ASK_HUMAN (MENU_ASSUMPTIONS) and nothing is ordered here."""
     _catalogue_ready()
+    # Portions count as "set by the chef" (not doubted) only with the same buyer's approver key too; an agent-only
+    # request's overrides are marked "agent" and still checked by Gemini Decisions (security review).
+    chef = False
+    if req.overrides and x_approver_key:
+        try:
+            chef = auth._approver(x_approver_key).buyer_id == who.buyer_id
+        except HTTPException:
+            raise HTTPException(401, detail="Invalid X-Approver-Key") from None
     return await menu.propose(req.menu_text, req.covers, req.requested_date, who.buyer_id,
-                              overrides=[o.model_dump() for o in req.overrides])
+                              overrides=[o.model_dump() for o in req.overrides], by_chef=chef)
 
 
 # --- The chef's rules in plain language (T09 compiler). Human acts: X-Approver-Key only; an agent key can never

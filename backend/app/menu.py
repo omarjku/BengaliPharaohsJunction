@@ -107,7 +107,7 @@ def _key(name: str) -> str:
     return " ".join(sorted({agent._singular(w) for w in re.findall(r"[\wäöå]+", name.lower())}))
 
 
-def apply_overrides(dishes: list[dict], overrides: list[dict] | None) -> list[Reason]:
+def apply_overrides(dishes: list[dict], overrides: list[dict] | None, by_chef: bool = False) -> list[Reason]:
     """The chef's own portions, on top of Gemini's reading: deterministic, so the cart rescales the same way every
     time. Matches an ingredient by name (plural- and order-tolerant), in one dish or, without `dish`, in every dish."""
     problems = []
@@ -118,9 +118,10 @@ def apply_overrides(dishes: list[dict], overrides: list[dict] | None) -> list[Re
                 continue
             for ing in d["ingredients"]:
                 if _key(str(ing.get("name") or "")) == _key(o["ingredient"]):
-                    ing.update(per_cover=o["per_cover"], unit=o["unit"], by_chef=True,
+                    # only an approver-key request is the chef; an agent's change is still checked by Gemini
+                    ing.update(per_cover=o["per_cover"], unit=o["unit"], set_by="chef" if by_chef else "agent",
                                assumption=f"{d['name']}: {o['per_cover']:g} {o['unit']} {ing.get('name')} per portion "
-                                          "(set by the chef)")
+                                          + ("(set by the chef)" if by_chef else "(changed by the agent)"))
                     hit = True
         if not hit:
             problems.append(gate._r(C.QTY_AMBIGUOUS, gate.INFO, f"No ingredient '{o['ingredient']}' in this menu"
@@ -142,7 +143,7 @@ def scale(dishes: list[dict], covers: int) -> tuple[list[dict], list[dict], list
                 per = math.nan
             assumptions.append({"ingredient": name, "dish": dish["name"], "per_cover": per if math.isfinite(per) else None,
                                 "unit": ing.get("unit"), "text": str(ing.get("assumption") or ""),
-                                "set_by": "chef" if ing.get("by_chef") else "gemini"})
+                                "set_by": ing.get("set_by") or "gemini"})
             if not name or unit not in quantity.MEASURES or not math.isfinite(per) or per <= 0:
                 problems.append(gate._r(C.QTY_AMBIGUOUS, ASK, f"Couldn't read a usable amount for '{name or '?'}' in "
                                         f"{dish['name']} ({ing.get('per_cover')} {ing.get('unit')} per cover); it is "
@@ -214,7 +215,7 @@ async def parse_menu(menu_text: str, buyer_id: str | None = None) -> list[dict] 
 
 
 async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, dishes_task=None,
-                  overrides: list[dict] | None = None) -> dict:
+                  overrides: list[dict] | None = None, by_chef: bool = False) -> dict:
     """`dishes_task`: parse_menu(menu_text) already started by the caller (ask._flow starts it at t=0)."""
     agent.start_budget(agent.DECISIONS_PER_MENU)
     run_id, now = str(uuid4()), datetime.now(timezone.utc)
@@ -258,7 +259,7 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
             reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The dish '{d['name']}' isn't on the menu you sent; its "
                                    "ingredients were left out.", None, "Check the menu text."))
     reasons += apply_dietary(menu_text, kept)
-    reasons += apply_overrides(kept, overrides)
+    reasons += apply_overrides(kept, overrides, by_chef)
     ingredients, assumptions, problems = scale(kept, covers)
     reasons += problems
     if len(ingredients) > MAX_INGREDIENTS:

@@ -54,16 +54,17 @@ def test_remember_this_adds_a_usual_product(shop1, monkeypatch):  # noqa: F811
                   headers={"X-Agent-Key": "agent-hb"}).status_code == 401  # the agent can't decide what to remember
 
 
-def post_menu(overrides=None):
+def post_menu(overrides=None, chef=True):
     body = {"menu_text": "Porridge with milk", "covers": 80, "requested_date": REQ.isoformat()}
     if overrides is not None:
         body["overrides"] = overrides
-    r = c.post("/api/agent/menu", json=body, headers={"X-Agent-Key": "agent-lk"})
+    r = c.post("/api/agent/menu", json=body, headers={"X-Agent-Key": "agent-lk"} | (LK if chef else {}))
     assert r.status_code == 200, r.text
     return r.json()
 
 
 def test_menu_portions_set_by_the_chef_rescale_the_cart(shop1, monkeypatch):  # noqa: F811
+    keys(monkeypatch)
     fake_gemini(monkeypatch, [PORRIDGE])
     plain = post_menu()
     assert plain["ingredients"][0]["amount"] == 16.0 and plain["assumptions"][0]["set_by"] == "gemini"
@@ -79,3 +80,19 @@ def test_menu_portions_set_by_the_chef_rescale_the_cart(shop1, monkeypatch):  # 
     missing = post_menu([{"ingredient": "saffron", "per_cover": 1, "unit": "g"}])
     assert any("No ingredient 'saffron'" in r["message"] for r in missing["decision"]["reasons"])
     assert missing["ingredients"][0]["amount"] == 16.0
+
+
+
+def test_an_agent_can_not_claim_a_portion_is_the_chefs(shop1, monkeypatch):  # noqa: F811
+    """Security review: with only the agent key, an override is 'changed by the agent' and still checked."""
+    keys(monkeypatch)
+    fake_gemini(monkeypatch, [PORRIDGE])
+    body = post_menu([{"ingredient": "milk", "per_cover": 3, "unit": "dl"}], chef=False)
+    a = body["assumptions"][0]
+    assert a["set_by"] == "agent" and a["check"] is not None and "changed by the agent" in a["text"]
+    assert body["ingredients"][0]["amount"] == 24.0
+    fake_gemini(monkeypatch, [PORRIDGE])
+    r = c.post("/api/agent/menu", json={"menu_text": "Porridge with milk", "covers": 80, "requested_date":
+               REQ.isoformat(), "overrides": [{"ingredient": "milk", "per_cover": 3, "unit": "dl"}]},
+               headers={"X-Agent-Key": "agent-lk", "X-Approver-Key": "appr-hb"})  # another buyer's approver
+    assert r.json()["assumptions"][0]["set_by"] == "agent"
