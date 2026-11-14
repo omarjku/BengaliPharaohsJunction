@@ -35,6 +35,7 @@ export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (
   const levelEl = useRef<HTMLElement | null>(null) // the ring that breathes with the voice level
   const rec = useRef<{ recorder: MediaRecorder; stream: MediaStream; ctx: AudioContext; raf: number } | null>(null)
   const discard = useRef(false) // Cancel: stop listening and throw the recording away
+  const stopWhenReady = useRef(false) // released before the recorder existed (e.g. during the permission prompt)
 
   function cleanup() {
     const r = rec.current
@@ -54,6 +55,7 @@ export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (
     }
     setMessage(null)
     setMode(forAnswer ? 'answer' : asToggle ? 'toggle' : 'hold')
+    stopWhenReady.current = false
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const recorder = new MediaRecorder(stream)
@@ -93,6 +95,12 @@ export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (
       rec.current = { recorder, stream, ctx, raf: requestAnimationFrame(tick) }
       recorder.start()
       setState('listening')
+      // A hold released while the browser was still asking for the mic: don't record forever, and don't send a
+      // near-empty clip either. Leave it listening as a tap (toggle), so the next tap sends.
+      if (stopWhenReady.current) {
+        stopWhenReady.current = false
+        setMode('toggle')
+      }
     } catch (err) {
       cleanup()
       const denied = err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'SecurityError')
@@ -103,6 +111,7 @@ export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (
 
   function stop() {
     if (rec.current && rec.current.recorder.state === 'recording') rec.current.recorder.stop()
+    else stopWhenReady.current = true
   }
   function cancel() {
     if (rec.current && rec.current.recorder.state === 'recording') {
@@ -122,6 +131,15 @@ export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (
     setState('idle')
     levelEl.current?.focus()
   } }
+}
+
+// iOS Safari only speaks after speechSynthesis has been used inside a user gesture; the read-back comes later, after
+// a fetch. So the first mic tap says an empty sentence, which unlocks it for the rest of the page.
+let speechUnlocked = false
+export function unlockSpeech() {
+  if (speechUnlocked || typeof window === 'undefined' || !('speechSynthesis' in window)) return
+  speechUnlocked = true
+  speechSynthesis.speak(new SpeechSynthesisUtterance(''))
 }
 
 // Spoken read-back of the answer's first sentence, for a request made by voice. Remembered mute.

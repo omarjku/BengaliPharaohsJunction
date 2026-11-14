@@ -1,10 +1,11 @@
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react'
 import { useCopy } from './i18n'
-import type { useVoice } from './useVoice'
+import { unlockSpeech, type useVoice } from './useVoice'
 
 const HOLD_MS = 300 // shorter than this is a tap (toggle), longer is push-to-talk
 
-// The mic button: hold to talk, tap to toggle. Keyboard (Enter/Space) toggles.
+// The mic button: hold to talk, tap to toggle (mouse); tap to start, tap to send (touch: a hold fights scrolling,
+// the callout menu and the permission prompt on phones). Keyboard (Enter/Space) toggles.
 export function MicButton({ voice, disabled }: { voice: ReturnType<typeof useVoice>; disabled: boolean }) {
   const pressedAt = useRef(0)
   const listening = voice.state === 'listening'
@@ -13,8 +14,13 @@ export function MicButton({ voice, disabled }: { voice: ReturnType<typeof useVoi
   function down(e: PointerEvent<HTMLButtonElement>) {
     if (disabled || e.button !== 0) return
     e.preventDefault()
+    unlockSpeech() // inside the gesture, so iOS lets the read-back speak later
     if (listening) {
       voice.stop() // second tap of a toggle
+      return
+    }
+    if (e.pointerType === 'touch') {
+      void voice.start(true) // phones: tap to start, tap again to send
       return
     }
     pressedAt.current = Date.now()
@@ -35,6 +41,7 @@ export function MicButton({ voice, disabled }: { voice: ReturnType<typeof useVoi
   function key(e: KeyboardEvent<HTMLButtonElement>) {
     if (e.key !== 'Enter' && e.key !== ' ') return
     e.preventDefault()
+    unlockSpeech()
     if (listening) voice.stop()
     else void voice.start(true)
   }
@@ -82,7 +89,7 @@ export function VoiceStatus({ voice }: { voice: ReturnType<typeof useVoice> }) {
         <p>{t.intro}</p>
         <div className="actions">
           {/* the note answers the mic press, so keyboard focus follows it */}
-          <button type="button" className="btn" onClick={voice.acceptIntro} autoFocus>
+          <button type="button" className="btn" onClick={() => (unlockSpeech(), voice.acceptIntro())} autoFocus>
             {t.start}
           </button>
           <button type="button" className="btn plain" onClick={voice.dismiss}>
