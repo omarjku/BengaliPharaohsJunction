@@ -124,6 +124,27 @@ def scale(dishes: list[dict], covers: int) -> tuple[list[dict], list[dict], list
     return ingredients, assumptions, problems
 
 
+ASSUMPTION_MIN = 0.5  # weaker of 'needed' / 'amount reasonable' below this → flagged (backend/eval/guards_eval.py)
+
+
+async def check_assumption(dish: str, ingredient: str, per_cover, unit, text: str) -> float | None:
+    """Gemini Decisions guard per (dish, ingredient): is it needed, and is the per-portion amount reasonable?
+    One call, two questions about the same assumption; the weaker answer. A low score only flags it for the chef."""
+    answers = await agent._decisions(
+        f"{agent.UNTRUSTED}\nA professional restaurant kitchen plans a dish.\n"
+        f"{agent._wrap(f'Dish: {dish}. Ingredient: {ingredient}, {per_cover} {unit} per portion. {text}')}", {
+            "needed": {"type": "noul", "instructions": "Is this ingredient normally needed for this dish?",
+                       "criteria": {"true_description": "Yes, a usual ingredient of this dish.",
+                                    "false_description": "No, it doesn't belong in this dish."}},
+            "amount": {"type": "noul", "instructions": "Is this per-portion amount reasonable for this dish?",
+                       "criteria": {"true_description": "Yes, a normal restaurant portion amount.",
+                                    "false_description": "No, clearly too much or too little for one portion."}}})
+    if not answers:
+        return None
+    ys = [agent._yes(answers[k]) for k in ("needed", "amount")]
+    return None if None in ys else min(ys)
+
+
 async def parse_menu(menu_text: str) -> list[dict] | None:
     out = await agent._gemini(MENU_PROMPT, agent._wrap(menu_text), _MENU_SCHEMA)
     if not out or not isinstance(out.get("dishes"), list):
@@ -183,7 +204,17 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -
         ingredients = ingredients[:MAX_INGREDIENTS]
     items = ingredients  # agent.canonical() tells the judge which dishes each ingredient is for
 
-    res = await agent._pipeline(menu_text, items, requested, buyer_id, m, excluded, now, reasons, True)
+    res, checks = await asyncio.gather(  # pricing and the assumption checks run side by side
+        agent._pipeline(menu_text, items, requested, buyer_id, m, excluded, now, reasons, True),
+        asyncio.gather(*(check_assumption(a["dish"], a["ingredient"], a["per_cover"], a["unit"], a["text"])
+                         for a in assumptions)))
+    for a, y in zip(assumptions, checks):
+        a["check"], a["flagged"] = y, y is not None and y < ASSUMPTION_MIN
+        if a["flagged"]:
+            reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"Check this assumption: {a['per_cover']} {a['unit']} of "
+                                   f"{a['ingredient']} per portion for {a['dish']} (Gemini Decisions: {agent._pct(y)} "
+                                   "that it belongs and the amount is reasonable).", None,
+                                   "Correct the amount or remove the ingredient before ordering.", check=y))
     lines, chosen = res["lines"], res["chosen"]
     for ln in lines:
         ln["dishes"] = ingredients[ln["item"]]["dishes"]

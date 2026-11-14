@@ -178,3 +178,14 @@ def test_menu_steering_classifier_flags(shop1, monkeypatch, decisions):
     decisions["scores"] = {"steering": 0.95}
     body = post("Porridge with milk").json()
     assert any("This menu seems to try" in r["message"] for r in body["decision"]["reasons"])
+
+
+def test_menu_assumptions_are_checked_and_flagged(shop1, monkeypatch, decisions):
+    fake_gemini(monkeypatch, [PORRIDGE, PUDDING])
+    decisions["scores"] = {"amount": 0.2}  # Gemini doubts every per-portion amount
+    body = post("Porridge with milk; Milk pudding with butter").json()
+    assert all(a["flagged"] and a["check"] == 0.2 for a in body["assumptions"])
+    assert sum("Check this assumption" in r["message"] for r in body["decision"]["reasons"]) == 3
+    decisions["scores"] = {}
+    body = post("Porridge with milk").json()
+    assert body["assumptions"][0]["flagged"] is False and body["assumptions"][0]["check"] == 0.95

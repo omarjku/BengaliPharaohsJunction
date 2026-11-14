@@ -79,7 +79,29 @@ async def dates() -> list[dict]:
     return rows
 
 
+# Q4 menu assumptions: (dish, ingredient, per cover, unit, ok? = needed AND amount reasonable)
+MENU = [
+    ("Lingonberry cheesecake", "cream cheese", 80, "g", True),
+    ("Lingonberry cheesecake", "reindeer meat", 150, "g", False),
+    ("Mashed potatoes", "potato", 200, "g", True),
+    ("Mashed potatoes", "potato", 800, "g", False),
+    ("Salmon soup", "salmon fillet", 120, "g", True),
+    ("Salmon soup", "sugar", 50, "g", False),
+]
+
+
+async def menu_checks() -> list[dict]:
+    from app import menu
+    rows = []
+    for dish, ing, per, unit, label in MENU:
+        y = await menu.check_assumption(dish, ing, per, unit, "")
+        rows.append({"case": f"{dish}: {per} {unit} {ing}", "label": label, "p_yes": y,
+                     "ok": y is not None and (y >= menu.ASSUMPTION_MIN) == label})
+    return rows
+
+
 GUARDS = {"plausibility (asks below %.2f)" % agent.PLAUSIBLE_MIN: plausibility,
+          "menu assumptions (flag below 0.50)": menu_checks,
           "date intent (asks below %.2f)" % agent.DATE_MIN: dates,
           "steering / injection (asks at or above %.2f)" % agent.INJECTION_MAX: steering}
 

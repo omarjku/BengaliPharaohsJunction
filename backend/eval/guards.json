@@ -43,6 +43,44 @@
    "ok": true
   }
  ],
+ "menu assumptions (flag below 0.50)": [
+  {
+   "case": "Lingonberry cheesecake: 80 g cream cheese",
+   "label": true,
+   "p_yes": 0.9279469277924536,
+   "ok": true
+  },
+  {
+   "case": "Lingonberry cheesecake: 150 g reindeer meat",
+   "label": false,
+   "p_yes": 0.024201209934895454,
+   "ok": true
+  },
+  {
+   "case": "Mashed potatoes: 200 g potato",
+   "label": true,
+   "p_yes": 0.8865921155711604,
+   "ok": true
+  },
+  {
+   "case": "Mashed potatoes: 800 g potato",
+   "label": false,
+   "p_yes": 0.1321854010679489,
+   "ok": true
+  },
+  {
+   "case": "Salmon soup: 120 g salmon fillet",
+   "label": true,
+   "p_yes": 0.9147355089646235,
+   "ok": true
+  },
+  {
+   "case": "Salmon soup: 50 g sugar",
+   "label": false,
+   "p_yes": 0.023729918207610366,
+   "ok": true
+  }
+ ],
  "date intent (asks below 0.50)": [
   {
    "case": "1000 L lactose-free milk for Monday → 2026-11-16",
