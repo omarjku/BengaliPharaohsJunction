@@ -228,9 +228,12 @@ def test_confident_line_orders_and_records_confidence(shop1, monkeypatch, decisi
     [line] = body["lines"]
     assert line["confidence"] == 0.95 and "weakest" in line["confidence_reason"]
     assert body["order"]["status"] == "confirmed" and body["decision"]["confidence"] == 0.95
-    [(inp, qs)] = decisions["calls"]
-    assert set(qs) == {"meets", "qty"} and "<buyer_request>" in inp and "Eila milk 1 l" in inp
-    assert "labelled lactose-free" in inp and "contains milk" in inp  # words, not codes
+    (meets_in, mq), (qty_in, qq) = decisions["calls"]  # judge_line: two calls per line
+    assert set(mq) == {"meets"} and set(qq) == {"qty"}
+    assert "1000" not in meets_in and "1000" in qty_in  # product question without amounts, quantity question with
+    for inp in (meets_in, qty_in):
+        assert "<buyer_request>" in inp and "Eila milk 1 l" in inp
+        assert "labelled lactose-free" in inp and "contains milk" in inp  # words, not codes
     agent_entry = orders.audit_log("lapland-kitchen", 100)[0]
     assert agent_entry["decision"]["confidence"] == 0.95
     [r] = [r for r in agent_entry["decision"]["reasons"] if r["code"] == "LOW_CONFIDENCE"]
@@ -250,7 +253,7 @@ def test_low_confidence_asks_the_chef_and_orders_nothing(shop1, monkeypatch, dec
 
 def test_confident_candidate_beats_a_cheaper_doubtful_one(shop1, monkeypatch, decisions):
     gemini(monkeypatch, ITEM, ranked=["463335", "476240"])
-    decisions["scores"] = {"meets_1": 0.4}  # 476240 is cheaper, but Gemini doubts it is what was asked
+    decisions["scores"] = {"meets_2": 0.4}  # calls: meets/qty of line 0, then meets of line 1 = 476240 (cheaper, doubted)
     body = run()
     assert [ln["product"]["id"] for ln in body["lines"] if ln["chosen"]] == ["463335"]
     assert body["order"]["status"] == "confirmed"

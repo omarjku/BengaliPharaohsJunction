@@ -43,7 +43,31 @@ Two lessons from live runs are built into the code:
 
 On price alone, the agent would have bought the "milk drink" (EUR 1,400, within the auto-approve limit). Gemini judged that it may not be what the chef meant, so the confident product won. The front door then held the EUR 1,560 order for the chef's sign-off (`SPEND_OVER_LIMIT`, above EUR 1,500). The chef sees both numbers: Gemini's confidence and the money rule. The response's `Decision.confidence` is 0.96, and the audit entry records it with the threshold.
 
+**Re-run after the evaluation below (same request, new judge):** asked without the "1000 L" in the product question, the Eila 3 % lactose-free milk drink scores **0.90** (semi-skimmed 0.96, whole 0.94). All three clear 0.80, so the cheapest wins: EUR 1,400, within the auto-approve limit, **confirmed automatically**. The 0.76 above came from the combined input that the evaluation showed to be biased. The labelled set also counts a lactose-free milk drink as acceptable for a lactose-free milk need. The run is kept here to show how the evidence changed the agent.
+
 **Trap, "60 L Arla lactose-free whole milk drink for Monday"**: the only match is a Terminal product whose cut-off has passed, so nothing is ordered (ASK_HUMAN). The substitutes the door's finder suggests are each judged: "Eila 3 % milk drink: 0.82 that it is an acceptable substitute", most acceptable first. Substitutes below 0.80 are marked "check before accepting".
+
+## Is 0.80 the right threshold? A small labelled evaluation
+
+`backend/eval/gemini_eval.py`: 30 hand-labelled cases, each a chef's request plus a **real Valio product**:
+- 12 clear matches;
+- 13 traps: chocolate milk drink for milk, semi-skimmed milk drink for whole milk, 500 × 5 g sugar sachets for baking, lactose-free milk for a *milk allergy*, salted for unsalted butter, peanut butter for butter, ice cream for cream, a reindeer ready meal for reindeer meat, regular cream cheese for lactose-free;
+- 5 substitute judgements.
+
+It runs the agent's own judge (`agent.judge_line` / `_judge_one`, `gemini-decision-1`) live; results are in `backend/eval/results.json`. "Auto" means P(yes) ≥ threshold, i.e. the agent would act without asking.
+
+| threshold | lines handled alone | wrong autos | precision of auto | recall of auto |
+|---|---|---|---|---|
+| 0.6 | 13 | 0 | 100 % | 87 % |
+| 0.7 | 11 | 0 | 100 % | 73 % |
+| **0.8** | 11 | **0** | **100 %** | 73 % |
+| 0.9 | 8 | 0 | 100 % | 53 % |
+
+Accuracy at P(yes) ≥ 0.5 is 93 % (28 of 30). Two identical runs gave identical numbers. Both misses are on the cautious side: the reindeer top loin (0.30) and a substitute question go to the chef, and no wrong product is ordered. The highest score any trap reaches is **0.52** (the sugar sachets).
+
+**What the evaluation changed.** The first run fed the product question and the quantity question one input, as the agent then did. That run had a **wrong auto at 0.80 and even at 0.81**: the tidy "10 kg ÷ 2.5 kg = 4 cases" made the sugar sachets look right for baking (0.23 → 0.81). Dropping the amounts entirely had the opposite problem: "5 kg butter" against a 500 g pack scored 0.32. The agent now asks *"is it the product?" without amounts* and *"is the quantity right?" with the resolver's explanation*, and takes the weaker answer (`agent.judge_line`). That removed the wrong auto.
+
+**Threshold: keep 0.80 as the default.** On this set it has the same 100 % precision as 0.70, and 0.70 gains no recall. 0.60 would handle 2 more of the 15 correct lines alone, but it sits only 0.08 above the worst trap (0.52), too thin a margin to trust on 30 cases. It is a per-buyer setting (`mandates.confidence_threshold`), so a kitchen that accepts that margin can choose 0.6. Thirty cases are evidence, not proof. Every chosen line's confidence goes to the audit log, so approvals and rejections there will grow the set.
 
 ## Interface for T06 `decide()`
 
