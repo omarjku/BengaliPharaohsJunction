@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+
+<html lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="web_standard" name="shell-type"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet"/><style>@layer base { html, body { margin: 0; padding: 0; } body { overscroll-behavior: none; } main > :first-child { margin-top: 0 !important; } main > :last-child { margin-bottom: 0 !important; } } ::-webkit-scrollbar { display: none; }</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config = { darkMode: "class", theme: { extend: { "colors": { "surface-container-lowest": "#ffffff", "on-secondary-fixed-variant": "#3f4753", "on-primary-container": "#c0d6ff", "tertiary-fixed-dim": "#ffb68d", "outline": "#727783", "background": "#f8f9ff", "on-error": "#ffffff", "surface-container-high": "#e6e8ed", "on-tertiary": "#ffffff", "tertiary-fixed": "#ffdbc9", "on-secondary-fixed": "#141c26", "inverse-on-surface": "#eff0f6", "inverse-primary": "#a8c8ff", "error": "#ba1a1a", "tertiary-container": "#974400", "surface-container-low": "#f2f3f9", "secondary-container": "#d8e0ee", "on-tertiary-fixed-variant": "#763300", "on-surface": "#191c20", "on-tertiary-container": "#ffcaad", "secondary": "#575f6b", "surface-container": "#eceef3", "on-secondary-container": "#5b636f", "on-background": "#191c20", "on-error-container": "#93000a", "surface-bright": "#f8f9ff", "on-tertiary-fixed": "#321200", "primary": "#004485", "surface-container-highest": "#e1e2e8", "secondary-fixed": "#dbe3f1", "primary-fixed-dim": "#a8c8ff", "outline-variant": "#c2c6d3", "primary-fixed": "#d5e3ff", "surface": "#f8f9ff", "on-surface-variant": "#424751", "surface-variant": "#e1e2e8", "on-primary-fixed": "#001b3c", "on-primary": "#ffffff", "surface-tint": "#115eaf", "surface-dim": "#d8dadf", "on-secondary": "#ffffff", "tertiary": "#723200", "secondary-fixed-dim": "#bfc7d5", "on-primary-fixed-variant": "#004689", "inverse-surface": "#2e3135", "primary-container": "#0b5cad", "error-container": "#ffdad6" }, "borderRadius": { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" }, "spacing": { "margin-mobile": "1rem", "gutter": "1.5rem", "space-md": "1rem", "margin": "2rem", "space-xs": "0.25rem", "space-xl": "2.5rem", "space-sm": "0.5rem", "gutter-mobile": "0.75rem", "space-lg": "1.5rem" }, "fontFamily": { "headline-xl-mobile": ["Inter"], "headline-sm": ["Inter"], "headline-md": ["Inter"], "label-sm": ["Inter"], "body-lg": ["Inter"], "body-md": ["Inter"], "label-lg": ["Inter"], "label-md": ["Inter"], "numeral-md": ["Inter"], "body-sm": ["Inter"], "headline-xl": ["Inter"], "numeral-lg": ["Inter"], "headline-lg": ["Inter"] }, "fontSize": { "headline-xl-mobile": ["26px", { "lineHeight": "34px", "letterSpacing": "-0.01em", "fontWeight": "700" }], "headline-sm": ["16px", { "lineHeight": "24px", "fontWeight": "600" }], "headline-md": ["20px", { "lineHeight": "28px", "letterSpacing": "-0.005em", "fontWeight": "600" }], "label-sm": ["11px", { "lineHeight": "14px", "letterSpacing": "0.04em", "fontWeight": "700" }], "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }], "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }], "label-lg": ["14px", { "lineHeight": "20px", "fontWeight": "600" }], "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.02em", "fontWeight": "600" }], "numeral-md": ["16px", { "lineHeight": "20px", "fontWeight": "600" }], "body-sm": ["13px", { "lineHeight": "18px", "fontWeight": "400" }], "headline-xl": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700" }], "numeral-lg": ["28px", { "lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "700" }], "headline-lg": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }] } } } };</script></head><body class="bg-surface font-body-md text-on-surface antialiased"><header class="fixed top-0 left-0 right-0 w-full z-50 bg-surface-container-lowest border-b border-outline-variant"><div class="h-20 w-full px-margin flex items-center justify-between gap-space-md"><div class="flex items-center gap-space-lg"><div class="flex items-center gap-space-sm"><img alt="Valio Front Door Brand Mark" class="h-8 w-auto object-contain" src="https://lh3.googleusercontent.com/aida/ALJJyrAktrN8qaeAhq8D_KYlwEpicI-eLXuSCMC1r6ZkLCmXyYlZTC2Hq07jzQRB02DOCxCBynAIWOIxczHz4BabnPtUYZmAbet-xpkfRH5JspN46Oygm10MevNnlOyGumMnC5o6aj_LqnkiVdEkKXJtq96ex0lvc0DifVnyENpeiRU39auKw9vDrGr5pb670b5C84fdCvHgUGLqZMIFpp_29h4Sw7jo0oltcAOT8a8J4CPQ"/><div class="hidden sm:flex flex-col"><span class="font-headline-sm text-headline-sm text-primary uppercase tracking-tight">Valio Front Door</span><span class="font-label-sm text-label-sm text-secondary">Professional Kitchen OS</span></div></div><div class="h-8 w-[1px] bg-outline-variant hidden md:block"></div><div class="hidden md:flex flex-col"><div class="flex items-center gap-space-xs"><span class="material-symbols-outlined text-[16px] text-primary">storefront</span><span class="font-label-lg text-label-lg text-on-surface">Ravintola Kiela, Rovaniemi (Lapland)</span></div><div class="flex items-center gap-space-xs text-on-surface-variant font-label-sm text-label-sm"><span class="w-2 h-2 rounded-full bg-emerald-600"></span><span>Mandate active • Auto-pilot ≤ 500 EUR</span></div></div></div><nav class="hidden xl:flex items-center gap-space-xs bg-surface-container-low p-space-xs rounded-lg border border-outline-variant" data-active-classes="bg-primary-container text-on-primary font-label-lg rounded-lg"><a aria-current="page" class="px-space-md py-space-sm transition-colors min-h-[44px] flex items-center bg-primary-container text-on-primary font-label-lg rounded-lg" data-path="quick-order" href="#">Quick Order</a><a class="px-space-md py-space-sm font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors min-h-[44px] flex items-center" data-path="menu-to-cart" href="#">Menu to Cart</a><a class="px-space-md py-space-sm font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors min-h-[44px] flex items-center" data-path="kitchen-mandate-and-rules" href="#">Kitchen Mandate & Rules</a><a class="px-space-md py-space-sm font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors min-h-[44px] flex items-center" data-path="audit-log" href="#">Audit Log</a><a class="px-space-md py-space-sm font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors min-h-[44px] flex items-center" data-path="agent-memory" href="#">Agent Memory</a></nav><div class="flex items-center gap-space-sm"><div class="hidden lg:flex items-center bg-surface-container border border-outline-variant rounded-lg p-[2px]"><button class="px-space-sm py-1 font-label-sm text-label-sm rounded text-on-surface-variant hover:text-on-surface min-h-[36px]" type="button">FI</button><span class="text-outline text-label-sm">/</span><button class="px-space-sm py-1 font-label-sm text-label-sm bg-surface-container-lowest text-primary font-bold rounded shadow-sm min-h-[36px]" type="button">EN</button></div><div class="hidden md:flex items-center gap-space-xs px-space-sm py-1 bg-surface-container rounded-full border border-outline-variant font-label-sm text-label-sm text-secondary min-h-[36px]"><span class="material-symbols-outlined text-[16px] text-emerald-600">cloud_done</span><span class="whitespace-nowrap">Offline sync ready</span></div><div class="flex items-center gap-space-sm pl-space-xs"><div class="hidden sm:flex flex-col text-right"><span class="font-label-lg text-label-lg text-on-surface leading-none">Chef Jari M.</span><span class="font-label-sm text-label-sm text-secondary">Head Chef • Level 2 Mandate</span></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></div></header><main class="w-full pt-20 pb-16 bg-surface min-h-screen"><div class="flex flex-col w-full">
+<div class="w-full max-w-[1440px] mx-auto px-gutter-mobile md:px-gutter xl:px-margin py-space-lg flex flex-col gap-space-lg">
+<!-- Kitchen Context & Operating Bar -->
+<div class="bg-surface-container-lowest p-space-md rounded-xl shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-space-md">
+<div class="flex items-center gap-space-md">
+<div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[24px]">soup_kitchen</span>
+</div>
+<div>
+<div class="flex items-center gap-space-xs">
+<span class="font-headline-sm text-headline-sm text-on-surface">Prep Order Input & Auto-Pilot Console</span>
+<span class="bg-surface-container px-space-xs py-0.5 rounded font-label-sm text-label-sm text-secondary uppercase">Morning Shift 06:00</span>
+</div>
+<p class="font-body-sm text-body-sm text-secondary">
+            Dock: Rovaniemi Hub • Mandate Level: Chef Discretion ≤ EUR 500 • Cold Chain Protocol: Active
+          </p>
+</div>
+</div>
+<div class="flex items-center gap-space-sm self-start lg:self-center">
+<div class="bg-surface-container px-space-md py-1.5 rounded-lg flex items-center gap-space-xs">
+<span class="w-2.5 h-2.5 rounded-full bg-primary"></span>
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Aimo Core Link 100%</span>
+</div>
+<div class="bg-surface-container px-space-md py-1.5 rounded-lg flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-[16px] text-tertiary">thermostat</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">+2.8°C Lapland Fleet</span>
+</div>
+</div>
+</div>
+<!-- Section 1: Kitchen Order Input Box -->
+<section class="bg-surface-container-lowest rounded-xl shadow-sm p-space-lg flex flex-col gap-space-md">
+<div class="flex items-center justify-between">
+<label class="flex items-center gap-space-xs font-label-lg text-label-lg text-on-surface" for="kitchen-order-input">
+<span class="material-symbols-outlined text-primary text-[20px]">record_voice_over</span>
+<span>Spoken or Typed Kitchen Requisition</span>
+</label>
+<span class="font-label-sm text-label-sm text-secondary">Finnish / English dual-stream parser active</span>
+</div>
+<div class="flex flex-col lg:flex-row gap-space-md">
+<!-- Main Voice/Text Input Area -->
+<div class="relative flex-1 bg-surface rounded-lg p-space-md shadow-inner flex flex-col justify-between min-h-[140px]">
+<textarea class="w-full bg-transparent font-headline-md text-headline-md text-on-surface resize-none focus:outline-none placeholder-secondary placeholder:font-body-lg" id="kitchen-order-input" placeholder="e.g. 200 L lactose-free milk by Monday morning, plus 30 kg butter and 15 kg artisan sourdough flour" rows="3">200 L lactose-free milk by Monday morning, plus 30 kg butter and 15 kg artisan sourdough flour</textarea>
+<div class="flex items-center justify-between pt-space-sm text-secondary font-label-sm text-label-sm">
+<span class="flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-[16px]">hearing</span>
+<span>Ambient kitchen noise filter active • Hood & dishwasher frequencies suppressed</span>
+</span>
+<span class="hidden sm:inline font-mono text-[11px] bg-surface-container-highest px-space-xs py-0.5 rounded text-on-surface-variant">Cmd + Enter</span>
+</div>
+</div>
+<!-- Voice Activation Panel -->
+<div class="w-full lg:w-72 bg-surface-container-low rounded-lg p-space-md flex flex-col justify-between gap-space-sm">
+<div class="flex flex-col gap-space-xs">
+<span class="font-label-md text-label-md text-on-surface">Voice Capture</span>
+<span class="font-body-sm text-body-sm text-secondary">Puhu suomeksi tai englanniksi. Auto-detect dialect & SKU.</span>
+</div>
+<div class="flex items-center gap-space-md py-space-xs">
+<button aria-label="Toggle live kitchen microphone input" class="relative w-14 h-14 rounded-full bg-primary flex items-center justify-center text-on-primary shadow-md hover:bg-primary-container transition-transform active:scale-95" id="mic-toggle-btn" type="button">
+<span class="material-symbols-outlined text-[28px]">mic</span>
+<span class="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-error ring-2 ring-surface-container-lowest animate-ping" id="mic-ping"></span>
+<span class="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-error ring-2 ring-surface-container-lowest"></span>
+</button>
+<div class="flex flex-col">
+<span class="font-label-md text-label-md text-on-surface">Live Listening</span>
+<span class="font-label-sm text-label-sm text-secondary">Gain 88% • Rovaniemi Lapland Mic #2</span>
+</div>
+</div>
+<div class="flex items-center gap-space-xs">
+<div class="h-1 flex-1 bg-surface-container-highest rounded-full overflow-hidden">
+<div class="h-full bg-primary w-2/3 animate-pulse"></div>
+</div>
+<span class="font-label-sm text-label-sm font-mono text-secondary">-14dB</span>
+</div>
+</div>
+</div>
+<!-- Actions Row -->
+<div class="flex flex-col sm:flex-row items-center justify-between gap-space-md pt-space-xs">
+<div class="flex items-center gap-space-sm text-secondary font-body-sm text-body-sm w-full sm:w-auto">
+<span class="material-symbols-outlined text-[18px] text-primary">verified</span>
+<span>Decision engine validates vendor contracts, allergen limits, and terminal stock.</span>
+</div>
+<div class="flex items-center gap-space-sm w-full sm:w-auto">
+<button class="h-12 px-space-md rounded-lg bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-label-lg text-label-lg transition-colors min-h-[48px] flex items-center justify-center" onclick="clearInputPrompt()" type="button">
+            Clear
+          </button>
+<button class="flex-1 sm:flex-initial h-12 px-space-lg rounded-lg bg-primary hover:bg-primary-container text-on-primary font-label-lg text-label-lg shadow-sm transition-all active:scale-[0.99] min-h-[48px] flex items-center justify-center gap-space-xs" id="run-engine-btn" onclick="simulateEngineRun()" type="button">
+<span class="material-symbols-outlined text-[20px]">smart_toy</span>
+<span>Verify & Run Decision Engine</span>
+</button>
+</div>
+</div>
+</section>
+<!-- Section 2: Main Body - The Decision Card Displaying 3 Distinct States -->
+<section class="flex flex-col gap-space-md">
+<!-- Section Header with Mode Selector Switcher -->
+<div class="flex flex-col md:flex-row md:items-end justify-between gap-space-md">
+<div>
+<div class="flex items-center gap-space-xs">
+<span class="font-label-sm text-label-sm uppercase tracking-wider text-secondary">Aimo Intelligence OS</span>
+<span class="text-outline-variant">•</span>
+<span class="font-label-sm text-label-sm text-primary">Mandate Level 2 Verified</span>
+</div>
+<h2 class="font-headline-lg text-headline-lg text-on-surface">Procurement Engine Outcomes</h2>
+<p class="font-body-md text-body-md text-secondary">Review decisions executed by rule set #01-#12 across current requisition payload.</p>
+</div>
+<!-- Filter / Quick Tab Navigation -->
+<div class="flex items-center gap-space-xs bg-surface-container p-1 rounded-xl self-start md:self-auto overflow-x-auto max-w-full">
+<button class="px-space-md py-2 rounded-lg font-label-md text-label-md transition-colors bg-surface-container-lowest text-primary shadow-sm whitespace-nowrap min-h-[44px]" id="tab-all" onclick="switchDecisionTab('all')" type="button">
+            All 3 States (Review Matrix)
+          </button>
+<button class="px-space-md py-2 rounded-lg font-label-md text-label-md transition-colors text-on-surface-variant hover:text-on-surface whitespace-nowrap min-h-[44px]" id="tab-ordered" onclick="switchDecisionTab('ordered')" type="button">
+            Ordered (1)
+          </button>
+<button class="px-space-md py-2 rounded-lg font-label-md text-label-md transition-colors text-on-surface-variant hover:text-on-surface whitespace-nowrap min-h-[44px]" id="tab-needs-you" onclick="switchDecisionTab('needs-you')" type="button">
+            Needs You (1)
+          </button>
+<button class="px-space-md py-2 rounded-lg font-label-md text-label-md transition-colors text-on-surface-variant hover:text-on-surface whitespace-nowrap min-h-[44px]" id="tab-not-ordered" onclick="switchDecisionTab('not-ordered')" type="button">
+            Blocked (1)
+          </button>
+</div>
+</div>
+<!-- Decision Cards Container -->
+<div class="flex flex-col gap-space-lg">
+<!-- ============================================================== -->
+<!-- STATE A: "ORDERED" (Green Status / High Trust Auto-Pilot) -->
+<!-- ============================================================== -->
+<div class="state-card bg-surface-container-lowest rounded-xl shadow-sm overflow-hidden transition-all" id="card-ordered">
+<!-- Status Banner Strip -->
+<div class="bg-[#eef7f0] px-space-lg py-space-md flex flex-wrap items-center justify-between gap-space-sm">
+<div class="flex items-center gap-space-sm">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container-lowest shadow-sm text-[11px] font-bold text-[#1e7a3c] tracking-wider uppercase">
+<span class="w-2 h-2 rounded-full bg-[#1e7a3c]"></span>
+                ORDER CONFIRMED • VALIO LOGISTICS NOTIFIED
+              </span>
+<span class="font-label-sm text-label-sm text-[#1e7a3c] hidden sm:inline">PO-ROV-2024-8841</span>
+</div>
+<div class="flex items-center gap-space-md">
+<span class="font-label-sm text-label-sm text-[#1e7a3c] flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">verified</span>
+                98% Match Confidence • Exact GTIN Match
+              </span>
+</div>
+</div>
+<div class="p-space-lg flex flex-col gap-space-md">
+<!-- Header & Delivery Summary -->
+<div class="flex flex-col lg:flex-row lg:items-center justify-between gap-space-md">
+<div class="flex flex-col">
+<span class="font-headline-md text-headline-md text-on-surface">Standard Dairy Replenishment (Weekend Prep)</span>
+<span class="font-body-sm text-body-sm text-secondary">
+                  Decided by Rule #03 (Standard Dairy Auto-Order under EUR 600).
+                </span>
+</div>
+<!-- Delivery Window Pill Card -->
+<div class="bg-surface-container-low px-space-md py-space-sm rounded-lg flex items-center gap-space-sm">
+<span class="material-symbols-outlined text-primary text-[24px]">local_shipping</span>
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm text-secondary uppercase">Guaranteed Delivery Slot</span>
+<span class="font-label-lg text-label-lg text-on-surface">Monday 06:30 – 08:00 (Rovaniemi Route 4)</span>
+</div>
+</div>
+</div>
+<!-- Items Breakdown Table -->
+<div class="overflow-x-auto rounded-lg bg-surface-container-lowest">
+<table class="w-full text-left font-body-sm text-body-sm text-on-surface">
+<thead>
+<tr class="bg-surface-container-low text-secondary font-label-sm text-label-sm uppercase tracking-wider">
+<th class="py-space-sm px-space-md">SKU / Item Description</th>
+<th class="py-space-sm px-space-md">Order Volume</th>
+<th class="py-space-sm px-space-md text-right">Contract Unit Price</th>
+<th class="py-space-sm px-space-md text-right">Total (ALV 14%)</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-surface-container">
+<tr class="hover:bg-surface-container-low transition-colors">
+<td class="py-space-md px-space-md">
+<div class="flex flex-col">
+<span class="font-label-lg text-label-lg text-on-surface">Valio Eila® Laktoositon täysmaito 10 L bib</span>
+<span class="font-body-sm text-body-sm text-secondary font-mono">GTIN: 06408430044812 • Bag-in-Box dispenser</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<span class="font-numeral-md text-numeral-md text-on-surface">20 kpl (200 L)</span>
+</td>
+<td class="py-space-md px-space-md text-right font-numeral-md text-numeral-md text-secondary">
+                      EUR 1.42 / L
+                    </td>
+<td class="py-space-md px-space-md text-right font-numeral-md text-numeral-md text-on-surface font-bold">
+                      EUR 284.00
+                    </td>
+</tr>
+<tr class="hover:bg-surface-container-low transition-colors">
+<td class="py-space-md px-space-md">
+<div class="flex flex-col">
+<span class="font-label-lg text-label-lg text-on-surface">Valio Meijerivoi 500 g normaali</span>
+<span class="font-body-sm text-body-sm text-secondary font-mono">GTIN: 06408430010114 • Foil wrap professional</span>
+</div>
+</td>
+<td class="py-space-md px-space-md">
+<span class="font-numeral-md text-numeral-md text-on-surface">60 kpl (30 kg)</span>
+</td>
+<td class="py-space-md px-space-md text-right font-numeral-md text-numeral-md text-secondary">
+                      EUR 4.10 / pkt
+                    </td>
+<td class="py-space-md px-space-md text-right font-numeral-md text-numeral-md text-on-surface font-bold">
+                      EUR 246.00
+                    </td>
+</tr>
+</tbody>
+<tfoot>
+<tr class="bg-surface-container-low">
+<td class="py-space-sm px-space-md text-right font-label-md text-label-md text-secondary uppercase" colspan="3">
+                      Direct Dispatch Line Total:
+                    </td>
+<td class="py-space-sm px-space-md text-right font-numeral-lg text-numeral-lg text-primary">
+                      EUR 530.00
+                    </td>
+</tr>
+</tfoot>
+</table>
+</div>
+<!-- "Why" Audit Expander (Open State) -->
+<div class="bg-surface-container-low rounded-lg p-space-md flex flex-col gap-space-xs">
+<div class="flex items-center justify-between">
+<span class="font-label-md text-label-md text-on-surface flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-[18px] text-primary">account_tree</span>
+<span>Automated Execution Log • Rule Evaluation Trace</span>
+</span>
+<span class="font-label-sm text-label-sm text-secondary font-mono">10:42:04 EEST</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant">
+<strong>Rule #03 Match:</strong> Approved primary vendor Valio contract applied. Price variance is -1.2% under contract baseline index. Total order spend of EUR 530.00 sits safely inside Chef Jari M.’s Level 2 weekend prep discretionary mandate limit (EUR 600.00). Cold store bay #2 in Rovaniemi has capacity reserved.
+              </p>
+</div>
+<!-- Card Bottom Bar -->
+<div class="flex items-center justify-between pt-space-xs">
+<div class="flex items-center gap-space-xs text-secondary font-body-sm text-body-sm">
+<span class="material-symbols-outlined text-[16px] text-[#1e7a3c]">task_alt</span>
+<span>EDI message 204 transmitted to Valio Oulu/Rovaniemi depot</span>
+</div>
+<button class="h-10 px-space-md rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface font-label-md text-label-md transition-colors min-h-[44px] flex items-center gap-space-xs" type="button">
+<span class="material-symbols-outlined text-[16px]">receipt_long</span>
+<span>View EDI Invoice Manifest</span>
+</button>
+</div>
+</div>
+</div>
+<!-- ============================================================== -->
+<!-- STATE B: "NEEDS YOU" (Amber Status / Human Confirmation Req.) -->
+<!-- ============================================================== -->
+<div class="state-card bg-surface-container-lowest rounded-xl shadow-sm overflow-hidden transition-all" id="card-needs-you">
+<!-- Status Banner Strip -->
+<div class="bg-[#fff6e3] px-space-lg py-space-md flex flex-wrap items-center justify-between gap-space-sm">
+<div class="flex items-center gap-space-sm">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container-lowest shadow-sm text-[11px] font-bold text-[#8a5a00] tracking-wider uppercase">
+<span class="w-2 h-2 rounded-full bg-[#8a5a00]"></span>
+                HUMAN CONFIRMATION REQUIRED
+              </span>
+<span class="font-label-sm text-label-sm text-[#8a5a00] hidden sm:inline">SKU Discrepancy • Hub Stockout</span>
+</div>
+<div class="flex items-center gap-space-md">
+<span class="font-label-sm text-label-sm text-[#8a5a00] flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">psychology</span>
+                Confidence 84% • Alternative flour gluten profile matches sourdough specification
+              </span>
+</div>
+</div>
+<div class="p-space-lg flex flex-col gap-space-md">
+<!-- Clear Problem Statement -->
+<div class="bg-surface-container-low p-space-md rounded-lg flex flex-col gap-space-xs">
+<div class="flex items-center gap-space-xs text-[#8a5a00] font-label-lg text-label-lg">
+<span class="material-symbols-outlined text-[20px]">warning</span>
+<span>Requested Delivery Blocked: Valio Aimo Central Depot Out of Stock</span>
+</div>
+<p class="font-body-md text-body-md text-on-surface">
+                Ordered <strong>15 kg artisan sourdough flour</strong>. Valio Aimo central warehouse is out of stock in Oulu until Wednesday. Monday morning delivery will fail without substitution.
+              </p>
+</div>
+<!-- Alternative Selection Chips Section -->
+<div class="flex flex-col gap-space-xs">
+<div class="flex items-center justify-between">
+<span class="font-label-md text-label-md text-on-surface uppercase tracking-wider">Select Verified Sourdough Alternative:</span>
+<span class="font-label-sm text-label-sm text-secondary">Select one option to finalize dispatch</span>
+</div>
+<!-- 3 Interactive Selectable Chips -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-space-md">
+<!-- Chip 1: Best Match (Selected by Default) -->
+<div class="alternative-card relative p-space-md rounded-lg bg-surface-container-low hover:bg-surface-container cursor-pointer transition-all flex flex-col justify-between min-h-[140px] shadow-sm" id="alt-1" onclick="selectAlternative(this, 'alt-1')">
+<div class="flex flex-col gap-space-xs">
+<div class="flex items-center justify-between">
+<span class="px-2 py-0.5 rounded bg-primary text-on-primary font-label-sm text-label-sm uppercase font-bold">Best Match</span>
+<span class="material-symbols-outlined text-primary text-[20px] check-icon">check_circle</span>
+</div>
+<span class="font-label-lg text-label-lg text-on-surface">Fazer Luomu Vehnäjauho Karkea</span>
+<span class="font-body-sm text-body-sm text-secondary">20 kg sack • High protein 12.8%</span>
+</div>
+<div class="pt-space-sm flex items-center justify-between font-label-sm text-label-sm">
+<span class="text-secondary font-mono">In Stock: Oulu Depot</span>
+<span class="font-numeral-md text-numeral-md text-on-surface font-bold">EUR 32.50 <span class="text-secondary font-normal">(+EUR 4.10)</span></span>
+</div>
+</div>
+<!-- Chip 2: Cheaper Match -->
+<div class="alternative-card relative p-space-md rounded-lg bg-surface-container-lowest hover:bg-surface-container cursor-pointer transition-all flex flex-col justify-between min-h-[140px]" id="alt-2" onclick="selectAlternative(this, 'alt-2')">
+<div class="flex flex-col gap-space-xs">
+<div class="flex items-center justify-between">
+<span class="px-2 py-0.5 rounded bg-surface-container-highest text-on-surface-variant font-label-sm text-label-sm uppercase font-bold">Cheaper</span>
+<span class="material-symbols-outlined text-outline-variant text-[20px] check-icon">radio_button_unchecked</span>
+</div>
+<span class="font-label-lg text-label-lg text-on-surface">Myllyn Paras Erikoisvehnäjauho</span>
+<span class="font-body-sm text-body-sm text-secondary">25 kg sack • All-purpose artisan profile</span>
+</div>
+<div class="pt-space-sm flex items-center justify-between font-label-sm text-label-sm">
+<span class="text-secondary font-mono">In Stock: Rovaniemi Hub</span>
+<span class="font-numeral-md text-numeral-md text-on-surface font-bold">EUR 26.80 <span class="text-secondary font-normal">(-EUR 1.60)</span></span>
+</div>
+</div>
+<!-- Chip 3: Local Partner -->
+<div class="alternative-card relative p-space-md rounded-lg bg-surface-container-lowest hover:bg-surface-container cursor-pointer transition-all flex flex-col justify-between min-h-[140px]" id="alt-3" onclick="selectAlternative(this, 'alt-3')">
+<div class="flex flex-col gap-space-xs">
+<div class="flex items-center justify-between">
+<span class="px-2 py-0.5 rounded bg-tertiary-fixed text-on-tertiary-fixed font-label-sm text-label-sm uppercase font-bold">Local Partner</span>
+<span class="material-symbols-outlined text-outline-variant text-[20px] check-icon">radio_button_unchecked</span>
+</div>
+<span class="font-label-lg text-label-lg text-on-surface">Lapin Jauho Arctic Barley & Wheat blend</span>
+<span class="font-body-sm text-body-sm text-secondary">15 kg sack • Rovaniemi local grain mill</span>
+</div>
+<div class="pt-space-sm flex items-center justify-between font-label-sm text-label-sm">
+<span class="text-secondary font-mono">Local pickup / Direct courier</span>
+<span class="font-numeral-md text-numeral-md text-on-surface font-bold">EUR 34.00</span>
+</div>
+</div>
+</div>
+</div>
+<!-- "Why" Audit Expander -->
+<div class="bg-surface-container-low rounded-lg p-space-md flex flex-col gap-space-xs">
+<div class="flex items-center justify-between">
+<span class="font-label-md text-label-md text-on-surface flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-[18px] text-[#8a5a00]">info</span>
+<span>Supplier Alert & Rule Context</span>
+</span>
+<span class="font-label-sm text-label-sm text-secondary font-mono">Terminal 04 Inventory Zero</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant">
+                Supplier alert: Inventory zero at Terminal 04. <strong>Rule #08 specifies:</strong> All flour and grain substitutions over EUR 25.00 require chef confirmation to safeguard sourdough mother starter feeding schedules and allergen labeling.
+              </p>
+</div>
+<!-- Action Controls Group -->
+<div class="flex flex-wrap items-center justify-between gap-space-md pt-space-xs">
+<div class="flex flex-wrap items-center gap-space-sm">
+<!-- Primary Action: Approve Selected -->
+<button class="h-12 px-space-lg rounded-lg bg-primary hover:bg-primary-container text-on-primary font-label-lg text-label-lg shadow-sm transition-all active:scale-[0.99] min-h-[48px] flex items-center gap-space-xs" onclick="approveSubstitution()" type="button">
+<span class="material-symbols-outlined text-[20px]">thumb_up</span>
+<span>Approve Selected Option</span>
+</button>
+<!-- Secondary Action: Adjust Quantity -->
+<button class="h-12 px-space-md rounded-lg bg-surface-container-lowest hover:bg-surface-container text-on-surface font-label-lg text-label-lg transition-colors min-h-[48px] flex items-center gap-space-xs shadow-sm" type="button">
+<span class="material-symbols-outlined text-[18px]">tune</span>
+<span>Change Quantity</span>
+</button>
+</div>
+<!-- Destructive Action: Decline -->
+<button class="h-12 px-space-md rounded-lg bg-surface-container-lowest hover:bg-error-container text-error font-label-lg text-label-lg transition-colors min-h-[48px] flex items-center gap-space-xs" type="button">
+<span class="material-symbols-outlined text-[18px]">cancel</span>
+<span>Decline & Drop Item</span>
+</button>
+</div>
+</div>
+</div>
+<!-- ============================================================== -->
+<!-- STATE C: "NOT ORDERED" (Red Status / Strict Allergen Block) -->
+<!-- ============================================================== -->
+<div class="state-card bg-surface-container-lowest rounded-xl shadow-sm overflow-hidden transition-all" id="card-not-ordered">
+<!-- Status Banner Strip -->
+<div class="bg-[#fdf2f2] px-space-lg py-space-md flex flex-wrap items-center justify-between gap-space-sm">
+<div class="flex items-center gap-space-sm">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container-lowest shadow-sm text-[11px] font-bold text-[#b3261e] tracking-wider uppercase">
+<span class="w-2 h-2 rounded-full bg-[#b3261e]"></span>
+                BLOCKED BY KITCHEN RULE
+              </span>
+<span class="font-label-sm text-label-sm text-[#b3261e] hidden sm:inline">Critical Allergen Intercept</span>
+</div>
+<div class="flex items-center gap-space-md">
+<span class="font-label-sm text-label-sm text-[#b3261e] flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">gpp_bad</span>
+                Automated Procurement Abort • Zero Bypass Permitted
+              </span>
+</div>
+</div>
+<div class="p-space-lg flex flex-col gap-space-md">
+<!-- Direct Policy Statement -->
+<div class="bg-surface-container-low p-space-md rounded-lg flex flex-col gap-space-xs">
+<div class="flex items-center gap-space-xs text-[#b3261e] font-label-lg text-label-lg">
+<span class="material-symbols-outlined text-[20px]">block</span>
+<span>Blocked by Rule #01 (Strict Kitchen Mandate: ZERO PEANUT OR UNVERIFIED NUT INGREDIENTS)</span>
+</div>
+<p class="font-body-md text-body-md text-on-surface">
+<strong>Requested item:</strong> Nordic Bakery Spice Mix 5 kg contains traces of peanut flour in production facility batch #902. Cross-contact hazard identified from supplier batch specification sheet.
+              </p>
+</div>
+<!-- Certified Safe Substitution Card -->
+<div class="bg-surface-container-low rounded-lg p-space-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-space-md">
+<div class="flex items-center gap-space-md">
+<div class="w-12 h-12 rounded-lg bg-surface-container flex items-center justify-center text-primary shrink-0">
+<span class="material-symbols-outlined text-[26px]">sanitizer</span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-space-xs">
+<span class="font-label-lg text-label-lg text-on-surface">Valio Aimo Certified Nut-Free Kitchen Seasoning Blend 5 kg</span>
+<span class="px-2 py-0.5 rounded bg-surface-container text-[#1e7a3c] font-label-sm text-label-sm font-bold">Cleared</span>
+</div>
+<span class="font-body-sm text-body-sm text-secondary">
+                    Allergen laboratory cleared • Dedicated line • ISO 22000 certified facility
+                  </span>
+</div>
+</div>
+<div class="flex items-center gap-space-sm w-full sm:w-auto justify-end">
+<span class="font-numeral-md text-numeral-md text-on-surface font-bold whitespace-nowrap">EUR 41.20</span>
+<button class="h-11 px-space-md rounded-lg bg-primary hover:bg-primary-container text-on-primary font-label-md text-label-md shadow-sm transition-colors min-h-[44px] flex items-center gap-1 whitespace-nowrap" type="button">
+<span class="material-symbols-outlined text-[16px]">add_task</span>
+<span>Add Safe Alternative</span>
+</button>
+</div>
+</div>
+<!-- "Why" Audit Expander -->
+<div class="bg-surface-container-low rounded-lg p-space-md flex flex-col gap-space-xs">
+<div class="flex items-center justify-between">
+<span class="font-label-md text-label-md text-on-surface flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-[18px] text-[#b3261e]">security</span>
+<span>Mandate Enforcement Reason</span>
+</span>
+<span class="font-label-sm text-label-sm text-secondary font-mono">Safety Law • EU 1169/2011</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant">
+<strong>Rule #01 violated:</strong> The AI autonomous agent is strictly forbidden from ordering products lacking certified tree nut / peanut absence. Kitchen policy registered by Ravintola Kiela Head Chef Jari M. on 14.01.2024.
+              </p>
+</div>
+<!-- Action Controls Group -->
+<div class="flex flex-wrap items-center justify-between gap-space-md pt-space-xs">
+<div class="flex items-center gap-space-xs text-secondary font-body-sm text-body-sm">
+<span class="material-symbols-outlined text-[16px]">lock</span>
+<span>Requires Head Chef PIN to override safety mandates</span>
+</div>
+<div class="flex items-center gap-space-sm">
+<button class="h-11 px-space-md rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface font-label-md text-label-md transition-colors min-h-[44px] flex items-center gap-space-xs" type="button">
+<span class="material-symbols-outlined text-[18px]">settings</span>
+<span>Modify Kitchen Mandate in Settings</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Operational System Footer Notes -->
+<div class="p-space-md rounded-xl bg-surface-container-low flex flex-col sm:flex-row items-center justify-between gap-space-sm text-secondary font-body-sm text-body-sm">
+<div class="flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-[18px] text-primary">terminal</span>
+<span>Decision Engine v4.2.1-nordic • Rovaniemi Hub Local Cache</span>
+</div>
+<div class="flex items-center gap-space-md">
+<span>Latency: 42ms</span>
+<span>•</span>
+<span>Audit Trail: Immutable Hash #8f32a</span>
+</div>
+</div>
+</div>
+</div>
+<script>
+  // Tab filtering behavior
+  function switchDecisionTab(tabName) {
+    const tabs = ['all', 'ordered', 'needs-you', 'not-ordered'];
+    const cards = {
+      'ordered': document.getElementById('card-ordered'),
+      'needs-you': document.getElementById('card-needs-you'),
+      'not-ordered': document.getElementById('card-not-ordered')
+    };
+
+    // Update tab visual styles
+    tabs.forEach(t => {
+      const el = document.getElementById('tab-' + t);
+      if (!el) return;
+      if (t === tabName) {
+        el.className = 'px-space-md py-2 rounded-lg font-label-md text-label-md transition-colors bg-surface-container-lowest text-primary shadow-sm whitespace-nowrap min-h-[44px]';
+      } else {
+        el.className = 'px-space-md py-2 rounded-lg font-label-md text-label-md transition-colors text-on-surface-variant hover:text-on-surface whitespace-nowrap min-h-[44px]';
+      }
+    });
+
+    // Toggle card visibility
+    if (tabName === 'all') {
+      cards['ordered'].style.display = 'block';
+      cards['needs-you'].style.display = 'block';
+      cards['not-ordered'].style.display = 'block';
+    } else {
+      cards['ordered'].style.display = (tabName === 'ordered') ? 'block' : 'none';
+      cards['needs-you'].style.display = (tabName === 'needs-you') ? 'block' : 'none';
+      cards['not-ordered'].style.display = (tabName === 'not-ordered') ? 'block' : 'none';
+    }
+  }
+
+  // Interactive Alternative Chips Selection
+  function selectAlternative(cardElement, altId) {
+    const allCards = document.querySelectorAll('.alternative-card');
+    allCards.forEach(card => {
+      card.className = 'alternative-card relative p-space-md rounded-lg bg-surface-container-lowest hover:bg-surface-container cursor-pointer transition-all flex flex-col justify-between min-h-[140px]';
+      const icon = card.querySelector('.check-icon');
+      if (icon) {
+        icon.textContent = 'radio_button_unchecked';
+        icon.className = 'material-symbols-outlined text-outline-variant text-[20px] check-icon';
+      }
+    });
+
+    // Activate clicked card
+    cardElement.className = 'alternative-card relative p-space-md rounded-lg bg-surface-container-low hover:bg-surface-container cursor-pointer transition-all flex flex-col justify-between min-h-[140px] shadow-sm';
+    const activeIcon = cardElement.querySelector('.check-icon');
+    if (activeIcon) {
+      activeIcon.textContent = 'check_circle';
+      activeIcon.className = 'material-symbols-outlined text-primary text-[20px] check-icon';
+    }
+  }
+
+  // Microphone toggle micro-interaction
+  let isListening = true;
+  const micBtn = document.getElementById('mic-toggle-btn');
+  const micPing = document.getElementById('mic-ping');
+  if (micBtn) {
+    micBtn.addEventListener('click', function() {
+      isListening = !isListening;
+      if (isListening) {
+        micPing.classList.remove('hidden');
+        micBtn.classList.remove('bg-secondary');
+        micBtn.classList.add('bg-primary');
+      } else {
+        micPing.classList.add('hidden');
+        micBtn.classList.remove('bg-primary');
+        micBtn.classList.add('bg-secondary');
+      }
+    });
+  }
+
+  // Clear input textarea
+  function clearInputPrompt() {
+    const ta = document.getElementById('kitchen-order-input');
+    if (ta) {
+      ta.value = '';
+      ta.focus();
+    }
+  }
+
+  // Engine run button animation simulation
+  function simulateEngineRun() {
+    const btn = document.getElementById('run-engine-btn');
+    if (!btn) return;
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<span class="material-symbols-outlined text-[20px] animate-spin">refresh</span><span>Evaluating Rules...</span>';
+    setTimeout(() => {
+      btn.innerHTML = originalText;
+    }, 600);
+  }
+
+  // Keyboard shortcut listener (Cmd + Enter or Ctrl + Enter)
+  document.addEventListener('keydown', function(e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      simulateEngineRun();
+    }
+  });
+
+  // Approve substitution toast feedback
+  function approveSubstitution() {
+    alert("Approved alternative flour dispatched for Monday route. Order manifest updated.");
+  }
+</script></main><footer class="fixed bottom-0 left-0 right-0 w-full z-40 bg-surface-container-lowest border-t border-outline-variant"><div class="h-12 w-full px-margin flex items-center justify-between text-body-sm font-body-sm text-on-surface"><div class="flex items-center gap-space-md"><div class="flex items-center gap-space-xs font-label-sm text-label-sm uppercase tracking-wider text-secondary"><span class="material-symbols-outlined text-[16px] text-primary">support_agent</span><span>Valio Aimo Tilauspalvelu:</span><a class="font-numeral-md text-numeral-md text-primary font-bold hover:underline" href="tel:0103812211">010 381 2211</a></div><span class="hidden md:inline text-outline-variant">|</span><span class="hidden md:inline font-body-sm text-body-sm text-on-surface-variant">Dock intake terminal • Rovaniemi Central Hub</span></div><div class="flex items-center gap-space-xs font-label-md text-label-md bg-tertiary-fixed px-space-md py-1 rounded-full text-on-tertiary-fixed border border-tertiary-fixed-dim"><span class="material-symbols-outlined text-[18px] text-tertiary">schedule</span><span>Next Lapland delivery window closes in <strong>3h 14m</strong></span></div></div></footer></body></html>
