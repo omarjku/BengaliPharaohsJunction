@@ -135,3 +135,39 @@ def test_menu_dietary_words_are_enforced_or_asked(shop1, monkeypatch):
     fake_gemini(monkeypatch, [PORRIDGE])
     body = post("Porridge with milk; everything vegan").json()  # a word no dish line owns
     assert any("isn't clear which dish" in r["message"] for r in body["decision"]["reasons"])
+
+
+# --- Codex review of 656b1e6 (menu)
+
+
+def test_plurals_merge_and_duplicate_dishes_count_once(shop1, monkeypatch):
+    ings, _, _ = menu.scale([
+        {"name": "A", "ingredients": [{"name": "lingonberries", "per_cover": 4, "unit": "g", "assumption": "", "dietary": []}]},
+        {"name": "B", "ingredients": [{"name": "lingonberry", "per_cover": 4, "unit": "g", "assumption": "", "dietary": []}]},
+    ], 10)
+    assert len(ings) == 1 and ings[0]["amount"] == 0.08
+    fake_gemini(monkeypatch, [PORRIDGE, PORRIDGE])
+    body = post("Porridge with milk", covers=10).json()
+    assert body["ingredients"][0]["amount"] == 2.0  # 10 x 0.2 L once, not twice
+    assert any("came back twice" in r["message"] for r in body["decision"]["reasons"])
+
+
+def test_dish_must_be_on_one_menu_line(shop1, monkeypatch):
+    fake_gemini(monkeypatch, [{"name": "Butter feast", "ingredients": PORRIDGE["ingredients"]}])
+    body = post("Butter porridge; berry feast").json()  # both words appear, but on different lines
+    assert body["ingredients"] == [] and any("isn't on the menu" in r["message"] for r in body["decision"]["reasons"])
+
+
+def test_absurd_amount_is_left_out_not_a_500(shop1, monkeypatch):
+    fake_gemini(monkeypatch, [{"name": "Porridge", "ingredients": [
+        {"name": "milk", "per_cover": 1e308, "unit": "L", "assumption": "x", "dietary": []}]}])
+    r = post("Porridge", covers=2000)
+    assert r.status_code == 200 and r.json()["ingredients"] == [] and "QTY_SUSPICIOUS" in codes(r.json())
+
+
+def test_order_lines_never_exceed_the_front_door_cap(shop1, monkeypatch):
+    fake_gemini(monkeypatch, [{"name": "Porridge", "ingredients": [
+        {"name": "milk", "per_cover": 0.9, "unit": "L", "assumption": "x", "dietary": []}]}])
+    body = post("Porridge", covers=2000).json()  # 1,800 L: fine
+    assert body["order_lines"] == [{"product_id": "463335", "quantity": 1800}]
+    assert body["cart_total_cents"] == 1800 * 140
