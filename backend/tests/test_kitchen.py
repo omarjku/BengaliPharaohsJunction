@@ -155,9 +155,42 @@ def test_weekday_habits_use_only_that_weekday_and_keep_no_history_empty():
     assert kitchen.weekday_product_habits([], 4) == []
     assert kitchen.weekday_product_habits(history, 4) == [
         {"product_id": "milk", "typical_quantity": 3, "typical_spend_cents": 600,
-         "weekday_orders": 2, "times_ordered": 2, "order_frequency": 1.0},
+         "weekday_orders": 2, "times_ordered": 2, "order_frequency": 1.0, "unit": None},
         {"product_id": "bread", "typical_quantity": 1, "typical_spend_cents": 200,
-         "weekday_orders": 2, "times_ordered": 1, "order_frequency": 0.5},
+         "weekday_orders": 2, "times_ordered": 1, "order_frequency": 0.5, "unit": None},
+    ]
+
+
+def test_weekday_habits_aggregate_duplicate_lines_per_order_and_skip_mixed_units():
+    history = [
+        {"date": "2026-11-06", "lines": [
+            {"product_id": "milk", "quantity": 1, "spend_cents": 100, "unit": "L"},
+            {"product_id": "milk", "quantity": 2, "spend_cents": 200, "unit": "L"},
+            {"product_id": "flour", "quantity": 1, "spend_cents": 100, "unit": "kg"},
+            {"product_id": "flour", "quantity": 1, "spend_cents": 100, "unit": "L"},
+        ]},
+        {"date": "2026-11-13", "lines": [
+            {"product_id": "milk", "quantity": 5, "spend_cents": 500, "unit": "L"},
+        ]},
+    ]
+
+    assert kitchen.weekday_product_habits(history, 4) == [
+        {"product_id": "milk", "typical_quantity": 4, "typical_spend_cents": 400,
+         "weekday_orders": 2, "times_ordered": 2, "order_frequency": 1.0, "unit": "L"},
+    ]
+
+
+def test_weekday_cooccurrences_include_pairs_seen_together_but_not_unseen_pairs():
+    history = [
+        {"date": "2026-11-06", "lines": [{"product_id": "milk"}, {"product_id": "bread"}]},
+        {"date": "2026-11-13", "lines": [{"product_id": "milk"}, {"product_id": "bread"}]},
+        {"date": "2026-11-20", "lines": [{"product_id": "milk"}]},
+        {"date": "2026-11-27", "lines": [{"product_id": "eggs"}]},
+    ]
+
+    assert kitchen.weekday_product_cooccurrences(history, 4) == [
+        {"product_ids": ["bread", "milk"], "weekday_orders": 4,
+         "times_coordered": 2, "cooccurrence_frequency": 0.5},
     ]
 
 
@@ -184,4 +217,5 @@ def test_context_exposes_only_explicitly_labelled_simulated_order_history(shop):
     assert ledger["simulated"] is True
     assert ledger["source"] == "demo seed (simulated order ledger)"
     assert ledger["weekdays"]["fri"]["products"]
+    assert ledger["weekdays"]["fri"]["co_occurrences"]
     assert "weekday_product_habits" not in context

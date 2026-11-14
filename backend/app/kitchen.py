@@ -7,6 +7,7 @@ import re
 import shutil
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
+from itertools import combinations
 from pathlib import Path
 from statistics import median
 from zoneinfo import ZoneInfo
@@ -297,9 +298,9 @@ def weekday_product_habits(order_history: list[dict], weekday: int) -> list[dict
     if not weekday_orders:
         return []
 
-    quantities, spends, appearances = defaultdict(list), defaultdict(list), Counter()
+    quantities, spends, units, appearances = defaultdict(list), defaultdict(list), defaultdict(set), Counter()
     for order in weekday_orders:
-        seen = set()
+        per_product = defaultdict(list)
         for line in order.get("lines", []):
             if not isinstance(line, dict) or line.get("product_id") is None:
                 continue
@@ -309,18 +310,51 @@ def weekday_product_habits(order_history: list[dict], weekday: int) -> list[dict
             quantity, spend = line.get("quantity"), line.get("spend_cents")
             if _number(quantity) is None or _number(spend) is None or quantity < 0 or spend < 0:
                 continue
+            unit = line.get("unit")
+            per_product[product_id].append((quantity, spend, unit if isinstance(unit, str) else None))
+        for product_id, lines in per_product.items():
+            order_units = {unit for _, _, unit in lines}
+            if len(order_units) != 1:
+                continue
+            quantity = sum(quantity for quantity, _, _ in lines)
+            spend = sum(spend for _, spend, _ in lines)
             quantities[product_id].append(quantity)
             spends[product_id].append(spend)
-            seen.add(product_id)
-        appearances.update(seen)
+            units[product_id].update(order_units)
+            appearances[product_id] += 1
 
     total = len(weekday_orders)
     return [{"product_id": product_id,
              "typical_quantity": _whole_number(median(quantities[product_id])),
              "typical_spend_cents": _whole_number(median(spends[product_id])),
              "weekday_orders": total, "times_ordered": appearances[product_id],
-             "order_frequency": appearances[product_id] / total}
-            for product_id in sorted(appearances, key=lambda pid: (-appearances[pid], pid))]
+             "order_frequency": appearances[product_id] / total, "unit": next(iter(units[product_id]))}
+            for product_id in sorted(appearances, key=lambda pid: (-appearances[pid], pid))
+            if len(units[product_id]) == 1]
+
+
+def weekday_product_cooccurrences(order_history: list[dict], weekday: int) -> list[dict]:
+    """Calculate weekday product pairs that appeared together in ledger orders."""
+    if isinstance(weekday, bool) or not isinstance(weekday, int) or not 0 <= weekday <= 6:
+        return []
+    pairs, total = Counter(), 0
+    for order in order_history:
+        if not isinstance(order, dict):
+            continue
+        try:
+            when = date.fromisoformat(order.get("date"))
+        except (TypeError, ValueError):
+            continue
+        if when.weekday() != weekday:
+            continue
+        total += 1
+        product_ids = sorted({str(line["product_id"]) for line in order.get("lines", [])
+                              if isinstance(line, dict) and line.get("product_id") is not None
+                              and str(line["product_id"])})
+        pairs.update(combinations(product_ids, 2))
+    return [{"product_ids": list(pair), "weekday_orders": total, "times_coordered": count,
+             "cooccurrence_frequency": count / total}
+            for pair, count in sorted(pairs.items(), key=lambda item: (-item[1], item[0]))]
 
 
 def is_weekday_spend_shock(order_line_spend_cents, baseline_spend_cents) -> bool:
@@ -344,8 +378,10 @@ def _simulated_order_history(buyer_id: str) -> dict | None:
     weekdays = {}
     for weekday, key in enumerate(DAY_KEYS):
         products = weekday_product_habits(ledger, weekday)
+        co_occurrences = weekday_product_cooccurrences(ledger, weekday)
         if products:
-            weekdays[key] = {"orders": products[0]["weekday_orders"], "products": products}
+            weekdays[key] = {"orders": products[0]["weekday_orders"], "products": products,
+                             "co_occurrences": co_occurrences}
     return {"simulated": True, "source": SIMULATED_ORDER_SOURCE, "weekdays": weekdays}
 
 
