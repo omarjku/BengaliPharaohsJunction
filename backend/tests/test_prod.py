@@ -9,7 +9,7 @@ from pathlib import Path
 from conftest import REQ, store_mandate
 from fastapi.testclient import TestClient
 
-from app import orders, ratelimit
+from app import config, mandates, orders, ratelimit
 from app.main import app
 
 c = TestClient(app, raise_server_exceptions=False)
@@ -122,8 +122,10 @@ def test_made_up_keys_share_the_ip_bucket(shop, monkeypatch):
     monkeypatch.setitem(ratelimit.LIMITS, "ip", (3, 60.0))
     codes = [c.get("/api/audit", headers={"X-Approver-Key": f"guess-{i}"}).status_code for i in range(4)]
     assert codes == [401, 401, 401, 429]  # rotating fake keys doesn't buy fresh buckets
-    other_ip = {"X-Approver-Key": "guess", "X-Forwarded-For": "1.2.3.4, 9.9.9.9"}
-    assert c.get("/api/audit", headers=other_ip).status_code == 401  # last XFF hop = the proxy-seen address
+    spoof = {"X-Approver-Key": "guess", "X-Forwarded-For": "1.2.3.4, 9.9.9.9"}
+    assert c.get("/api/audit", headers=spoof).status_code == 429  # no trusted proxy: the header picks nothing
+    monkeypatch.setattr(config, "TRUST_X_FORWARDED_FOR", True)  # behind Render's proxy
+    assert c.get("/api/audit", headers=spoof).status_code == 401  # last hop = the address the proxy saw
 
 
 def test_buckets_refill_over_time():
@@ -146,10 +148,10 @@ def test_cors_preflight_and_non_api_paths_are_not_limited(shop, monkeypatch):
 
 # --- 3. DATA_DIR
 def test_data_dir_moves_all_state(tmp_path):
-    out = subprocess.run([sys.executable, "-c", "from app import orders; print(orders.ORDERS_FILE, orders.AUDIT_FILE, "
-                          "orders.IDEM_FILE)"], env={**os.environ, "DATA_DIR": str(tmp_path)}, capture_output=True,
+    out = subprocess.run([sys.executable, "-c", "from app import mandates, orders; print(orders.ORDERS_FILE, "
+                          "orders.AUDIT_FILE, orders.IDEM_FILE, mandates.STORE)"], env={**os.environ, "DATA_DIR": str(tmp_path)}, capture_output=True,
                          text=True, cwd=Path(__file__).resolve().parents[1], check=True).stdout.split()
-    assert [Path(p).parent for p in out] == [tmp_path] * 3
+    assert [Path(p).parent for p in out] == [tmp_path] * 4
     default = subprocess.run([sys.executable, "-c", "from app import orders; print(orders.ORDERS_FILE)"],
                              env={k: v for k, v in os.environ.items() if k != "DATA_DIR"}, capture_output=True,
                              text=True, cwd=Path(__file__).resolve().parents[1], check=True).stdout.strip()
@@ -167,3 +169,32 @@ def test_agent_reads_its_own_buyers_order_only(shop):
     for action in ("approve", "reject"):  # still approver-only
         assert c.post(f"/api/orders/{oid}/{action}", headers={"X-Agent-Key": "agent-chef"}).status_code == 401
     assert orders._store()[oid]["status"] == "pending_approval"
+
+
+# --- automated security review follow-ups
+def test_bucket_overflow_never_resets_drained_or_key_buckets(monkeypatch):
+    ratelimit._buckets.clear()
+    monkeypatch.setattr(ratelimit, "MAX_BUCKETS", 50)
+    cap = ratelimit.LIMITS["agent"][0]
+    for _ in range(cap):
+        ratelimit.wait_s("agent", "key-holder", now=0.0)
+    for _ in range(ratelimit.LIMITS["ip"][0]):
+        ratelimit.wait_s("ip", "attacker", now=0.0)
+    for i in range(500):  # flood of fresh addresses
+        ratelimit.wait_s("ip", f"10.0.{i // 250}.{i % 250}", now=0.0)
+    assert ratelimit.wait_s("agent", "key-holder", now=0.0) > 0  # still limited
+    assert ratelimit.wait_s("ip", "attacker", now=0.0) > 0       # still limited
+    assert len(ratelimit._buckets) <= 60
+
+
+def test_ipv6_callers_share_a_slash_64():
+    assert ratelimit._ip("2001:db8::1") == ratelimit._ip("2001:db8::ffff") == "2001:db8::/64"
+    assert ratelimit._ip("203.0.113.9") == "203.0.113.9" and ratelimit._ip("testclient") == "testclient"
+
+
+def test_idempotency_store_is_bounded_oldest_first(shop, monkeypatch):
+    monkeypatch.setattr(orders, "IDEM_MAX", 3)
+    for i in range(5):
+        post(1, key=f"k{i}")
+    assert list(orders._idem_store()) == [f"agent:chef:orders:k{i}" for i in (2, 3, 4)]
+    assert json.loads(orders.IDEM_FILE.read_text()).keys() == orders._idem_store().keys()

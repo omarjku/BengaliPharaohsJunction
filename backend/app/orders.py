@@ -25,6 +25,7 @@ from .auth import Principal
 AUDIT_FILE = config.DATA_DIR / "audit.jsonl"
 ORDERS_FILE = config.DATA_DIR / "orders.json"
 IDEM_FILE = config.DATA_DIR / "idempotency.json"
+IDEM_MAX = 50_000  # memory/file bound; oldest keys go first (rate limits keep real traffic far below this)
 IDEM_TTL = timedelta(hours=24)  # how long a retry with the same Idempotency-Key gets the original answer (as Stripe)
 FRONT_DOOR = "valio_front_door"
 
@@ -66,8 +67,9 @@ def _idem_store() -> dict[str, dict]:
     return _idem
 
 
-def _save_idem() -> None:
-    _write(IDEM_FILE, {k: r for k, r in _idem_store().items() if r["response"] is not None})
+def _idem_snapshot() -> dict:
+    """Copy on the event loop: the file write runs in a thread while new keys keep arriving."""
+    return {k: r for k, r in _idem_store().items() if r["response"] is not None}
 
 
 async def idempotent(scope: str, fingerprint: str, run) -> tuple[dict, bool]:
@@ -79,6 +81,9 @@ async def idempotent(scope: str, fingerprint: str, run) -> tuple[dict, bool]:
     store, now = _idem_store(), datetime.now(timezone.utc)
     for k in [k for k, r in store.items() if datetime.fromisoformat(r["at"]) < now - IDEM_TTL]:
         del store[k]
+    for k in list(store)[: max(0, len(store) - IDEM_MAX + 1)]:  # insertion order = oldest first
+        if store[k]["response"] is not None:
+            del store[k]
     if rec := store.get(scope):
         if rec["fingerprint"] != fingerprint:
             raise HTTPException(422, detail="This Idempotency-Key was already used with a different request")
@@ -92,7 +97,7 @@ async def idempotent(scope: str, fingerprint: str, run) -> tuple[dict, bool]:
         store.pop(scope, None)
         raise
     store[scope]["response"] = resp
-    await asyncio.to_thread(_save_idem)
+    await asyncio.to_thread(_write, IDEM_FILE, _idem_snapshot())
     return resp, False
 
 
