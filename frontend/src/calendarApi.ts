@@ -1,4 +1,4 @@
-import { getKeys, MOCK } from './api'
+import { ApiError, getKeys, MOCK } from './api'
 import type { AskResponse, MenuRun, OrderStatus } from './types'
 
 export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
@@ -63,7 +63,8 @@ export type WeeklyMenu = {
   active: boolean
 }
 
-export type CalendarSkipResponse = { skipped: boolean }
+export type CalendarSkipResponse = { weekday: string; date: string; skipped: boolean }
+export type CalendarDeleteResponse = { weekday: Weekday; deleted: boolean }
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
 
@@ -90,43 +91,78 @@ async function requestJson<T>(path: string, init: RequestInit, role: AuthRole): 
   if (!response.ok) {
     let detail = response.statusText || 'unexpected response'
     try {
-      const body = (await response.json()) as { detail?: string; error?: string }
-      detail = body.detail ?? body.error ?? detail
+      const body = (await response.json()) as { detail?: unknown; error?: unknown }
+      const value = body.detail ?? body.error
+      if (typeof value === 'string') detail = value
+      else if (Array.isArray(value)) {
+        const messages = value.map((item) => item && typeof item === 'object' && 'msg' in item && typeof item.msg === 'string' ? item.msg : null).filter(Boolean)
+        if (messages.length) detail = messages.join('; ')
+      } else if (value && typeof value === 'object') {
+        if ('error' in value && typeof value.error === 'string') detail = value.error
+        else if ('errors' in value && value.errors && typeof value.errors === 'object') {
+          detail = Object.entries(value.errors as Record<string, unknown>)
+            .map(([key, message]) => `${key}: ${String(message)}`)
+            .join('; ')
+        }
+      }
     } catch {
       // Keep the status text when the backend did not return JSON.
     }
-    throw new Error(detail)
+    if (response.status === 401 || response.status === 403)
+      throw new ApiError(response.status, role === 'agent' ? `Enter a valid agent key in Keys. ${detail}` : `Approver key needed: enter it in Keys. ${detail}`)
+    throw new ApiError(response.status, `Request failed (${response.status}): ${detail}`)
   }
   if (response.status === 204) return undefined as T
   return (await response.json()) as T
 }
 
-async function requestVoid(path: string, init: RequestInit, role: AuthRole): Promise<void> {
-  await requestJson<unknown>(path, init, role)
+const FULL_WEEKDAYS: Record<string, Weekday> = {
+  monday: 'mon', tuesday: 'tue', wednesday: 'wed', thursday: 'thu', friday: 'fri', saturday: 'sat', sunday: 'sun',
+}
+
+function normaliseCalendar(response: CalendarResponse): CalendarResponse {
+  return {
+    ...response,
+    days: response.days.map((day) => ({
+      ...day,
+      entries: day.entries.map((entry) => entry.kind === 'recurring_order'
+        ? {
+            ...entry,
+            weekday: FULL_WEEKDAYS[entry.weekday] ?? entry.weekday,
+            lines: entry.lines.map((line) => {
+              const backendLine = line as CalendarLine & { text?: string; quantity?: number; unit?: string | null }
+              return {
+              name: backendLine.text ?? backendLine.name,
+              quantity: backendLine.quantity ?? 1,
+              unit: backendLine.unit ?? null,
+              }
+            }),
+          }
+        : entry),
+    })),
+  }
 }
 
 export function getCalendar(from: string, to: string): Promise<CalendarResponse> {
-  if (MOCK) return mock().then((api) => api.calendar(from, to))
+  if (MOCK) return mock().then((api) => api.calendar(from, to)).then(normaliseCalendar)
   const query = new URLSearchParams({ from, to })
-  return requestJson<CalendarResponse>(`/api/calendar?${query}`, {}, 'agent')
+  return requestJson<CalendarResponse>(`/api/calendar?${query}`, {}, 'agent').then(normaliseCalendar)
 }
 
 export function getWeeklyMenus(): Promise<WeeklyMenu[]> {
   if (MOCK)
     return mock().then((api) => api.weeklyMenus())
-  return requestJson<WeeklyMenu[] | { menus: WeeklyMenu[] }>('/api/menus/weekly', {}, 'agent').then((result) =>
-    Array.isArray(result) ? result : result.menus,
-  )
+  return requestJson<WeeklyMenu[]>('/api/menus/weekly', {}, 'agent')
 }
 
 export function saveWeeklyMenu(weekday: Weekday, menu: WeeklyMenu): Promise<WeeklyMenu> {
   if (MOCK) return mock().then((api) => api.saveWeeklyMenu(weekday, menu))
-  return requestJson<WeeklyMenu | undefined>(`/api/menus/weekly/${weekday}`, { method: 'PUT', body: JSON.stringify(menu) }, 'approver').then((result) => result ?? menu)
+  return requestJson<WeeklyMenu>(`/api/menus/weekly/${weekday}`, { method: 'PUT', body: JSON.stringify(menu) }, 'approver')
 }
 
-export function deleteWeeklyMenu(weekday: Weekday): Promise<void> {
+export function deleteWeeklyMenu(weekday: Weekday): Promise<CalendarDeleteResponse> {
   if (MOCK) return mock().then((api) => api.deleteWeeklyMenu(weekday))
-  return requestVoid(`/api/menus/weekly/${weekday}`, { method: 'DELETE' }, 'approver')
+  return requestJson<CalendarDeleteResponse>(`/api/menus/weekly/${weekday}`, { method: 'DELETE' }, 'approver')
 }
 
 export function planWeeklyMenu(weekday: Weekday, date: string): Promise<MenuRun> {
