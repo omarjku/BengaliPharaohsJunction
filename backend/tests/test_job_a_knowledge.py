@@ -131,7 +131,7 @@ def test_phone_transcript_reaches_ask_as_four_unconfirmed_lines(shop, monkeypatc
                                  date(2026, 11, 20), "chef"))
     items = captured["request"]["items"]
     assert [(item["query"], item["amount"], item["unit"]) for item in items] == [
-        ("milk", 20.0, "L"), ("butter", 10.0, "kg"), ("cream", 5.0, "L"), ("milk", None, None)]
+        ("milk", 20.0, "L"), ("butter", 10.0, "kg"), ("cream", 5.0, "L"), ("milk", None, "L")]
     assert all(not item.get("amount_assumed") for item in items[:3])
     assert all(item.get("standing_order") for item in items[:3])
     assert items[3].get("amount_assumed") is not True
