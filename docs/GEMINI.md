@@ -80,7 +80,29 @@ Accuracy at P(yes) ≥ 0.5 is **100 %** (30 of 30), and two runs gave identical 
 
 **Five consecutive live runs** of "1000 L lactose-free milk for Monday" chose the same product with the same confidence (Eila 3 % lactose-free, 0.8135) every time. The fifth was held only because the four earlier test orders had used up the €6,000 weekly budget.
 
-**Threshold: propose 0.70 for `lapland-kitchen`.** On this set it is as precise as 0.80 (100 %), handles 93 % of the right lines alone instead of 80 %, and still sits 0.33 above the worst trap. It also matters for the demo: the cheapest correct milk now scores 0.81, stable but only just over 0.80. It is a one-line per-buyer setting (`mandates._CONFIDENCE_THRESHOLDS`), left at 0.80 until the team decides. Thirty cases are evidence, not proof. Every chosen line's confidence goes to the audit log, so approvals and rejections there will grow the set.
+**Threshold: propose 0.70 for `lapland-kitchen`.** On this set it is as precise as 0.80 (100 %), handles 93 % of the right lines alone instead of 80 %, and still sits 0.33 above the worst trap. It also matters for the demo: the cheapest correct milk now scores 0.81, stable but only just over 0.80. It is a one-line per-buyer setting (`mandates._CONFIDENCE_THRESHOLDS`).
+
+**Threshold set to 0.70 from the eval on Sat 14 Nov: 100 % precision, 93 % recall** (for `lapland-kitchen`, `smoke-kitchen` and `helsinki-bistro`; unknown buyers keep the conservative 0.80 default). Live results above that say "asks at 0.80" (e.g. croissants at 0.74) were measured before this change. Thirty cases are evidence, not proof. Every chosen line's confidence goes to the audit log, so approvals and rejections there will grow the set.
+
+## Showcase 4: one input for everyone (`POST /api/agent/ask`)
+
+A kebab shop, a café and a resort kitchen type into the same box. Gemini (`gemini-4-hydrogen`, structured output, text as untrusted data) only classifies the message as `order`, `menu` or `unclear`, and reads the number of guests. Code does the rest:
+- the guest count is kept only if that number is in the text;
+- the delivery day is read deterministically ("tomorrow", "Friday", "maanantaiksi", "16.11.");
+- `order` goes to the order flow and `menu` to the menu flow, with the same response bodies;
+- anything missing becomes one question, never a guess: "For how many guests?", "For which delivery day?", or "Which delivery day: … or …?" when the text and the date picker disagree.
+
+### Live (Sat 14 Nov 2026), resort mandate
+| typed | routed | result |
+|---|---|---|
+| "20 kg döner kebab meat for the rotisserie, for Monday" | order, Monday 16 Nov | Well Kebab ungrilled beef **meat spit** 8.5 kg × 3 (the stated purpose made Gemini pick the spit over pre-cut slices). Asked: 25.5 kg for 20 kg, quantity confidence 0.61 |
+| "kebab bread 200 pcs for Monday" | order | Found as **pita bread** (synonym). The best match has no delivery schedule, so it is shown as that trap |
+| "30 croissants for tomorrow" | order, Sun 15 Nov | Premium Croissant **36×90 g**: 1 case = 36 pieces, €25.68. Pieces per case read from the product name. Confidence 0.74, so it asks at 0.80 |
+| "fries 50 kg for Friday" | order, Fri 20 Nov | McCain French Fries 2.5 kg × 20, €117; held only because Valio has no allergen data for it |
+| "Menu for Monday: reindeer stew and cheesecake" | menu | **"For how many guests?"**, and nothing runs |
+| "Menu for 80 guests on Monday: reindeer stew and cheesecake" | menu, covers 80 | 8-line cart, €1,212.70, with MENU_ASSUMPTIONS and confidence per line (e.g. eggs flagged at 0.23) |
+
+When Valio doesn't stock something, the agent now says so and names the closest products: "Valio doesn't seem to stock 'X'. Closest in the catalogue: …".
 
 ## Guards: more Decisions questions that can only add caution
 

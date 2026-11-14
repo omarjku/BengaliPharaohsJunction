@@ -37,6 +37,12 @@ _MANDATES = {m.buyer_id: m for m in [
 ]}
 # Smoke-test buyer: the same rules as the demo kitchen, so scripts/smoke.py exercises the real paths without
 # spending lapland-kitchen's weekly budget before a live demo.
+# Demo persona 2 (urgent-pickup story): a bistro in central Helsinki, near Valio's Cash & Carry.
+_MANDATES["helsinki-bistro"] = Mandate(
+    id="helsinki-bistro-2026-11", buyer_id="helsinki-bistro",
+    hard_rules=[HardRule(kind=RuleKind.AUTO_APPROVE_LIMIT_CENTS, value=80000,
+                         source_text="Order on your own up to 800 euros; above that, ask me.")],
+    per_line_cap_cents=100000, weekly_budget_cents=300000)
 _MANDATES["smoke-kitchen"] = _MANDATES["lapland-kitchen"].model_copy(update={"id": "smoke-kitchen-2026-11",
                                                                             "buyer_id": "smoke-kitchen"})
 
@@ -130,7 +136,9 @@ def restore(buyer_id: str, previous: dict | None) -> None:
 # Gemini Decisions confidence below this → ask the chef. Kept beside the mandate because the v0.2 Mandate contract
 # has no field for it (extra fields are forbidden); add `min_confidence` to the contract in the next version.
 DEFAULT_CONFIDENCE_THRESHOLD = 0.8
-_CONFIDENCE_THRESHOLDS = {"lapland-kitchen": 0.8, "smoke-kitchen": 0.8}
+# 0.70 from the labelled eval (backend/eval, Sat 14 Nov): 30/30, 0 wrong autos at 0.6-0.9, traps <= 0.37; at 0.70
+# precision 100 %, recall 93 % (80 % at 0.80). Unknown buyers keep the conservative default.
+_CONFIDENCE_THRESHOLDS = {"lapland-kitchen": 0.7, "smoke-kitchen": 0.7, "helsinki-bistro": 0.7}
 
 
 def confidence_threshold(buyer_id: str) -> float:
@@ -141,8 +149,17 @@ def confidence_threshold(buyer_id: str) -> float:
 # mandate. Persona: Valio's brief orders 1,000 L of milk at once, so the demo buyer is a resort's central kitchen.
 _KITCHENS = {"lapland-kitchen": "the central kitchen of a Lapland ski resort: hotel restaurants and catering, about "
                                 "1,500 meals a day in season, ordering a week of supplies at a time"}
+_KITCHENS["helsinki-bistro"] = "a bistro in central Helsinki, about 120 covers a day, ordering every couple of days"
 DEFAULT_KITCHEN = "a professional restaurant kitchen, about 100 covers a day, ordering a few days of supplies at a time"
 
 
 def kitchen(buyer_id: str) -> str:
     return _KITCHENS.get(buyer_id, DEFAULT_KITCHEN)
+
+
+# Where each buyer is (the v0.2 Mandate has no location field). Drives the urgent-pickup suggestions only.
+_LOCATIONS = {"helsinki-bistro": "helsinki", "lapland-kitchen": "lapland", "smoke-kitchen": "lapland"}
+
+
+def location(buyer_id: str) -> str | None:
+    return _LOCATIONS.get(buyer_id)
