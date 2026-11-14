@@ -16,18 +16,18 @@ export function headline(r: Reason): string {
   switch (r.code) {
     case 'SPEND_OVER_LIMIT': {
       const total = num(f.total_cents), limit = num(f.limit_cents)
-      if (total !== null && limit !== null) return `${euro(total - limit)} over your ${euro(limit)} limit.`
+      if (total !== null && limit !== null) return `${euro(total - limit)} over the ${euro(limit)} order limit.`
       break
     }
     case 'LINE_OVER_CAP': {
       const total = num(f.line_total_cents), cap = num(f.cap_cents)
-      if (total !== null && cap !== null) return `${euro(total - cap)} over your ${euro(cap)} limit for one product.`
+      if (total !== null && cap !== null) return `${euro(total - cap)} over the ${euro(cap)} limit for one product.`
       break
     }
     case 'WEEKLY_BUDGET_EXCEEDED': {
       const spent = num(f.spent_7d_cents), total = num(f.total_cents), budget = num(f.budget_cents)
       if (spent !== null && total !== null && budget !== null)
-        return `This takes the week ${euro(spent + total - budget)} over your ${euro(budget)} budget.`
+        return `This takes the week ${euro(spent + total - budget)} over the ${euro(budget)} weekly budget.`
       break
     }
     case 'STOCK_PARTIAL': {
@@ -54,7 +54,7 @@ export function headline(r: Reason): string {
       return 'How much do you need? The amount wasn’t clear.'
     case 'LOW_CONFIDENCE':
       // Gemini's own reason sits under "Why this …"; the headline just says what it means for the chef.
-      if (r.severity === 'ASK_HUMAN' && num(f.confidence) !== null) return 'Not sure this is the product you meant.'
+      if (r.severity === 'ASK_HUMAN' && num(f.confidence) !== null) return 'Best guess, please check.'
       break
     case 'PRICE_CHANGED':
       return 'The price changed since you last saw it.'
@@ -62,31 +62,44 @@ export function headline(r: Reason): string {
   return r.message
 }
 
-// One word or two for where an order stands. Status colour always comes with these words.
-export const STATUS: Record<string, string> = {
-  confirmed: 'Ordered',
-  pending_approval: 'Needs your OK',
-  refused: 'Not ordered',
-  rejected: 'Rejected',
-  AUTO: 'Ordered',
-  ASK_HUMAN: 'Needs your OK',
-  DECLINE: 'Not ordered',
-}
-
-// Gemini Decisions API confidence as a sentence; the number stays, but second.
+// Gemini Decisions API confidence, in one voice everywhere. Floored like the backend, so 79.9% never reads as 80%.
 export const CONFIDENT_AT = 0.8
-export const confidenceSentence = (c: number) =>
-  c >= CONFIDENT_AT ? 'Sure this is what you meant' : 'Not sure this is what you asked for'
+export const pct = (c: number) => `${Math.floor(c * 100)}%`
+export const matched = (c: number) => (c >= CONFIDENT_AT ? `Matched by Gemini · ${pct(c)}` : `Gemini’s best guess · ${pct(c)}, please check`)
+export const CONFIDENCE_MEANS = 'The percentage is Gemini’s confidence that this is the product you meant. Below 80%, the agent asks you first.'
+
+// Backend sentences shown as they are, minus the machine bits.
+export const humanize = (msg: string) =>
+  msg
+    .replace(/\s*\((\d\.\d+|\d+%) vs your (\d\.\d+) threshold\)/g, (_, _c, t) => ` (below the ${Math.round(Number(t) * 100)}% it needs to order on its own)`)
+    .replace(/EUR ([\d,]+)\.00/g, '€$1')
+    .replace(/\(net of VAT\)/g, 'excl. VAT')
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, 'the order')
+
+// Catalogue names, tidied for reading: no ®/™, "1 l" → "1 L", no "Suomesta" (from Finland), no SHOUTING.
+export function tidyName(name: string): string {
+  let n = name.replace(/[®™]/g, '').replace(/\bSuomesta\b/gi, '').replace(/(\d)\s?l\b/g, '$1 L').replace(/\s{2,}/g, ' ').trim()
+  if (n === n.toUpperCase() && /[A-Z]{3}/.test(n)) n = n.charAt(0) + n.slice(1).toLowerCase()
+  return n
+}
 
 export const RUNNING = 'Reading your request, then checking the catalogue, Valio stock and prices…'
 export const EXAMPLE = '1000 L lactose-free milk for Monday'
+export const TRY = ['1000 L lactose-free milk for Monday', '200 L milk drink', '1000 packs of unsalted butter']
+export const HISTORY_INTRO = 'What was ordered, held or refused.'
 
 // Valio's sales-unit codes in words. Unknown codes are shown as they are.
 const UNITS: Record<string, string> = {
-  ST: 'unit', KPL: 'piece', KI: 'case', CS: 'case', PAK: 'pack', PKT: 'pack', KG: 'kg', L: 'litre', LTR: 'litre',
+  ST: 'pack', KPL: 'piece', KI: 'case', CS: 'case', PAK: 'pack', PKT: 'pack', KG: 'kg', L: 'litre', LTR: 'litre',
   PS: 'bag', BAG: 'bag', RAS: 'box', RS: 'tray', PLO: 'bottle', TLK: 'tin',
 }
 export const unitName = (code: string | null | undefined) => (code ? (UNITS[code.toUpperCase()] ?? code) : 'unit')
+const PLURAL: Record<string, string> = { box: 'boxes', kg: 'kg', g: 'g', L: 'L' }
+// "640 packs", "1 case", "27.2 kg".
+export const amountOf = (n: number, code: string | null | undefined) => {
+  const u = unitName(code)
+  return `${n.toLocaleString('en-US')} ${n === 1 ? u : (PLURAL[u] ?? `${u}s`)}`
+}
 
 // --- Rules, in the chef's language.
 const ALLERGENS: Record<string, string> = {

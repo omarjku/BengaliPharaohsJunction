@@ -148,6 +148,17 @@ const DRINK: Fixture = {
       confidence_reason: 'A fat-free UHT drink; "milk drink" could also mean the regular Eila drink.',
       facts: { delivery_reliability: 0.947, carbon_kg_per_kg: 1.0, origin: 'fi' },
     },
+    {
+      product: product({ id: '463335', name_en: 'Valio Eila® 3 % milk drink 1 l lactose free', sales_unit: 'ST', delivery_reliability: 1.0 }),
+      quote: quote({ product_id: '463335', price: 1.56, comparison_price: 1.56, comparison_unit: 'L', available_amount: 2400 }),
+      quantity: qty('463335', 200, 'L', 'ST', 200, 1, '200 L ÷ 1 L per ST (1 LTR per ST) = 200 ST.'),
+      line_total_cents: 31200,
+      why: 'The regular Eila milk drink, in stock for Monday.',
+      chosen: false,
+      confidence: 0.69,
+      confidence_reason: 'A milk drink, but the request didn’t say lactose free.',
+      facts: { delivery_reliability: 1.0, carbon_kg_per_kg: 1.1, origin: 'fi' },
+    },
   ],
   decision: decision(
     'ASK_HUMAN',
@@ -526,7 +537,7 @@ export const mockApi = {
     const text = input.text.toLowerCase()
     if (text.includes('error')) throw new Error('Request failed (500): mock backend error')
     const f = structuredClone(
-      /stock|split/.test(text) ? SHORT : /drink/.test(text) ? DRINK : /1[ ,]?000/.test(text) ? MILK : /cream|tomorrow/.test(text) ? CREAM : BUTTER,
+      /stock|split/.test(text) || (/butter/.test(text) && /1[ ,]?000/.test(text)) ? SHORT : /drink/.test(text) ? DRINK : /1[ ,]?000/.test(text) ? MILK : /cream|tomorrow/.test(text) ? CREAM : BUTTER,
     )
     const buyer = input.buyer_id ?? 'lapland-kitchen' // the real backend takes it from the agent key
     const chosen = f.lines.filter((l) => l.chosen)
@@ -591,9 +602,10 @@ export const mockApi = {
     return o.res
   },
 
-  async order(orderId: string): Promise<{ signed_off_by: string | null }> {
+  async order(orderId: string): Promise<{ signed_off_by: string | null; status: OrderStatus }> {
     await wait()
-    return { signed_off_by: orders.get(orderId)?.signedOffBy ?? null }
+    const o = orders.get(orderId)
+    return { signed_off_by: o?.signedOffBy ?? null, status: o?.res.status ?? 'refused' }
   },
 
   async audit(): Promise<AuditEntry[]> {

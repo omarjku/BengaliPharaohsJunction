@@ -122,7 +122,7 @@ export const placeOrder = (input: OrderInput) =>
 export const getOrder = (orderId: string) =>
   MOCK
     ? mock().then((m) => m.order(orderId))
-    : api<{ signed_off_by: string | null }>(
+    : api<{ signed_off_by: string | null; status: OrderResponse['status'] }>(
         `/api/orders/${encodeURIComponent(orderId)}`,
         { headers: keyHeader('X-Approver-Key', getKeys().approverKey) },
         'approver',
