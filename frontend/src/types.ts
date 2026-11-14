@@ -178,6 +178,7 @@ export type AgentRun = {
   choices?: Choice[]
   changes?: CartChange[]
   cards?: AskCard[]
+  confidence_threshold?: number
 }
 
 // POST /api/agent/menu: a proposed cart for a menu (always ASK_HUMAN; nothing is ordered until order_lines are posted).
@@ -196,6 +197,7 @@ export type MenuRun = {
   reply?: string | null
   choices?: Choice[]
   changes?: CartChange[]
+  confidence_threshold?: number
 }
 // overrides: the chef's own portions (the menu screen's editable amounts per portion); they count as the chef's only
 // when the approver key is sent too (planMenu does), otherwise they are marked "agent" and still checked.
@@ -266,6 +268,7 @@ type AskMeta = {
   reply?: string | null
   choices?: Choice[]
   cards?: AskCard[]
+  confidence_threshold?: number
 }
 export type AskInput = { text: string; requested_date?: string; follow_up?: { to: string; answer: string }; have?: string[] }
 export type ChatCard = (AgentRun & { intent?: 'order' }) | (MenuRun & { intent?: 'menu' })
@@ -277,6 +280,7 @@ export type ChatResponse = {
   question?: string | null
   requested_date?: string | null
   fallback?: boolean
+  confidence_threshold?: number
 }
 export type AskResponse =
   | (AskMeta & { intent: 'order'; question?: null } & AgentRun)
@@ -344,7 +348,7 @@ export type Health = {
 export type LiveEvent =
   | { type: 'ready' }
   | { type: 'audio'; data: string } // base64 PCM16 mono 24 kHz
-  | { type: 'transcript'; role: 'user' | 'agent'; text: string; final: boolean }
+  | { type: 'transcript'; role: 'user' | 'agent'; text: string; final: boolean; turn_id?: number; cumulative?: boolean }
   | { type: 'tool'; name: string; status: 'running' | 'done'; label: string }
   | { type: 'result'; payload: AskResponse }
   | { type: 'interrupted' }

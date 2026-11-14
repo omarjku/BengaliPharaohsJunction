@@ -43,7 +43,8 @@ _MENU_SCHEMA = {"type": "object", "required": ["dishes"], "properties": {"dishes
     "type": "object", "required": ["name", "ingredients"], "properties": {
         "name": {"type": "string"},
         "ingredients": {"type": "array", "items": {"type": "object",
-                                                    "required": ["name", "per_cover", "unit", "assumption", "dietary"],
+                                                    "required": ["name", "per_cover", "unit", "assumption", "dietary",
+                                                                 "candidate_amounts"],
             "properties": {"name": {"type": "string"}, "per_cover": {"type": "number"}, "unit": {"type": "string"},
                            "assumption": {"type": "string"}, "candidate_amounts": {"type": "array", "items": {"type": "number"}},
                            "dietary": {"type": "array", "items": {"type": "string", "enum": list(agent.DIETARY)}}}}}}}}}}
@@ -275,16 +276,18 @@ def scale(dishes: list[dict], covers: int) -> tuple[list[dict], list[dict], list
                                         f"{dish['name']} looks too much.", None, "Check the per-cover amount.",
                                         per_cover=per, unit=ing["unit"]))
             m = merged.setdefault((_key(name), dim), {"query": name, "base": Fraction(0), "dim": dim, "dishes": [],
-                                                       "tags": []})
+                                                       "tags": [], "p_yes": None, "kept": None})
             m["base"] += per_base * covers
             m["dishes"] += [dish["name"]] if dish["name"] not in m["dishes"] else []
             m["tags"] += ing.get("dietary") or []  # union: the strictest dish wins for a shared ingredient
+            if ing.get("candidate_checked"):
+                m["p_yes"], m["kept"] = ing.get("p_yes"), ing.get("kept")
     ingredients = []
     for m in merged.values():
         amount = math.ceil(m["base"] * 1000) / 1000  # round UP to 3 decimals: never under-order a booked service
         it = agent._item(m["query"], amount, BASE_UNIT[m["dim"]], [])
         it["dietary"] = list(dict.fromkeys(m["tags"]))
-        ingredients.append(it | {"dishes": m["dishes"]})
+        ingredients.append(it | {"dishes": m["dishes"], "p_yes": m.get("p_yes"), "kept": m.get("kept")})
     return ingredients, assumptions, problems
 
 

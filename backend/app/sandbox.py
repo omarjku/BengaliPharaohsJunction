@@ -15,7 +15,7 @@ from . import config
 
 TEMPLATE = "helsinki-bistro"
 TTL = timedelta(hours=24)
-MAX_LIVE = 500
+MAX_LIVE = 1200  # > per-IP mint limit × TTL (40/h × 24 h = 960): one address can't fill every slot
 _BUYER = re.compile(r"^try-[0-9a-f]{8}$")
 _lock = threading.Lock()
 

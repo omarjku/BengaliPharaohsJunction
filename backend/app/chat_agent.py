@@ -17,7 +17,7 @@ from . import agent, ask, catalogue, conversation, kitchen, menu, orders, profil
 
 log = logging.getLogger(__name__)
 HELSINKI = ZoneInfo("Europe/Helsinki")
-GEMINI_TIMEOUT_S = 25
+GEMINI_TIMEOUT_S = 19
 MAX_TOOL_CALLS = 6
 ASSUMPTION_MAX = 40
 
@@ -42,9 +42,9 @@ def _decl(name: str, description: str, properties: dict | None = None, required:
 
 
 TOOLS = [{"functionDeclarations": [
-    _decl("search_products", "Search Valio's catalogue and live price/availability. This never orders.", {
+    _decl("search_products", "Read-only product/price/availability lookup. Use only when the chef asks what exists or asks to compare; for any request with an amount or order intent, call propose_order instead. This never orders.", {
         "query": {"type": "STRING"}, "limit": {"type": "INTEGER"}}, ["query"]),
-    _decl("propose_order", "Run the existing order engine for these items. It may place or hold an order; it never approves one.", {
+    _decl("propose_order", "Use immediately for an order request, even when the product needs matching. Run the existing order engine for these items. It may place or hold an order; it never approves one.", {
         "items": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
             "text": {"type": "STRING"}, "product_id": {"type": "STRING"}, "amount": {"type": "NUMBER"},
             "unit": {"type": "STRING"}}}}, "delivery_date": {"type": "STRING"}}, ["items"]),
@@ -70,9 +70,103 @@ TOOLS = [{"functionDeclarations": [
 APPROVAL_REQUEST = re.compile(r"\b(?:approve\s+(?:this|it|everything|all)|can\s+you\s+approve|sign\s*off\s+(?:this|it)|"
                               r"godkänn\s+(?:det|allt)|hyväksy\s+(?:se|kaikki))\b", re.I)
 UNVERIFIED_ORDER_CLAIM = re.compile(r"\b(?:ordered|order\s+(?:is|was)\s+confirmed|order\s+has\s+been\s+placed|placed\s+the\s+order)\b", re.I)
+DELEGATION = re.compile(r"^\s*(?:assume|you decide|whatever is normal|sama kuin yleensä|just do it)\s*[.!]*\s*$", re.I)
+ORDINAL_CHOICE = re.compile(r"^\s*(?:the\s+)?(first|second|third|1|2|3)\s*(?:one|option)?\s*[.!]*\s*$", re.I)
 
 
-def _quoted_data(buyer_id: str, today: date) -> str:
+def _choice_label(choice: Any) -> str:
+    if isinstance(choice, dict):
+        return str(choice.get("label") or choice.get("text") or "").strip()
+    return str(choice or "").strip()
+
+
+def _resolve_pending_input(text: str, pending: dict | None) -> tuple[str, bool]:
+    """Resolve a numeric or delegation answer against the stored question, never against model history."""
+    if not isinstance(pending, dict):
+        return text, False
+    choices = [_choice_label(choice) for choice in pending.get("choices") or []]
+    choices = [choice for choice in choices if choice]
+    match = ORDINAL_CHOICE.fullmatch(text or "")
+    if match and choices:
+        index = {"first": 0, "1": 0, "second": 1, "2": 1, "third": 2, "3": 2}.get(match[1])
+        if index is not None and index < len(choices):
+            return choices[index], True
+    if DELEGATION.fullmatch(text or ""):
+        default = _choice_label(pending.get("default"))
+        if default and default in choices:
+            return default, True
+        if choices:
+            return choices[0], True
+    return text, False
+
+
+def _pending_choices(question: str, reply: str) -> list[str]:
+    """Extract short answer choices from the one question shown to the chef."""
+    source = reply or question
+    numbered = []
+    for line in source.splitlines():
+        match = re.match(r"^\s*(?:[-*]|\d+[.)])\s*(.+?)\s*$", line)
+        if match and match[1] not in numbered:
+            numbered.append(match[1])
+    if len(numbered) >= 2:
+        return numbered[:4]
+    if re.search(r"\b(?:delivery|date|day)\b", question, re.I):
+        dates = re.findall(r"\b(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
+                           r"(?:\s*\([^\n?]*\)|\s+\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?)?", source, re.I)
+        dates = list(dict.fromkeys(item.strip() for item in dates))
+        return dates[:4] if len(dates) >= 2 else []
+    if re.search(r"\b(?:tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", question, re.I):
+        return []
+    if not re.search(r"\b(?:or|option|choose|e\.g\.)\b", source, re.I):
+        return []
+    values = re.findall(r"(?<![\w.])(\d+(?:[.,]\d+)?\s*(?:kg|g|L|l|dl|pcs|pieces|%))\b", source, re.I)
+    out = []
+    for value in values:
+        value = re.sub(r"\s+", " ", value).strip()
+        if value.lower() not in {item.lower() for item in out}:
+            out.append(value)
+    return out[:4]
+
+
+def _pending_default(reply: str, choices: list[str], question: str = "") -> str:
+    if not choices:
+        return ""
+    source = f"{reply} {question}"
+    for choice in choices:
+        clean = re.sub(r"[*_]", "", choice)
+        target = re.search(r"\d+(?:[.,]\d+)?\s*(?:kg|g|L|l|dl|pcs|pieces|%)", clean, re.I)
+        target = (re.escape(target.group(0).split()[0]) + r"\s*" +
+                  re.escape(re.sub(r"^[\d.,\s]+", "", target.group(0)))) if target else re.escape(clean)
+        if re.search(r"(?:recommend|suggest|use|choose|go with|normal|usual|default|assume|i['’]?d use|is)\D{0,24}"
+                     + target, source, re.I):
+            return choice
+    return ""
+
+
+def _correct_explicit_portion(text: str, context: str, args: dict) -> dict:
+    """Turn an explicit per-person pasta correction into a total before Gemini can drop the unit or multiplier."""
+    portion = re.search(r"\b(\d+(?:[.,]\d+)?)\s*g\s+per\s+(?:person|portion)\b", text, re.I)
+    guests = re.search(r"\b(?:feed|for)\s+(\d{1,4})\s+(?:people|persons?|guests?)\b", context, re.I)
+    if not portion or not guests or "pasta" not in context.lower():
+        return args
+    extra = re.search(r"\b(\d{1,3})\s*%\s*extra\b", context, re.I)
+    total = float(portion[1].replace(",", ".")) * int(guests[1]) * (1 + (int(extra[1]) / 100 if extra else 0)) / 1000
+    total_text = str(int(total)) if total == int(total) else f"{total:g}"
+    out = dict(args)
+    key = "items" if "items" in args else "changes"
+    rows = [dict(item) for item in args.get(key) or [] if isinstance(item, dict)]
+    targets = [item for item in rows if "pasta" in str(item.get("text") or item.get("name") or "").lower()]
+    if not targets and len(rows) == 1:
+        targets = rows
+    for item in targets:
+        item.update(amount=total, unit="kg")
+        if key == "items":
+            item["text"] = f"{total_text} kg pasta"
+    out[key] = rows
+    return out
+
+
+def _quoted_data(buyer_id: str, today: date, conversation_id: str | None = None) -> str:
     try:
         profile_text = profile.compact_text(buyer_id)
     except Exception:
@@ -86,7 +180,7 @@ def _quoted_data(buyer_id: str, today: date) -> str:
     except Exception:
         context = {}
     try:
-        last_card = conversation.last_card(buyer_id)
+        last_card = conversation.last_card(buyer_id, conversation_id)
     except Exception:
         last_card = None
     return json.dumps({"today_helsinki": today.isoformat(), "profile": profile_text,
@@ -94,7 +188,8 @@ def _quoted_data(buyer_id: str, today: date) -> str:
                        "kitchen_context": context}, ensure_ascii=False, default=str)
 
 
-def _system(buyer_id: str, today: date, pending: dict | None = None) -> str:
+def _system(buyer_id: str, today: date, pending: dict | None = None, conversation_id: str | None = None,
+            pending_answer: str | None = None) -> str:
     threshold = mandates.confidence_threshold(buyer_id)
     return """You are a warm, brief kitchen purchasing assistant for this buyer. Answer in the chef's language.
 Use your own knowledge to understand the chef, but use tools for every product, price, stock, delivery date, cart,
@@ -118,10 +213,14 @@ kitchen, or the delivery day, call check_assumptions with the exact point. Keep 
         f"{threshold:.2f}" + " and say them as 'assumed (0.91)' with the score. If any score is below " + \
         f"{threshold:.2f}, ask exactly one question about that point and do not rely on it. A follow-up resolves the " + \
         "pending_slot shown below; never repeat an identical question after a failed resolution—show its choices and " + \
-        "ask for the exact missing choice. Routine turns use minimal thinking; menu planning may use higher thinking.\n" + \
+        "ask for the exact missing choice. Use low thinking for every turn, including menu planning, so the kitchen " + \
+        "check stays within the response budget.\n" + \
         (f"<pending_state>{json.dumps(pending, ensure_ascii=False)}</pending_state>\n" if pending else "") + \
-        "\n<quoted_kitchen_data>" + _quoted_data(buyer_id, today) + "</quoted_kitchen_data>" + \
-        "\n<quoted_recent_conversation>" + json.dumps(conversation.turns(buyer_id)[-12:], ensure_ascii=False) + \
+        (f"The pending slot was resolved to {json.dumps(pending_answer, ensure_ascii=False)}. Accept it, score it "
+         "with check_assumptions, and continue to the requested tool; do not ask that slot again.\n"
+         if pending_answer else "") + \
+        "\n<quoted_kitchen_data>" + _quoted_data(buyer_id, today, conversation_id) + "</quoted_kitchen_data>" + \
+        "\n<quoted_recent_conversation>" + json.dumps(conversation.turns(buyer_id, conversation_id)[-12:], ensure_ascii=False) + \
         "</quoted_recent_conversation>"
 
 
@@ -130,7 +229,7 @@ async def _generate_content(system: str, contents: list[dict]) -> dict:
         raise RuntimeError("Gemini is not configured")
     user_text = " ".join(part.get("text", "") for message in contents[-2:] for part in message.get("parts", [])
                           if isinstance(part, dict) and part.get("text"))
-    level = "high" if re.search(r"\b(menu|guests|covers|pizza|soup|pie)\b", user_text, re.I) else "low"
+    level = "low"
     body = {"systemInstruction": {"parts": [{"text": system}]}, "contents": contents,
             "tools": agent._api_schema(TOOLS),
             "generationConfig": {"temperature": 0.35, "thinkingConfig": {"thinkingLevel": level}}}
@@ -355,7 +454,7 @@ async def _turn_guard(fallback_text: str) -> dict:
 
 
 async def _propose_order(args: dict, buyer_id: str, requested_date: date | None, follow_up: bool = False,
-                         have: list[str] | None = None) -> dict:
+                         have: list[str] | None = None, via: str | None = None) -> dict:
     delivery = _parse_date(args.get("delivery_date"), requested_date)
     text, parsed = _tool_items(args.get("items") or [])
     if not text:
@@ -366,10 +465,11 @@ async def _propose_order(args: dict, buyer_id: str, requested_date: date | None,
     token = ask._DUPLICATE_GUARD_BYPASS.set(follow_up)
     try:
         guard = await _turn_guard(text)
+        request_note = guard.get("note") or ("Voice orders require the chef's on-screen approval." if via == "voice" else None)
         body = await agent.run(ask._duplicate_safe_text(text), delivery, buyer_id,
                                pre={"parsed": (parsed, True), "steer": guard.get("steer"), "steer_checked": True,
                                     "meant": 1.0, "meant_checked": True,
-                                    "request_note": guard.get("note"), "request_hold": bool(guard.get("note"))})
+                                    "request_note": request_note, "request_hold": bool(request_note)})
     finally:
         ask._DUPLICATE_GUARD_BYPASS.reset(token)
     body.update(intent="order", requested_date=delivery.isoformat(), question=None)
@@ -459,7 +559,7 @@ async def _plan_menu(args: dict, buyer_id: str, requested_date: date | None, hav
 
 
 async def _dispatch_tool(name: str, args: dict, buyer_id: str, requested_date: date | None,
-                         follow_up: bool = False, have: list[str] | None = None) -> dict:
+                         follow_up: bool = False, have: list[str] | None = None, via: str | None = None) -> dict:
     def typed(result):
         if isinstance(result, dict) and result.get("status") == "needs_info":
             result = dict(result, awaiting_user=True)
@@ -480,11 +580,14 @@ async def _dispatch_tool(name: str, args: dict, buyer_id: str, requested_date: d
         return {"context": kitchen.kitchen_context(buyer_id)}
     if name not in functions:
         raise RuntimeError(f"Gemini requested an unavailable tool: {name}")
+    kwargs = {"follow_up": follow_up, "have": have}
+    if via is not None:
+        kwargs["via"] = via
     if name == "cancel_order":
-        return typed(await functions[name](args, buyer_id, follow_up=follow_up, have=have))
+        return typed(await functions[name](args, buyer_id, **kwargs))
     if name == "check_assumptions":
-        return await functions[name](args, buyer_id, follow_up=follow_up, have=have)
-    return typed(await functions[name](args, buyer_id, requested_date, follow_up=follow_up, have=have))
+        return await functions[name](args, buyer_id, **kwargs)
+    return typed(await functions[name](args, buyer_id, requested_date, **kwargs))
 
 
 async def _current_order(buyer_id: str) -> dict:
@@ -498,21 +601,21 @@ def _fallback_cards(body: dict) -> list[dict]:
 
 
 async def _fallback(text: str, buyer_id: str, requested_date: date | None, follow_up: dict | None,
-                    have: list[str] | None, error: Exception, timeout_s: float) -> dict:
+                    have: list[str] | None, error: Exception, timeout_s: float, conversation_id: str) -> dict:
     log.warning("Chat Gemini failed (%s); using /api/agent/ask", type(error).__name__)
     if timeout_s <= 0:
         return {"reply": "I couldn't finish the kitchen check in time. Nothing was confirmed by this chat; please try again.",
-                "cards": [], "conversation_id": (follow_up or {}).get("to") or uuid4().hex,
+                "cards": [], "conversation_id": conversation_id,
                 "tools_used": [], "fallback": True, "provider_call_ok": False}
     try:
         body = await asyncio.wait_for(ask.ask(text, requested_date, buyer_id, follow_up, have), timeout_s)
     except Exception as fallback_error:  # noqa: BLE001 - the chef still gets a safe, grounded answer
         log.warning("/api/agent/ask fallback failed (%s)", type(fallback_error).__name__)
         return {"reply": "I couldn't finish the kitchen check in time. Nothing was confirmed by this chat; please try again.",
-                "cards": [], "conversation_id": (follow_up or {}).get("to") or uuid4().hex,
+                "cards": [], "conversation_id": conversation_id,
                 "tools_used": [], "fallback": True, "provider_call_ok": False}
     return {"reply": body.get("reply") or body.get("speak") or "I couldn't complete that request.",
-            "cards": _fallback_cards(body), "conversation_id": body.get("conversation_id") or uuid4().hex,
+            "cards": _fallback_cards(body), "conversation_id": conversation_id,
             "tools_used": [], "fallback": True, "provider_call_ok": False}
 
 
@@ -555,33 +658,47 @@ def _plain(text: str) -> str:
 
 
 async def chat(text: str, buyer_id: str, requested_date: date | None = None, follow_up: dict | None = None,
-               have: list[str] | None = None) -> dict:
+               have: list[str] | None = None, conversation_id: str | None = None) -> dict:
     """Run one bounded text turn. Any Gemini/loop failure is intentionally routed through the old /ask path."""
-    text = str(follow_up.get("answer") if follow_up else text).strip()
-    _, _note = agent.strip_auto_approval(text)
-    _TURN.set({"steer": await agent.steering(text), "note": _note})
+    conversation_id = conversation_id or (follow_up or {}).get("to") or uuid4().hex
+    if conversation.is_stale(buyer_id, conversation_id):
+        conversation_id = uuid4().hex
+    original_text = str(follow_up.get("answer") if follow_up else text).strip()
+    pending = conversation.pending_state(buyer_id, conversation_id)
+    text, pending_resolved = _resolve_pending_input(original_text, pending)
+    _, _note = agent.strip_auto_approval(original_text)
+    _TURN.set({"steer": await agent.steering(original_text), "note": _note})
     if APPROVAL_REQUEST.search(text):
         reply = "I can't approve orders for you; please approve the order on screen."
-        conversation.record_turn(buyer_id, "user", text)
-        conversation.record_turn(buyer_id, "assistant", reply)
-        return {"reply": reply, "cards": [], "conversation_id": (follow_up or {}).get("to") or uuid4().hex,
+        conversation.record_turn(buyer_id, "user", original_text, conversation_id=conversation_id)
+        conversation.record_turn(buyer_id, "assistant", reply, conversation_id=conversation_id)
+        return {"reply": reply, "cards": [], "conversation_id": conversation_id,
                 "tools_used": [], "question": None}
     today = datetime.now(HELSINKI).date()
     deadline = asyncio.get_running_loop().time() + GEMINI_TIMEOUT_S
     current_user = {"role": "user", "parts": [{"text": text}]}
-    contents = [{"role": row["role"], "parts": [{"text": row["text"]}]} for row in conversation.turns(buyer_id)[-12:]
+    contents = [{"role": row["role"], "parts": [{"text": row["text"]}]} for row in conversation.turns(buyer_id, conversation_id)[-12:]
                 if row.get("text")]
     contents.append(current_user)
+    request_context = " ".join(row.get("text", "") for row in conversation.turns(buyer_id, conversation_id)) + " " + original_text
     cards, tools_used, tool_summaries = [], [], []
     assumption_rows, assumption_questions = [], {}
-    pending_slot, pending_choices = None, []
+    pending_slot, pending_choices, pending_question, pending_default = None, [], "", ""
     threshold = mandates.confidence_threshold(buyer_id)
     search_calls = 0
     seen_searches = set()
     try:
         async with asyncio.timeout(GEMINI_TIMEOUT_S):
+            if pending_resolved and str((pending or {}).get("pending_slot") or "").startswith("assumption:"):
+                ident = str(pending["pending_slot"])[len("assumption:"):]
+                pending_question = str(pending.get("question") or text)
+                assumption_questions[ident] = {"id": ident, "question": pending_question, "context": text}
+                assumption_rows = await _check_assumptions(
+                    {"questions": [{"id": ident, "question": pending_question, "context": text}]}, buyer_id)
+                tools_used.append("check_assumptions")
             while True:
-                response = await _generate_content(_system(buyer_id, today, conversation.pending_state(buyer_id)), contents)
+                response = await _generate_content(_system(buyer_id, today, pending, conversation_id,
+                                                           text if pending_resolved else None), contents)
                 model_content, reply, calls = _candidate(response)
                 contents.append(model_content)
                 if calls:
@@ -598,12 +715,14 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
                             else:
                                 seen_searches.add(query_key)
                                 result = await _dispatch_tool(name, args, buyer_id, requested_date, bool(follow_up), have)
-                        elif name in {"propose_order", "change_order", "plan_menu"} and assumption_rows \
+                        elif name in {"propose_order", "change_order", "plan_menu"} and not pending_resolved and assumption_rows \
                                 and _low_assumption_question(assumption_rows, assumption_questions, threshold):
                             ident, question = _low_assumption_question(assumption_rows, assumption_questions, threshold)
                             result = {"status": "needs_info", "question": f"Before I use that assumption: {question}",
                                       "pending_slot": f"assumption:{ident}", "choices": []}
                         else:
+                            if name in {"propose_order", "change_order"}:
+                                args = _correct_explicit_portion(text, request_context, args)
                             result = await _dispatch_tool(name, args, buyer_id, requested_date, bool(follow_up), have)
                         tools_used.append(name)
                         if name == "check_assumptions":
@@ -640,6 +759,7 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
                         parts.append({"functionResponse": function_response})
                         if isinstance(result, dict) and result.get("pending_slot"):
                             pending_slot, pending_choices = result["pending_slot"], result.get("choices") or []
+                            pending_question = str(result.get("question") or "")
                     contents.append({"role": "user", "parts": parts})
                     continue
                 if not reply:
@@ -648,32 +768,52 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
                         and not re.search(r"\b(?:not|no|haven't|hasn't|couldn't|can't)\b", reply, re.I):
                     reply = "I haven't placed or confirmed an order. I can only say that after the order tool reports it."
                 low = _low_assumption_question(assumption_rows, assumption_questions, threshold)
-                if low and not reply.rstrip().endswith("?"):
-                    pending_slot, pending_choices = f"assumption:{low[0]}", []
-                    reply = f"Before I rely on that, could you confirm: {low[1]}?"
-                elif reply.rstrip().endswith("?") and conversation.pending_state(buyer_id):
-                    prior = conversation.pending_state(buyer_id) or {}
+                if reply.rstrip().endswith("?") and pending and not pending_resolved:
+                    prior = pending
                     pending_slot, pending_choices = prior.get("pending_slot"), prior.get("choices") or []
-                if not low:
+                    pending_question = str(prior.get("question") or reply)
+                    pending_default = str(prior.get("default") or "")
+                if low and not pending_resolved:
+                    pending_slot, pending_question = f"assumption:{low[0]}", low[1]
+                    pending_choices = _pending_choices(low[1], reply)
+                    pending_default = _pending_default(reply, pending_choices, low[1])
+                    if not reply.rstrip().endswith("?"):
+                        reply = f"Before I rely on that, could you confirm: {low[1].rstrip(' ?')}?"
+                if pending_slot and not pending_choices:
+                    pending_choices = _pending_choices(pending_question, reply)
+                    pending_default = pending_default or _pending_default(reply, pending_choices, pending_question)
+                if not low or pending_resolved:
                     note = _assumption_note(cards, reply)
                     if note:
                         reply = f"{reply.rstrip()} {note}"
                 break
-        conversation.record_turn(buyer_id, "user", text)
+        conversation.record_turn(buyer_id, "user", original_text, conversation_id=conversation_id)
         for summary in tool_summaries:
-            conversation.record_turn(buyer_id, "assistant", json.dumps(summary, ensure_ascii=False))
+            conversation.record_turn(buyer_id, "assistant", json.dumps(summary, ensure_ascii=False),
+                                     conversation_id=conversation_id)
         conversation.record_turn(buyer_id, "assistant", reply, card=cards[-1] if cards else None,
-                                 pending={"pending_slot": pending_slot, "choices": pending_choices}
-                                 if pending_slot else {})
+                                 pending={"pending_slot": pending_slot, "choices": pending_choices,
+                                          "question": pending_question, "default": pending_default}
+                                 if pending_slot else {}, conversation_id=conversation_id)
         reply = _plain(reply)
-        return {"reply": reply, "cards": cards, "conversation_id": (follow_up or {}).get("to") or uuid4().hex,
+        return {"reply": reply, "cards": cards, "conversation_id": conversation_id,
                 "tools_used": tools_used, "question": reply if reply.rstrip().endswith("?") else None,
                 "requested_date": requested_date.isoformat() if requested_date else None,
                 "awaiting_user": bool(pending_slot), "pending_slot": pending_slot, "choices": pending_choices,
                 "provider_call_ok": True}
     except ProviderCallError as exc:
-        return _provider_failure(exc, (follow_up or {}).get("to") or uuid4().hex)
+        return _provider_failure(exc, conversation_id)
+    except asyncio.TimeoutError:
+        reply = "I have the request and the checks completed so far; say ‘continue’ and I’ll finish the kitchen check."
+        conversation.record_turn(buyer_id, "user", original_text, conversation_id=conversation_id)
+        conversation.record_turn(buyer_id, "assistant", reply, card=cards[-1] if cards else None,
+                                 pending={"pending_slot": pending_slot, "choices": pending_choices,
+                                          "question": pending_question, "default": pending_default}
+                                 if pending_slot else {}, conversation_id=conversation_id)
+        return {"reply": reply, "cards": cards, "conversation_id": conversation_id, "tools_used": tools_used,
+                "question": None, "awaiting_user": bool(pending_slot), "pending_slot": pending_slot,
+                "choices": pending_choices, "provider_call_ok": True, "timed_out": True}
     except Exception as exc:  # any model/tool/timeout failure gets the proven path
         log.exception("Text chat loop failed; using /api/agent/ask")
-        return await _fallback(text, buyer_id, requested_date, follow_up, have, exc,
-                               max(0.0, deadline - asyncio.get_running_loop().time()))
+        return await _fallback(original_text, buyer_id, requested_date, follow_up, have, exc,
+                               max(0.0, deadline - asyncio.get_running_loop().time()), conversation_id)

@@ -366,7 +366,7 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
                       {(l.usual || l.why) && <span className="quiet small concern">{l.usual ? c.UI.result.usual : c.humanize(l.why)}</span>}
                       {concerns(l).map((r, k) => (
                         <span key={k} className="option-why warn concern">
-                          {c.headline({ ...r, message: c.humanize(r.message) })}
+                          {c.headline({ ...r, message: c.humanize(r.message) }, proposed.confidence_threshold)}
                         </span>
                       ))}
                       {l.usual && <span className="quiet small concern">{c.UI.result.usual}</span>}

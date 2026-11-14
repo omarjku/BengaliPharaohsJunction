@@ -194,7 +194,7 @@ def test_live_setup_answers_in_any_language_and_exposes_profile_tool(shop, monke
     assert "whatever language" in system
     assert "Sorry, I didn't catch that, could you say it again?" in system
     assert "Standing order Friday" in system
-    assert "profile_context" in names
+    assert "kitchen_profile" in names
 
 
 def test_unquantified_parser_clause_becomes_a_questionable_clause():

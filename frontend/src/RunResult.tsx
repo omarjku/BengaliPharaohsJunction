@@ -101,6 +101,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
         : ['neutral', st.sent]
 
   const lead = decision.reasons[0] ?? null
+  const confidenceThreshold = run.confidence_threshold ?? CONFIDENT_AT
   const text =
     order?.status === 'confirmed'
       ? t.orderedFor(c.day(requestedDate))
@@ -109,7 +110,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
         : split
           ? splitHeadline(split, c)
           : lead
-            ? c.headline(lead)
+            ? c.headline(lead, confidenceThreshold)
             : status
   const [head, more] = splitLong(text, c)
 
@@ -324,9 +325,9 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
             )}
           </p>
           {confidence != null && (
-            <p className={`sure num${confidence < CONFIDENT_AT ? ' unsure' : ''}`}>
-              {c.matched(confidence)}
-              {confidence < CONFIDENT_AT && chosen[0]?.confidence_reason && <span className="quiet">. {chosen[0].confidence_reason}</span>}
+            <p className={`sure num${confidence < confidenceThreshold ? ' unsure' : ''}`}>
+              {c.matched(confidence, confidenceThreshold)}
+              {confidence < confidenceThreshold && chosen[0]?.confidence_reason && <span className="quiet">. {chosen[0].confidence_reason}</span>}
             </p>
           )}
 
@@ -585,7 +586,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
         {chosen.map((l) => (
           <details key={l.product.id}>
             <summary>{chosen.length === 1 && query ? t.whyThis(query) : t.why(productName(l))}</summary>
-            <WhyThis line={l} />
+            <WhyThis line={l} threshold={confidenceThreshold} />
           </details>
         ))}
         {otherReasons.length > 0 && (
@@ -609,6 +610,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
                 <OtherOption
                   key={l.product.id}
                   line={l}
+                  threshold={confidenceThreshold}
                   onOrder={canChoose && orderable(l) ? () => place([lineOrder(l)], l.product.id) : null}
                   busy={busy !== null}
                   placing={placing === l.product.id}
@@ -670,7 +672,7 @@ function facts(line: Line, c: Copy): string | null {
   return parts.length ? parts.join(' ') : null
 }
 
-function WhyThis({ line }: { line: Line }) {
+function WhyThis({ line, threshold }: { line: Line; threshold: number }) {
   const c = useCopy()
   const [, avail] = availability(line, c)
   const q = line.quote
@@ -680,7 +682,7 @@ function WhyThis({ line }: { line: Line }) {
       {line.why && <p>{c.humanize(line.why)}</p>}
       {line.confidence != null && (
         <p className="quiet num">
-          {c.matched(line.confidence)}.{line.confidence_reason && ` ${line.confidence_reason}`}
+          {c.matched(line.confidence, threshold)}.{line.confidence_reason && ` ${line.confidence_reason}`}
         </p>
       )}
       <p className="quiet">
@@ -689,16 +691,16 @@ function WhyThis({ line }: { line: Line }) {
       </p>
       {f && <p className="quiet">{f}</p>}
       {line.quantity && <p className="quiet small">{line.quantity.explanation}</p>}
-      {line.confidence != null && <p className="faint tiny">{c.CONFIDENCE_MEANS}</p>}
+      {line.confidence != null && <p className="faint tiny">{c.CONFIDENCE_MEANS(threshold)}</p>}
     </div>
   )
 }
 
-function OtherOption({ line, onOrder, busy, placing }: { line: Line; onOrder: (() => void) | null; busy: boolean; placing: boolean }) {
+function OtherOption({ line, threshold, onOrder, busy, placing }: { line: Line; threshold: number; onOrder: (() => void) | null; busy: boolean; placing: boolean }) {
   const c = useCopy()
   const [tone, avail] = availability(line, c)
-  const unsure = line.confidence != null && line.confidence < CONFIDENT_AT
-  const why = tone === 'bad' ? avail : line.confidence != null ? c.matched(line.confidence) : line.why || avail
+  const unsure = line.confidence != null && line.confidence < threshold
+  const why = tone === 'bad' ? avail : line.confidence != null ? c.matched(line.confidence, threshold) : line.why || avail
   return (
     <li className="option">
       <div>

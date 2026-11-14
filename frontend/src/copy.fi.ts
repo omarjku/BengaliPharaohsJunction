@@ -39,7 +39,7 @@ export function question(q: string, r?: Reason | null): string {
   return QUESTIONS[q] ?? q
 }
 
-export function headline(r: Reason): string {
+export function headline(r: Reason, threshold = CONFIDENT_AT): string {
   const f = r.facts
   switch (r.code) {
     case 'SPEND_OVER_LIMIT': {
@@ -85,7 +85,7 @@ export function headline(r: Reason): string {
     case 'PRICE_CHANGED':
       return 'Hinta on muuttunut sen jälkeen, kun näit sen.'
     case 'CONFIDENCE_OK':
-      if (num(f.confidence) !== null) return `${matched(num(f.confidence)!)}.`
+      if (num(f.confidence) !== null) return `${matched(num(f.confidence)!, threshold)}.`
       break
     case 'FRONT_DOOR':
       if (typeof f.status === 'string') return `Lähetetty Valion etuovelle: ${DOOR_STATUS[f.status] ?? f.status}.`
@@ -96,8 +96,8 @@ export function headline(r: Reason): string {
 
 // Floored like the English module; Finnish writes a space before %.
 export const pct = (c: number) => `${Math.floor(c * 100)} %`
-export const matched = (c: number) => (c >= CONFIDENT_AT ? `Geminin osuma · ${pct(c)}` : `Geminin paras arvaus · ${pct(c)}, tarkistathan`)
-export const CONFIDENCE_MEANS = 'Prosentti kertoo, kuinka varma Gemini on siitä, että tämä on tarkoittamasi tuote. Jos se jää alle 80 prosentin, agentti kysyy ensin sinulta.'
+export const matched = (c: number, threshold = CONFIDENT_AT) => (c >= threshold ? `Geminin osuma · ${pct(c)}` : `Geminin paras arvaus · ${pct(c)}, tarkistathan`)
+export const CONFIDENCE_MEANS = (threshold = CONFIDENT_AT) => `Prosentti kertoo, kuinka varma Gemini on siitä, että tämä on tarkoittamasi tuote. Jos se jää alle ${Math.round(threshold * 100)} prosentin, agentti kysyy ensin sinulta.`
 
 // Backend sentences are English; this only Finnish-izes the machine bits around them.
 export const humanize = (msg: string) =>

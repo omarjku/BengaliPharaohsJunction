@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from . import config
 from .auth import _listed
 
-LIMITS = {"agent": (30, 60.0), "human": (120, 60.0), "ip": (120, 60.0), "sandbox": (5, 3600.0)}  # kind → (requests, per seconds)
+LIMITS = {"agent": (30, 60.0), "human": (120, 60.0), "ip": (120, 60.0), "sandbox": (40, 3600.0)}  # kind → (requests, per seconds)
 MAX_BUCKETS = 10_000  # memory bound for IP buckets; key buckets are bounded by the configured keys
 _buckets: dict[tuple[str, str], list[float]] = {}  # (kind, who) → [tokens, last refill]
 

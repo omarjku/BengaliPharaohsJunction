@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from test_agent import ITEM, decisions, fake_match, shop1  # noqa: F401 - pytest fixtures + helpers
 from test_menu import PORRIDGE
 
-from app import agent, ask, menu
+from app import agent, ask, mandates, menu
 from app.main import app
 
 c = TestClient(app, raise_server_exceptions=False)
@@ -41,6 +41,7 @@ def test_order_routes_to_the_run_flow(shop1, monkeypatch):  # noqa: F811
     route(monkeypatch, "order")
     body = post("1000 L lactose-free milk")
     assert body["intent"] == "order" and body["question"] is None and body["date_source"] == "request"
+    assert body["confidence_threshold"] == mandates.confidence_threshold("lapland-kitchen")
     assert body["order"]["status"] == "confirmed" and body["lines"]  # the /run body, unchanged
 
 

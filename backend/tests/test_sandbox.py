@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from conftest import REQ
 from fastapi.testclient import TestClient
 
-from app import config, mandates, orders
+from app import config, mandates, orders, sandbox
 from app.main import app
 
 c = TestClient(app, raise_server_exceptions=False)
@@ -94,7 +94,8 @@ def test_expired_sandbox_key_is_unauthorized(shop, monkeypatch, tmp_path):
 
 def test_sandbox_mints_are_limited_by_trusted_forwarded_ip(shop, monkeypatch):
     monkeypatch.setattr(config, "TRUST_X_FORWARDED_FOR", True)
-    for _ in range(5):
+    from app import ratelimit
+    for _ in range(ratelimit.LIMITS["sandbox"][0]):  # venue Wi-Fi shares one IP: room for a judging table
         assert mint(monkeypatch, "198.51.100.40").status_code == 200
     limited = mint(monkeypatch, "198.51.100.40")
     assert limited.status_code == 429
@@ -119,14 +120,20 @@ def test_expired_records_are_pruned_before_counting_live_sandboxes(shop, monkeyp
     assert len(saved) == 500 and "try-deadbeef" not in saved and created["buyer_id"] in saved
 
 
-def test_sandbox_cannot_exceed_500_live_records(shop, monkeypatch, tmp_path):
+def test_sandbox_cannot_exceed_max_live_records(shop, monkeypatch, tmp_path):
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     records = {f"try-{n:08x}": {"agent_key_hash": "a", "approver_key_hash": "b",
-                                  "expires_at": future, "template": "helsinki-bistro"} for n in range(500)}
+                                  "expires_at": future, "template": "helsinki-bistro"} for n in range(sandbox.MAX_LIVE)}
     (tmp_path / "sandboxes.json").write_text(json.dumps(records))
 
     blocked = mint(monkeypatch)
     assert blocked.status_code == 429
+
+
+def test_one_address_cannot_fill_every_live_slot_within_the_ttl():
+    from app import ratelimit
+    per_ip, per_s = ratelimit.LIMITS["sandbox"]
+    assert per_ip * (sandbox.TTL.total_seconds() / per_s) < sandbox.MAX_LIVE
 
 
 def test_sandbox_reads_helsinki_template_without_copying_mutable_state(shop, monkeypatch, tmp_path):
