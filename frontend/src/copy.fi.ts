@@ -35,6 +35,7 @@ export function question(q: string, r?: Reason | null): string {
   const month = past ? MONTHS.indexOf(past[2]) + 1 : 0
   if (past && month) return `${day(`${past[3]}-${String(month).padStart(2, '0')}-${past[1].padStart(2, '0')}`)} on jo mennyt. Mille päivälle toimitus?`
   if (/^How much .+\?$/.test(q)) return 'Kuinka paljon tarvitset?'
+  if (/^Which one did you mean: /.test(q)) return 'Kumpaa tarkoitit?'
   return QUESTIONS[q] ?? q
 }
 
@@ -281,6 +282,7 @@ export const UI = {
     reask: 'Kysy uudelleen',
     edit: 'Muokkaa pyyntöä',
     days: 'Toimituspäivät',
+    options: 'Vaihtoehdot',
   },
   keys: {
     title: 'Avaimet',
@@ -341,6 +343,11 @@ export const UI = {
     co2: (v: string) => `${v} kg CO₂e/kg.`,
     per: (p: string, unit: string) => ` ${p} / ${unit}.`,
     orderInstead: 'Valitse tämä',
+    usual: 'Tilaat tätä yleensä',
+    plainInstead: (need: string) => `Ei ${need} tällä kertaa`,
+    checkThis: 'Tarkista tämä: ei vielä tilauksessa.',
+    addToOrder: 'Lisää tilaukseen',
+    added: 'Lisätty tilaukseen.',
     askFor: 'Pyydä tätä sen sijaan',
     keysFirst: 'Syötä ensin avaimesi (Avaimet, ylhäällä).',
     otherChoices: 'Muut Valion vaihtoehdot',
@@ -370,6 +377,12 @@ export const UI = {
     title: 'Sääntösi',
     intro: 'Näitä agentti noudattaa jokaisessa tilauksessa. Valion etuovi tarkistaa ne uudelleen.',
     needKey: 'Lisää hyväksyjän avain kohdassa Avaimet, niin näet ja voit muuttaa sääntöjäsi.',
+    know: 'Mitä tiedän keittiöstäsi',
+    knowNote: 'Keittiösi profiilista. Agentti käyttää sitä ohjeena, ei koskaan sääntönä.',
+    knowDiet: 'Aina',
+    knowUsual: (n: number) => `${n} ${n === 1 ? 'tuote' : 'tuotetta'}, joita tilaat yleensä`,
+    knowNothing: 'Ei vielä mitään. Se oppii vahvistetuista tilauksistasi.',
+    knowFailed: 'Keittiösi profiilia ei saatu ladattua.',
     loadFailed: 'Sääntöjä ei saatu ladattua.',
     loading: 'Ladataan sääntöjä…',
     none: 'Ei vielä sääntöjä. Siihen asti agentti kysyy sinulta jokaisesta tilauksesta.',

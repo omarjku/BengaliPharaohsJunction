@@ -18,7 +18,7 @@ from trade_contracts import AuditEntry, AuditInput, Mandate, PurchaseRequest, Re
 from trade_contracts import ReasonCode as C
 from trade_contracts.common import Channel, RuleKind
 
-from . import agent, catalogue, gate, mandates, orders, quantity, valio, progress
+from . import agent, catalogue, gate, mandates, orders, profile, progress, quantity, valio
 
 MAX_INGREDIENTS = 20
 MAX_DISHES, MAX_PER_DISH = 12, 15  # bound what a (possibly steered) menu parse can make the agent check and price
@@ -33,7 +33,8 @@ kitchen buys from a food wholesaler. For each ingredient:
 - name: 1-3 English words, the way a wholesaler lists it (e.g. "potato", "whipping cream", "reindeer meat").
 - per_cover: the amount for ONE portion, and unit: one of L, dl, cl, ml, kg, g, pcs.
 - assumption: one short sentence a chef can check, e.g. "Mashed potatoes: 200 g potato per portion".
-- dietary: only constraints the menu itself states for that dish.
+- dietary: only constraints the menu itself states for that dish, and only on the ingredients that need a special
+  product to meet them (gluten-free cake: the flour, not the butter, sugar or eggs, which are naturally gluten-free).
 Skip water, salt, pepper and other trace seasonings. Use the dish names as written on the menu."""
 
 _MENU_SCHEMA = {"type": "object", "required": ["dishes"], "properties": {"dishes": {"type": "array", "items": {
@@ -50,8 +51,31 @@ def dish_tags(menu_text: str, dish: str) -> list[str]:
     """Dietary words written in the dish's own line of the menu (lines split on ; . and newlines, not 'and': dish
     names contain it). Deterministic, so a parse that drops 'lactose-free' can't make it disappear."""
     words = re.findall(r"[\wäöå]+", dish.lower())
-    return list(dict.fromkeys(tag for line in re.split(r"[;\n]|\.\s", menu_text) if agent._words_in(words, line)
-                              for word, tag in agent._WORDS.items() if word in line.lower()))
+    plain = [w for w in words if not any(w in d for d in agent._WORDS)]  # the dish's own name, without diet words
+    tags = []
+    for line in re.split(r"[;\n]|\.\s", menu_text):
+        if not agent._words_in(words, line):
+            continue
+        low, seg = line.lower(), line.lower()
+        # Two dishes on one line ("lactose-free mash and gluten-free cake"): only the words just before and in this
+        # dish's name count (black-box E4: the two dishes' diet labels were swapped).
+        hits = [m for w in plain for m in re.finditer(rf"(?<![\wäöå]){re.escape(w)}", low)]
+        if hits:
+            first, last = min(m.start() for m in hits), max(m.end() for m in hits)
+            cuts = [0] + [m.end() for m in re.finditer(r",|:| and | ja | with ", low[:first])]
+            start = cuts.pop()
+            while cuts:  # "nut-free, lactose-free cheesecake": a chunk of only diet words still belongs to the dish
+                chunk = low[cuts[-1]:start]
+                rest = chunk
+                for word in agent._WORDS:
+                    rest = rest.replace(word, " ")
+                if not re.search(r"[a-zäöå]", re.sub(r"\b(and|ja)\b|[,:]", " ", rest)):
+                    start = cuts.pop()
+                else:
+                    break
+            seg = low[start:last]
+        tags += [tag for word, tag in agent._WORDS.items() if word in seg]
+    return list(dict.fromkeys(tags))
 
 
 def apply_dietary(menu_text: str, dishes: list[dict]) -> list[Reason]:
@@ -146,10 +170,19 @@ async def check_assumption(dish: str, ingredient: str, per_cover, unit, text: st
     return None if None in ys else min(ys)
 
 
-async def parse_menu(menu_text: str) -> list[dict] | None:
+async def parse_menu(menu_text: str, buyer_id: str | None = None) -> list[dict] | None:
+    # The kitchen's standing needs (buyer profile) shape the recipe: a gluten-free kitchen's pizza uses gluten-free
+    # flour, not wheat flour. Only when the menu itself says nothing about diet; it comes from our own data, never
+    # from the buyer's text.
+    system = MENU_PROMPT
+    low = menu_text.lower()
+    if buyer_id and not any(w in low for w in agent._WORDS) and not agent._PLAIN.search(low):
+        if needs := [t.replace("_", "-") for t, _ in profile.dietary(buyer_id)]:
+            system += (f"\nThis kitchen's standing dietary needs (from its profile): {', '.join(needs)}. Choose "
+                       "ingredients that fit them (e.g. gluten-free flour instead of wheat flour).")
     # thinkingBudget 0: 4.8-6.1 s instead of 6.8-8.0 s, same ingredients (measured, room3-menu-speed); every
     # assumption is still checked by Gemini Decisions afterwards
-    out = await agent._gemini(MENU_PROMPT, agent._wrap(menu_text), _MENU_SCHEMA, {"thinkingBudget": 0})
+    out = await agent._gemini(system, agent._wrap(menu_text), _MENU_SCHEMA, {"thinkingBudget": 0})
     if not out or not isinstance(out.get("dishes"), list):
         return None
     return [{"name": str(d.get("name") or "").strip(), "ingredients": [dict(i) for i in d.get("ingredients") or []
@@ -177,7 +210,7 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
     excluded = set().union(*(gate._allergen_codes(str(v)) for v in gate._rules(m, RuleKind.EXCLUDED_ALLERGEN)))
 
     progress.phase("planning")
-    dishes, steer = await asyncio.gather(dishes_task or parse_menu(menu_text), agent.steering(menu_text))
+    dishes, steer = await asyncio.gather(dishes_task or parse_menu(menu_text, buyer_id), agent.steering(menu_text))
     if steer is not None and steer >= agent.INJECTION_MAX:
         reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, "This menu seems to try to change limits, delivery, invoicing or "
                                f"approvals, or claims special authority (Gemini Decisions: {agent._pct(steer)}).", None,
@@ -209,6 +242,15 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
                                "Split the menu into smaller parts."))
         ingredients = ingredients[:MAX_INGREDIENTS]
     items = ingredients  # agent.canonical() tells the judge which dishes each ingredient is for
+    needs = sorted({c for i in ingredients for c in i.get("claims") or []})
+    if needs:  # said once for the cart, in plain words; each unlabelled line then says "check the label"
+        words = agent._claim_words(needs)
+        rule = (f"{words[0].capitalize()}: I only pick products Valio labels {words[0]}." if len(words) == 1 else
+                f"{' and '.join(words).capitalize()}: where an ingredient needs it, I only pick products Valio labels "
+                "that way.")
+        reasons.append(gate._r(C.MENU_ASSUMPTIONS, gate.INFO, rule + " Where Valio labels none (often cheese, oil or "
+                               "butter), the closest product is shown and the line says 'check the label'.", None, None,
+                               claims=", ".join(needs)))
 
     res, checks = await asyncio.gather(  # pricing and the assumption checks run side by side
         agent._pipeline(menu_text, items, requested, buyer_id, m, excluded, now, reasons, True),
@@ -227,6 +269,16 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
         ln.pop("_weakest", None)
     qty: dict[str, float] = {}
     price: dict[str, int] = {}
+    # A line with a doubt (low confidence, odd quantity, unlabelled, ...) never goes into order_lines silently (black-box
+    # #7: an 80 kg egg line reached the door and was held only by chance): it is listed under check_lines instead.
+    check = [ln for ln in chosen if ln["item"] in res["failed_items"]]
+    for ln in check:
+        ln["check"] = True
+    if check:
+        reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, "Left out of the order lines until you check them: "
+                               + "; ".join(agent._name(ln["product"]) for ln in check) + ". Add them back once the "
+                               "doubt on each line is cleared.", None, "Check those lines, then add them to the order."))
+    chosen = [ln for ln in chosen if not ln.get("check")]
     for ln in chosen:  # the chef confirms the whole cart, so two ingredients on one product become one order line
         qty[ln["product"]["id"]] = qty.get(ln["product"]["id"], 0) + ln["quantity"]["quantity"]
         price[ln["product"]["id"]] = gate.eur_to_cents(ln["quote"]["price"])
@@ -257,4 +309,6 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
             "cart_total_cents": sum(int((Decimal(price[p]) * Decimal(str(q))).quantize(Decimal(1), ROUND_HALF_UP))
                                     for p, q in qty.items()),
             "order_lines": [{"product_id": p, "quantity": q} for p, q in qty.items()],
+            "check_lines": [{"product_id": ln["product"]["id"], "quantity": ln["quantity"]["quantity"],
+                             "name": agent._name(ln["product"])} for ln in check],
             "decision": decision.model_dump(mode="json"), "audit_id": entry.id}

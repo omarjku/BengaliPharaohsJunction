@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { ApiError, compileRules, getKeys, getMandate, MOCK, saveMandate } from './api'
+import { ApiError, compileRules, getKeys, getMandate, getProfile, MOCK, saveMandate } from './api'
 import { errorText } from './format'
 import { useCopy } from './i18n'
-import type { CompileResult, Mandate } from './types'
+import type { BuyerProfile, CompileResult, Mandate } from './types'
 
 type Props = { refreshKey: number; onAction: () => void; onAnnounce: (text: string) => void }
 
@@ -171,6 +171,8 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
         </ul>
       )}
 
+      <KitchenProfile />
+
       {text !== null && (
         <form className="ask section-gap" onSubmit={submit}>
           <label className="ask-label" htmlFor="rules-text">
@@ -330,5 +332,53 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
         </section>
       )}
     </>
+  )
+}
+
+// "What I know about your kitchen": the buyer profile (GET /api/profile, agent key), read-only. Guidance, not rules.
+function KitchenProfile() {
+  const t = useCopy().UI.rules
+  const agentKey = getKeys().agentKey
+  const [profile, setProfile] = useState<BuyerProfile | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    if (!MOCK && !agentKey) return
+    let cancelled = false
+    getProfile().then(
+      (p) => !cancelled && setProfile(p),
+      () => !cancelled && setFailed(true),
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [agentKey])
+  if (!profile && !failed) return null
+  const usual = profile?.memories.filter((m) => m.kind === 'usual_product') ?? []
+  const empty = profile && !profile.dietary.length && !usual.length && !profile.usual_product_ids.length
+  return (
+    <div className="more flush">
+      <details>
+        <summary>{t.know}</summary>
+        <ul className="more-body">
+          {failed && <li className="quiet">{t.knowFailed}</li>}
+          {profile && <li className="quiet small">{t.knowNote}</li>}
+          {profile?.dietary.map((d) => (
+            <li key={d.tag}>
+              <p>
+                {t.knowDiet}: {d.label}
+              </p>
+              <p className="quiet small">{d.because}</p>
+            </li>
+          ))}
+          {usual.map((m) => (
+            <li key={m.key}>
+              <p>{m.text}</p>
+            </li>
+          ))}
+          {profile && profile.usual_product_ids.length > 0 && <li className="quiet">{t.knowUsual(profile.usual_product_ids.length)}</li>}
+          {empty && <li className="quiet">{t.knowNothing}</li>}
+        </ul>
+      </details>
+    </div>
   )
 }

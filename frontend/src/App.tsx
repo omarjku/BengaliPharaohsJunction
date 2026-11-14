@@ -460,6 +460,11 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                   onAnnounce={setAnnounce}
                   onRetry={retry}
                   onHistory={() => setView('history')}
+                  onPlain={(need) => {
+                    const next = `${text.trim()} (regular, not ${need})` // the backend reads "regular" / "not gluten…" as the buyer's own words
+                    setText(next)
+                    void ask(next, undefined, runDate)
+                  }}
                   onAskFor={(next) => {
                     setText(next)
                     void ask(next, undefined, runDate) // same delivery day as the result it came from
@@ -563,6 +568,8 @@ function Question(p: {
   // "For which delivery day?": the next days as one-tap answers (sent as "20.11.", which the backend reads exactly).
   const askingDay = p.answerable && /which delivery day/i.test(p.question)
   const days = askingDay ? nextDays(6) : []
+  // "Which one did you mean: 1) A; 2) B; 3) C? Or say it more precisely.": the options as one-tap answers ("2").
+  const options = p.answerable ? (/^Which one did you mean: (.+)\? Or say it more precisely\.?$/.exec(p.question)?.[1].split('; ').map((o) => o.replace(/^\d\)\s*/, '')) ?? []) : []
   useEffect(() => {
     // typing: straight into the answer field; by voice the mic is listening, so focus just brings the question into view
     if (p.answerable && !again && !p.byVoice) field.current?.focus()
@@ -580,6 +587,15 @@ function Question(p: {
           <button type="button" className="btn plain accent-text" onClick={p.onEdit}>
             {u.question.edit}
           </button>
+        </div>
+      )}
+      {options.length > 0 && (
+        <div className="chips" role="group" aria-label={u.question.options}>
+          {options.map((o, n) => (
+            <button key={o} type="button" className="chip" onClick={() => p.onAnswer(String(n + 1))} disabled={p.busy}>
+              {c.tidyName(o)}
+            </button>
+          ))}
         </div>
       )}
       {days.length > 0 && (
