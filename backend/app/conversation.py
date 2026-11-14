@@ -151,8 +151,9 @@ def amount_in(answer: str, default_unit: str | None = None) -> tuple[float, str]
 
 
 def language(text: str) -> str:
-    return "fi" if re.search(r"[äö]|\b(maito\w*|kerma\w*|voi(ta|n)?|litraa|kiloa|heti|tänään|huomenna|maanantai\w*|"
-                             r"tarvitsen|tilaa|kpl)\b", text, re.I) else "en"
+    return "fi" if re.search(r"\b(maito\w*|kerma\w*|voi(ta|n)?|litraa|kiloa|heti|tänää|tänään|huomenna|maanantai\w*|"
+                             r"tarvitsen|tarviin|tilaa|kaura\w*|juoma\w*|ruokaa|safka|kiitti|joo|mä|kpl)\b",
+                             text, re.I) else "en"
 
 
 # --- store
@@ -262,6 +263,8 @@ def _project_line(line) -> dict | None:
         available = line["quote"].get("orderable")
     if available is not None:
         result["available"] = bool(available)
+    if isinstance(line.get("quote"), dict) and line["quote"].get("price") is not None:
+        result["unit_price"] = line["quote"]["price"]
     quantity_value = line.get("quantity")
     if isinstance(quantity_value, dict):
         requested = quantity_value.get("requested") if isinstance(quantity_value.get("requested"), dict) else quantity_value
@@ -386,6 +389,42 @@ def last_card(buyer_id: str) -> dict | None:
         return json.loads(json.dumps(card, ensure_ascii=False)) if isinstance(card, dict) else None
 
 
+def current_order(buyer_id: str) -> dict:
+    """Return bounded order facts for this buyer's coming delivery days, without catalogue search or price lookups."""
+    from . import catalogue, orders
+
+    today = date.today()
+    rows = []
+    for order in orders._store().values():
+        if not isinstance(order, dict) or order.get("buyer_id") != buyer_id:
+            continue
+        if order.get("status") not in {"open", "pending", "pending_approval", "confirmed"}:
+            continue
+        try:
+            requested = date.fromisoformat(str(order.get("requested_date")))
+        except (TypeError, ValueError):
+            continue
+        if requested < today:
+            continue
+        lines = []
+        for line in (order.get("lines") or [])[:50]:
+            if not isinstance(line, dict):
+                continue
+            product = catalogue.get(str(line.get("product_id"))) or {}
+            lines.append({key: value for key, value in {
+                "name": line.get("name") or product.get("name_en") or product.get("name_fi") or line.get("product_id"),
+                "amount": line.get("quantity"),
+                "unit": line.get("unit"),
+                "unit_price_cents": line.get("unit_price_cents"),
+                "line_total_cents": line.get("line_total_cents"),
+            }.items() if value is not None})
+        rows.append({"order_id": str(order.get("id") or "")[:12], "requested_date": requested.isoformat(),
+                     "status": order.get("status"), "lines": lines, "total_cents": order.get("total_cents")})
+    rows.sort(key=lambda row: (row["requested_date"], row["order_id"]))
+    rows = rows[:20]
+    return {"orders": rows, "total_cents": sum(row.get("total_cents") or 0 for row in rows)}
+
+
 # --- the spoken sentence
 FI = {"For which delivery day?": "Mille päivälle toimitus?", "For how many guests?": "Kuinka monelle hengelle?",
       "I can only help with ordering from Valio. What do you need?": "Autan vain Valion tilauksissa. Mitä tarvitset?"}
@@ -397,13 +436,19 @@ def _eur(cents: int | None) -> str:
 
 def speak(body: dict, lang: str) -> str:
     """One short sentence for the read-back: exactly what was decided or asked, built from the response fields."""
+    assumption = next((value for value in body.get("assumptions") or []
+                       if isinstance(value, str) and value.strip()), None)
+
+    def finish(sentence: str) -> str:
+        return f"{sentence.rstrip('.')} {assumption}." if assumption else sentence
+
     q = body.get("question")
     if q:
         if lang == "fi" and q in FI:
-            return FI[q]
+            return finish(FI[q])
         if lang == "fi" and q.startswith("How much "):
-            return "Kuinka paljon tarvitset?"
-        return q if q.endswith("?") else q.split(". ")[0] + "."
+            return finish("Kuinka paljon tarvitset?")
+        return finish(q if q.endswith("?") else q.split(". ")[0] + ".")
     order, decision = body.get("order"), body.get("decision") or {}
     lines = [ln for ln in body.get("lines", []) if ln.get("chosen")]
     first = lines[0] if lines else None
@@ -413,22 +458,36 @@ def speak(body: dict, lang: str) -> str:
         what = f"{qd['requested']['amount']:g} {qd['requested']['unit']} {(first['product'].get('name_en') or '').strip()}"
     day = body.get("requested_date") or ""
     if order and order.get("status") == "confirmed":
-        return (f"Tilattu: {what}, toimitus {day}." if lang == "fi" else f"Ordered: {what}, arriving {day}.")
+        return finish(f"Tilattu: {what}, toimitus {day}." if lang == "fi" else f"Ordered: {what}, arriving {day}.")
     if order and order.get("status") == "pending_approval":
         reason = (decision.get("primary_reason") or {}).get("message", "")
         if lang == "fi":
-            return f"Tarvitsee hyväksyntäsi: {what}, {_eur(order.get('total_cents'))}."
-        return f"Needs your OK: {what}, {_eur(order.get('total_cents'))}. {reason.split('. ')[0]}."
+            return finish(f"Tarvitsee hyväksyntäsi: {what}, {_eur(order.get('total_cents'))}.")
+        return finish(f"Needs your OK: {what}, {_eur(order.get('total_cents'))}. {reason.split('. ')[0]}.")
+    coverage = body.get("cart_coverage") or {}
+    ingredient_count, in_cart = coverage.get("ingredients"), coverage.get("in_cart")
+    if (isinstance(ingredient_count, int) and ingredient_count and isinstance(in_cart, int)
+            and in_cart / ingredient_count < 0.6):
+        needs_look = coverage.get("needs_look")
+        if not isinstance(needs_look, int):
+            needs_look = max(0, ingredient_count - in_cart)
+        if not coverage.get("needs_look") and coverage.get("have"):
+            return finish(f"I found {in_cart} of {ingredient_count} ingredients; the rest are already in your kitchen.")
+        missing = body.get("not_found") or coverage.get("not_found") or []
+        suffix = f" Not found: {', '.join(str(name) for name in missing)}." if missing else ""
+        return finish((f"Löysin {in_cart} / {ingredient_count} ainesosaa; {needs_look} vaatii tarkistuksesi."
+                       if lang == "fi" else f"I found {in_cart} of {ingredient_count} ingredients; "
+                       f"{needs_look} need your look.") + suffix)
     if body.get("cart_total_cents") is not None:  # menu proposal
-        return (f"Ostoskori valmis: {_eur(body['cart_total_cents'])}, tarkista oletukset." if lang == "fi"
-                else f"Cart ready: {_eur(body['cart_total_cents'])}. Check the assumptions before ordering.")
+        return finish(f"Ostoskori valmis: {_eur(body['cart_total_cents'])}, tarkista oletukset." if lang == "fi"
+                      else f"Cart ready: {_eur(body['cart_total_cents'])}. Check the assumptions before ordering.")
     primary = decision.get("primary_reason") or {}
     if first and primary.get("code") == "LOW_CONFIDENCE" and first.get("line_total_cents") is not None:
         name = (first["product"].get("name_en") or "").strip()
-        return (f"Tarkista: {name}, {_eur(first['line_total_cents'])}. En ole varma, että tarkoitit tätä." if lang == "fi"
-                else f"Please check: {name}, {_eur(first['line_total_cents'])}. I'm not sure it's what you meant.")
+        return finish(f"Tarkista: {name}, {_eur(first['line_total_cents'])}. En ole varma, että tarkoitit tätä." if lang == "fi"
+                      else f"Please check: {name}, {_eur(first['line_total_cents'])}. I'm not sure it's what you meant.")
     reason = primary.get("message", "Nothing was ordered.")
-    return ("Ei tilattu. Tarkista näytöltä." if lang == "fi" else f"Not ordered: {reason.split('. ')[0].rstrip('.')}.")
+    return finish("Ei tilattu. Tarkista näytöltä." if lang == "fi" else f"Not ordered: {reason.split('. ')[0].rstrip('.')}.")
 
 
 def date_answer(answer: str, today: date, date_from_text) -> date | None:

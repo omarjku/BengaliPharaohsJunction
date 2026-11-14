@@ -27,9 +27,11 @@ _COVERS = re.compile(r"\b(\d{1,12})\s*(guests?|people|persons?|covers?|portions?
                      r"annosta|vierasta|vieraalle)\b", re.I)
 _MENU_WORD = re.compile(r"\b(menu|ruokalista|lounaslista)\b", re.I)
 _GREETING = re.compile(r"^\s*(hi|hello|hey|hei|terve|good morning|good afternoon|good evening)\b", re.I)
-_CART_QUESTION = re.compile(r"\b(cart|basket|butter|milk|cream|availability|available|not available|why did you|"
-                            r"look at|still show)\b", re.I)
+_CART_QUESTION = re.compile(r"\b(cart|basket|order|orders|entire|whole|butter|milk|cream|price|prices|product|"
+                            r"products|delivery|deliveries|availability|available|not available|why did you|"
+                            r"look at|still show|did you add|how much)\b", re.I)
 _CART_CHANGE = re.compile(r"\b(make it|change|remove|delete|swap|replace|instead|vaihda|poista)\b", re.I)
+_PRICE_HAGGLE = re.compile(r"\b(?:less|discount|cheaper|off|haggle|negotiate|negotiation|alenn\w*|halvem\w*|edullisem\w*)\b", re.I)
 _KITCHEN_QUESTION = re.compile(
     r"\b(how many did we feed|how many guests|usual products?|leftovers?|kitchen history|last friday|"
     r"what do we usually|what was left)\b", re.I)
@@ -44,7 +46,25 @@ _DAY_WORDS = {
     "monday": "monday", "tuesday": "tuesday", "wednesday": "wednesday", "thursday": "thursday",
     "friday": "friday", "saturday": "saturday", "sunday": "sunday", "maanantai": "monday",
     "tiistai": "tuesday", "keskiviikko": "wednesday", "torstai": "thursday", "perjantai": "friday",
-    "lauantai": "saturday", "sunnuntai": "sunday",
+    "lauantai": "saturday", "sunnuntai": "sunday", "måndag": "monday", "tisdag": "tuesday",
+    "onsdag": "wednesday", "torsdag": "thursday", "fredag": "friday", "lördag": "saturday",
+    "söndag": "sunday", "lunes": "monday", "martes": "tuesday", "miércoles": "wednesday",
+    "jueves": "thursday", "viernes": "friday", "sábado": "saturday", "domingo": "sunday",
+    "الاثنين": "monday", "الثلاثاء": "tuesday", "الأربعاء": "wednesday", "الخميس": "thursday",
+    "الجمعة": "friday", "السبت": "saturday", "الأحد": "sunday",
+}
+_EVENT = re.compile(r"\b(?:catering|gallery\s+opening|party|parties|dinner|lunch|breakfast|wedding|"
+                    r"buffet|event|opening|juhla|juhlat|illallinen|lounas|aamiainen|fiesta|cena|boda|"
+                    r"inauguraci[oó]n|fest|middag|bröllop|öppning|حفلة|عشاء|زفاف|افتتاح)\b", re.I)
+_EVENT_COVERS = re.compile(r"\b(?:party|dinner|lunch|breakfast|catering|juhla|illallinen|lounas|aamiainen|"
+                           r"fiesta|cena|fest|middag|حفلة|عشاء)\b[^\d]{0,30}"
+                           r"\b(?:for|with|to|para|för|لـ?)\s*(\d{1,4})\b", re.I)
+_RELATIVE_DATES = {
+    "today": 0, "tonight": 0, "tomorrow": 1, "day after tomorrow": 2,
+    "tänään": 0, "tänää": 0, "huomenna": 1, "ylihuomenna": 2,
+    "hoy": 0, "mañana": 1, "pasado mañana": 2,
+    "idag": 0, "i dag": 0, "imorgon": 1, "i morgon": 1, "övermorgon": 2,
+    "اليوم": 0, "غدا": 1, "غدًا": 1, "غداً": 1, "بعد غد": 2,
 }
 _STANDING_TRIGGER = re.compile(r"\b(?:usual|regular|normal|same\s+as|tavallinen|normaali|sama(?:\s+kuin)?)\b|"
                                r"\b(?:every|joka)\b", re.I)
@@ -147,10 +167,11 @@ def _unit(value) -> str | None:
 
 
 def _language(value, message: str) -> str:
-    if value in ("en", "fi"):
-        return value
-    return "fi" if re.search(r"[äö]|\b(maito|kerma|voi|tarvitsen|tilaa|heti|tänään|huomenna|maanantai)\w*\b",
-                             message, re.I) else "en"
+    if re.search(r"\b(maito|maitoa|kerma|voi|tarvitsen|tarviin|tilaa|heti|tänää|tänään|huomenna|maanantai|"
+                 r"tiistai|keskiviikko|torstai|perjantai|lauantai|sunnuntai|kaura|juoma|ruokaa|safka|kiitti|joo|mä)\w*\b",
+                 message, re.I):
+        return "fi"
+    return "en"
 
 
 def _diet(value) -> str | None:
@@ -175,6 +196,46 @@ def _iso_date(value, today: date) -> str | None:
     if today <= when <= today + timedelta(days=60):
         return when.isoformat()
     return None
+
+
+def _fold_date_text(message: str) -> str:
+    text = str(message or "").lower()
+    # Arabic vowel marks make غدا/غدًا visually different while expressing the same relative day.
+    text = re.sub(r"[\u064b-\u065f\u0670]", "", text)
+    return text.replace("ى", "ي")
+
+
+def resolve_date_from_text(message: str, today: date) -> date | None:
+    """Resolve a bounded delivery date from common relative/absolute day words in the chef's language."""
+    text = _fold_date_text(message)
+    if re.search(r"\b(?:after next|week after|following|viikon päästä|ensi viikon jälkeen)\b", text, re.I):
+        return None
+    if match := re.search(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)", text):
+        try:
+            return date(int(match[1]), int(match[2]), int(match[3]))
+        except ValueError:
+            return None
+    if match := re.search(r"(?<!\d)(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?(?!\d)", text):
+        try:
+            when = date(int(match[3] or today.year), int(match[2]), int(match[1]))
+            return when if match[3] or when >= today else when.replace(year=today.year + 1)
+        except ValueError:
+            return None
+    for word, offset in sorted(_RELATIVE_DATES.items(), key=lambda item: -len(item[0])):
+        if re.search(rf"(?<!\w){re.escape(_fold_date_text(word))}(?!\w)", text, re.I):
+            return today + timedelta(days=offset)
+    for word, weekday in _DAY_WORDS.items():
+        if re.search(rf"(?<!\w){re.escape(_fold_date_text(word))}\w*", text, re.I):
+            english_weekday = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday").index(weekday)
+            return today + timedelta(days=(english_weekday - today.weekday() - 1) % 7 + 1)
+    return None
+
+
+def _resolve_date(value, message: str, today: date) -> str | None:
+    return _iso_date(value, today) or (
+        when.isoformat() if (when := resolve_date_from_text(message, today))
+        and today <= when <= today + timedelta(days=60) else None
+    )
 
 
 def _default_slots(message: str) -> dict:
@@ -374,7 +435,9 @@ def _sanitize_action(raw, message: str, today: date) -> dict | None:
     else:
         guests = None
     clean["guests"] = guests if guests is not None else None
-    clean["date"] = _iso_date(slots.get("date"), today)
+    if clean["guests"] is None and (event_covers := _EVENT_COVERS.search(message)):
+        clean["guests"] = int(event_covers.group(1))
+    clean["date"] = _resolve_date(slots.get("date"), message, today)
     clean["diets"] = list(dict.fromkeys(t for t in (_diet(x) for x in slots.get("diets") or []) if t))[:_MAX_LIST]
     clean["exclusions"] = _clean_list(slots.get("exclusions"), _MAX_LIST, 80)
     clean["language"] = _language(slots.get("language"), message)
@@ -391,6 +454,9 @@ def _sanitize_action(raw, message: str, today: date) -> dict | None:
         interpretation = " ".join(corrections)[:200]
 
     intent = raw["intent"]
+    event = bool(_EVENT.search(message))
+    if event and intent in {"out_of_scope", "unclear"}:
+        intent = "plan_meal"
     if clean["guests"] is not None and clean["guests"] > 2_000:
         intent = "unrealistic"
     action = {"intent": intent, "slots": clean, "question": _clean_text(raw.get("question"), 240) or None,
@@ -398,6 +464,11 @@ def _sanitize_action(raw, message: str, today: date) -> dict | None:
               "topic": _clean_topic(raw.get("topic")), "interpretation": interpretation}
     if isinstance(raw.get("proposed_fact"), dict):
         action["proposed_fact"] = raw["proposed_fact"]
+    if event and clean["guests"] is None and not action["question"]:
+        action["question"] = "How many guests should I plan for?"
+        action["choices"] = [{"label": "30 guests", "amount": 30, "unit": "guests"},
+                             {"label": "50 guests", "amount": 50, "unit": "guests"},
+                             {"label": "100 guests", "amount": 100, "unit": "guests"}]
     if intent == "out_of_scope" and not _NON_FOOD.search(message) and not clean["items"]:
         intent = "unclear"
         action["intent"] = intent
@@ -553,26 +624,48 @@ def _topic(message: str) -> str | None:
     return _clean_text(" ".join(out), 40) or None
 
 
+def _looks_like_cart_question(message: str) -> bool:
+    low = str(message or "").lower()
+    if _PRICE_HAGGLE.search(low):
+        return True
+    if re.search(r"\b(?:cart|basket|current order|entire order|whole order|my order|order now)\b", low):
+        return True
+    if re.search(r"\b(?:did you add|in my order|in the order|in my cart|in the cart|included in)\b", low):
+        return True
+    if re.search(r"\b(?:why did you|look at|still show|not available)\b", low):
+        return True
+    if re.search(r"\b(?:price|prices|cost|availability|available)\b", low):
+        return True
+    if re.search(r"\bhow much\b", low) and re.search(r"\b(?:in|on)\s+(?:my|the)\s+(?:order|cart)\b", low):
+        return True
+    if re.search(r"\b(?:lisäsit|hinta|tilauksessa|korissa|toimitus\w*)\b", low):
+        return True
+    return bool(re.search(r"\b(?:when|which|what|next)\b[^?.]{0,30}\bdeliver(?:y|ies)\b", low))
+
+
 def _fallback_action(message: str, today: date, last_card: dict | None) -> dict:
-    from . import ask as old_ask
     low = message.lower()
-    stated = old_ask.date_from_text(message, today)
+    stated = resolve_date_from_text(message, today)
     if re.search(r"\bnext week\b|\bensi viik", low, re.I):
         stated = today + timedelta(days=7 - today.weekday())
-    cover_match = _COVERS.search(message)
+    cover_match = _COVERS.search(message) or _EVENT_COVERS.search(message)
     covers = int(cover_match.group(1)) if cover_match and int(cover_match.group(1)) <= 2_000 else None
     items = _fallback_items(message)
     if _KITCHEN_QUESTION.search(message):
         intent = "ask_kitchen"
-    elif _CART_CHANGE.search(message) and last_card:
+    elif _CART_CHANGE.search(message):
         intent = "change_cart"
-    elif _CART_QUESTION.search(message) and last_card and not items:
+    elif _looks_like_cart_question(message) and not _CART_CHANGE.search(message):
         intent = "ask_about_cart"
     elif covers is not None or _MENU_WORD.search(message):
         intent = "plan_meal"
-    elif old_ask._is_context_request(message):
+    elif _EVENT.search(message):
+        intent = "plan_meal"
+    elif re.search(r"\b(?:food|meal|meals|menu|catering)\b", message, re.I) and stated:
         intent = "plan_period"
-    elif re.search(r"\b(asap|urgent|right now|in \d+\s*(?:minutes?|hours?)|heti|kiire)", low, re.I):
+    elif re.search(r"\b(?:food|meal|meals|menu|catering)\b", message, re.I) and not items:
+        intent = "plan_meal"
+    elif re.search(r"\b(?:asap|urgent|right now|in \d+\s*(?:minutes?|hours?)|heti|kiire)", low, re.I):
         intent = "urgent"
     elif items or re.search(r"\d", message):
         intent = "order_items"
@@ -582,6 +675,10 @@ def _fallback_action(message: str, today: date, last_card: dict | None) -> dict:
         intent = "greeting"
     else:
         intent = "unclear"
+    if intent == "plan_meal" and covers is None and _EVENT.search(message):
+        intent = "plan_meal"
+    if intent == "plan_period":
+        intent = "plan_period"
     slots = _default_slots(message)
     slots["items"] = [{k: item.get(k) for k in ("name", "amount", "unit")} for item in items]
     slots["diets"] = list(dict.fromkeys(tag for item in items for tag in item.get("diets") or []))
@@ -596,6 +693,11 @@ def _fallback_action(message: str, today: date, last_card: dict | None) -> dict:
     if intent == "unclear":
         action["reply"] = "Sorry, I didn't catch that, could you say it again?"
         action["question"] = action["reply"]
+    elif intent == "plan_meal" and covers is None and _EVENT.search(message):
+        action["question"] = "How many guests should I plan for?"
+        action["choices"] = [{"label": "30 guests", "amount": 30, "unit": "guests"},
+                             {"label": "50 guests", "amount": 50, "unit": "guests"},
+                             {"label": "100 guests", "amount": 100, "unit": "guests"}]
     return action
 
 

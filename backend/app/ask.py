@@ -51,6 +51,8 @@ _CONTEXT_PLAN = re.compile(r"\b(?:food|meal|meals|menu|catering|what\s+(?:do|wou
 def date_from_text(text: str, today: date) -> date | None:
     """The delivery date the text states, deterministically: ISO, d.m.(yyyy), today/tomorrow (Finnish too), a
     weekday (the next one; the same weekday as today means next week). None if no date is stated."""
+    if resolved := understand.resolve_date_from_text(text, today):
+        return resolved
     low = text.lower()
     if _COMPOUND_DATE.search(low):  # "the Monday after next": never guess which Monday (Codex #4)
         return None
@@ -483,6 +485,19 @@ def _action_date(action: dict, requested: date | None, today: date) -> tuple[dat
     return None, None
 
 
+def _next_weekday(today: date) -> date:
+    when = today + timedelta(days=1)
+    while when.weekday() >= 5:
+        when += timedelta(days=1)
+    return when
+
+
+def _delivery_assumption(today: date) -> tuple[date, str]:
+    when = _next_weekday(today)
+    label = f"{when:%A} {when.day} {when:%b}"
+    return when, f"Assumed {label}, the next delivery"
+
+
 def _parsed_action(action: dict, source: str, text: str) -> tuple[dict, bool]:
     slots = action.get("slots") or {}
     tags = [tag for tag in slots.get("diets") or [] if tag in agent.DIETARY]
@@ -502,6 +517,11 @@ def _parsed_action(action: dict, source: str, text: str) -> tuple[dict, bool]:
             if key in item:
                 value = item[key]
                 parsed[key] = dict(value) if key == "approval_required" and isinstance(value, dict) else value
+        if action.get("_delivery_assumption"):
+            approval = dict(parsed.get("approval_required") or {})
+            approval.update(delivery_assumed=True, delivery_assumption=action["_delivery_assumption"])
+            approval.setdefault("assumption", action["_delivery_assumption"])
+            parsed["approval_required"] = approval
         items.append(parsed)
     return {"summary": text, "items": items}, source == "gemini"
 
@@ -522,23 +542,87 @@ def _error_card(action: dict) -> dict:
                         "I couldn't finish that request, but the other requests are still intact.")
 
 
-def _cart_reply(text: str, card: dict | None) -> str:
-    if not card:
-        return "There is nothing in the cart yet."
-    lines = [line for line in card.get("lines") or [] if isinstance(line, dict)]
+def _cart_reply(text: str, card: dict | None, snapshot: dict | None = None) -> str:
+    lines = [line for line in (card or {}).get("lines") or [] if isinstance(line, dict)]
     low = text.lower()
-    target = next((line for line in lines if line.get("name", "").lower() in low), lines[0] if lines else None)
+    fi = conversation.language(text) == "fi"
+    orders = [order for order in (snapshot or {}).get("orders") or [] if isinstance(order, dict)]
+
+    def price_sentence(line: dict) -> str:
+        price = line.get("unit_price_cents")
+        if price is None and line.get("price_cents") is not None:
+            price = line["price_cents"]
+        quoted = f"EUR {float(price) / 100:.2f}" if isinstance(price, (int, float)) else "the current quoted price"
+        return (f"Valion hinnat ovat kiinteät; {line.get('name') or 'tuote'} maksaa nyt {quoted}." if fi else
+                f"Prices are fixed by Valio; {line.get('name') or 'that item'} is currently {quoted}.")
+
+    def names_match(line: dict) -> bool:
+        name = str(line.get("name") or "").lower()
+        if not name:
+            return False
+        if name in low:
+            return True
+        words = re.findall(r"[\wäöå]+", name)
+        return any(len(word) > 2 and word in low for word in words)
+
+    if orders:
+        all_lines = [(order, line) for order in orders for line in order.get("lines") or []]
+        target = next((pair for pair in all_lines if names_match(pair[1])), None)
+        if re.search(r"\b(?:less|discount|cheaper|off|haggle|alenn|halvem|edullisem)\b", low):
+            price_target = target or (all_lines[0] if all_lines else None)
+            return price_sentence(price_target[1]) if price_target else "Prices are fixed by Valio, and no priced item matches that question."
+        if re.search(r"\b(?:how much|amount|määrä|paljonko)\b", low) and target:
+            line = target[1]
+            return (f"Tilauksessasi on {line.get('amount')} {line.get('unit') or 'yksikköä'} tuotetta {line.get('name')}."
+                    if fi else f"There are {line.get('amount')} {line.get('unit') or 'units'} of {line.get('name')} in your order.")
+        if re.search(r"\b(?:did you add|is .* in|included|lisäsit|onko)\b", low) and target:
+            return (f"Kyllä, {target[1].get('name')} on tilauksessasi." if fi
+                    else f"Yes, {target[1].get('name')} is in your order.")
+        if re.search(r"\b(?:did you add|is .* in|included|lisäsit|onko)\b", low) and not target:
+            return "Tilauksessasi ei ole vastaavaa riviä." if fi else "No matching line is in your current order."
+        if re.search(r"\b(?:entire|whole|full|all|entire order|order now|cart)\b", low) or not target:
+            parts = []
+            for order in orders[:5]:
+                named = ", ".join(f"{line.get('amount')} {line.get('unit') or 'units'} {line.get('name')}"
+                                  for line in order.get("lines") or [])
+                parts.append(f"{order.get('requested_date')} ({order.get('status')}): {named or 'no lines'}"
+                             f", EUR {(order.get('total_cents') or 0) / 100:.2f}")
+            return ("Nykyinen tilaus: " + "; ".join(parts) + ".") if fi else "Current order: " + "; ".join(parts) + "."
+        if target:
+            return (f"{target[1].get('name')} on tilauksessasi." if fi
+                    else f"{target[1].get('name')} is in your order.")
+    if not card:
+        return "Ostoskorissa ei ole vielä mitään." if fi else "There is nothing in the cart yet."
+    target = next((line for line in lines if names_match(line)), lines[0] if lines else None)
+    if re.search(r"\b(?:less|discount|cheaper|off|haggle|alenn|halvem|edullisem)\b", low):
+        if not target:
+            return ("Valion hinnat ovat kiinteät, mutta viimeisessä korissa ei ole hinnoiteltua tuotetta."
+                    if fi else "Prices are fixed by Valio, and there is no priced item in the last cart.")
+        price = target.get("unit_price")
+        if price is None and target.get("price_cents") is not None:
+            price = target["price_cents"] / 100
+        quoted = f"EUR {float(price):.2f}" if isinstance(price, (int, float)) else "the current quoted price"
+        return (f"Valion hinnat ovat kiinteät; {target['name']} maksaa nyt {quoted}." if fi else
+                f"Prices are fixed by Valio; {target['name']} is currently {quoted}.")
     if re.search(r"\bwhy\b|\blocked at\b|\blook at\b", low):
         if target and target.get("why"):
-            return f"I looked at {target['name']} because {target['why']}."
-        return f"I looked at {target['name']} as part of the last cart check." if target else "I checked the last cart."
+            return (f"Katsoin tuotetta {target['name']}, koska {target['why']}." if fi
+                    else f"I looked at {target['name']} because {target['why']}.")
+        return ((f"Katsoin tuotetta {target['name']} viimeisimmän koritarkistuksen yhteydessä." if fi
+                 else f"I looked at {target['name']} as part of the last cart check.")
+                if target else ("Tarkistin viimeisimmän korin." if fi else "I checked the last cart."))
     if re.search(r"\bnot available\b|\bavailable\b|\bavailability\b", low):
         if target and target.get("available") is False:
-            return f"Yes, {target['name']} is still marked not available."
+            return (f"Kyllä, {target['name']} on edelleen merkitty ei-saatavaksi." if fi
+                    else f"Yes, {target['name']} is still marked not available.")
         if target and target.get("available") is True:
-            return f"{target['name']} is still marked available."
-        return "The last cart does not include a current availability result."
+            return (f"{target['name']} on edelleen saatavilla." if fi
+                    else f"{target['name']} is still marked available.")
+        return ("Viimeisessä korissa ei ole ajantasaista saatavuustietoa." if fi
+                else "The last cart does not include a current availability result.")
     names = ", ".join(line["name"] for line in lines[:5] if line.get("name"))
+    if fi:
+        return f"Viimeisimmässä korissa oli {names}." if names else "Viimeisessä korissa ei ole tuoterivejä."
     return f"The last cart included {names}." if names else "The last cart has no item lines."
 
 
@@ -581,10 +665,13 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
                           meant: float | None = None) -> dict:
     intent = action["intent"]
     slots = action.get("slots") or {}
+    if action.get("_refused_instruction"):
+        return _simple_card(intent, action.get("reply") or "I ignored the instruction.", question=None)
     if intent == "unclear":
         reply = "Sorry, I didn't catch that, could you say it again?"
         return _simple_card(intent, reply, question=reply)
-    if action.get("question") and not (slots.get("items") or slots.get("dishes")):
+    if action.get("question") and (intent in ("plan_meal", "plan_period") or
+                                    not (slots.get("items") or slots.get("dishes"))):
         card = _simple_card(intent, action["question"], question=action["question"], choices=action.get("choices"))
         if action.get("proposed_fact"):
             card["proposed_fact"] = action["proposed_fact"]
@@ -602,7 +689,7 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
         return _simple_card(intent, action.get("reply") or "That scale is beyond one kitchen; shall I plan for 500?",
                             choices=choices)
     if intent == "ask_about_cart":
-        return _simple_card(intent, _cart_reply(text, last_card),
+        return _simple_card(intent, _cart_reply(text, last_card, conversation.current_order(buyer_id)),
                             requested_date=date.fromisoformat(last_card["requested_date"])
                             if last_card and last_card.get("requested_date") else None)
     if intent == "ask_kitchen":
@@ -620,6 +707,12 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
             return _simple_card(intent, "There is nothing in the cart to change.")
         changed = {str(item.get("name") or "").lower() for item in slots.get("items") or [] if item.get("name")}
         removed = changed if re.search(r"\b(remove|delete|poista)\b", text, re.I) else set()
+        amount_change = bool(re.search(r"\b\d+(?:[.,]\d+)?\s*(?:kg|kilo\w*|g|l|litre\w*|liter\w*|ml|dl|cl|pcs?|pieces?|kpl)\b",
+                                       text, re.I)
+                             or any(item.get("amount") is not None for item in slots.get("items") or []))
+        unsupported_swap = bool(re.search(r"\b(?:swap|replace|instead|vaihda)\b", text, re.I))
+        if unsupported_swap or (not removed and not (slots.get("date") or requested) and not amount_change):
+            return _simple_card(intent, "I can change amounts, remove lines or move the day.")
         if not changed and (slots.get("date") or requested):
             return dict(last_card, intent="order", requested_date=(slots.get("date") or
                        requested.isoformat() if requested else last_card.get("requested_date")))
@@ -640,14 +733,26 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
         return _merge_changed_card(last_card, fresh | {"intent": "order", "requested_date": when.isoformat()}, changed, set())
 
     when, date_source = _action_date(action, requested, today)
+    date_assumed = False
+    date_assumption = None
     if date_source == "conflict":
         stated = date.fromisoformat(slots["date"])
         return _ask(_legacy_intent(intent), slots.get("guests"), requested, "request",
                     f"Which delivery day: {stated:%A %d %B} (as written) or {requested:%A %d %B} (as selected)?",
                     C.LOW_CONFIDENCE, "Pick one delivery date.")
     if intent in ("order_items", "urgent") and when is None:
-        return _ask("order", None, None, None, "For which delivery day?", C.DATA_MISSING,
-                    "Say the day, e.g. 'for Monday' or 'tomorrow'.", kind="date")
+        stated = understand.resolve_date_from_text(text, today)
+        if stated is not None and stated < today:
+            return _ask(_legacy_intent(intent), slots.get("guests"), stated, "text",
+                        f"{stated:%A %d %B %Y} is in the past. Which delivery day?", C.DATA_MISSING,
+                        "Pick a date from today on.")
+        if stated is not None and (stated - today).days > 60:
+            return _ask(_legacy_intent(intent), slots.get("guests"), stated, "text",
+                        f"{stated:%A %d %B %Y} is outside the 60-day ordering window. Which delivery day?",
+                        C.DATA_MISSING, "Pick a date from today to 60 days ahead.")
+        when, date_assumption = _delivery_assumption(today)
+        date_source, date_assumed = "assumed", True
+        action = dict(action, _delivery_assumption=date_assumption)
     if when is not None and when < today:
         return _ask(_legacy_intent(intent), slots.get("guests"), when, date_source,
                     f"{when:%A %d %B %Y} is in the past. Which delivery day?",
@@ -656,6 +761,9 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
         return _ask(_legacy_intent(intent), slots.get("guests"), when, date_source,
                     f"{when:%A %d %B %Y} is outside the 60-day ordering window. Which delivery day?",
                     C.DATA_MISSING, "Pick a date from today to 60 days ahead.")
+    if intent == "plan_meal" and when is None:
+        return _ask("menu", slots.get("guests"), None, None, "For which delivery day?", C.DATA_MISSING,
+                    "Say the day, e.g. 'for Monday' or 'tomorrow'.", kind="date")
     if intent == "plan_period":
         plan = _context_plan(kitchen_context(buyer_id), text, today, when)
         if plan:
@@ -689,12 +797,47 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
     body = await agent.run(request_text, when, buyer_id, pre={"parsed": (parsed, parsed_by_gemini), "steer": steer,
                                                        "steer_checked": steer is not None, "meant": meant,
                                                        "meant_checked": meant is not None})
+    if date_assumed:
+        available_dates = []
+        for line in body.get("lines") or []:
+            if not line.get("chosen") or not isinstance(line.get("quote"), dict):
+                continue
+            value = line["quote"].get("available_date")
+            if isinstance(value, str):
+                try:
+                    available_dates.append(date.fromisoformat(value[:10]))
+                except ValueError:
+                    continue
+        if (available_dates and (next_delivery := max(available_dates)) > when
+                and (next_delivery - today).days <= 60):
+            next_assumption = f"Assumed {next_delivery:%A} {next_delivery.day} {next_delivery:%b}, the next delivery"
+            refresh_action = dict(action, _delivery_assumption=next_assumption)
+            refreshed, refreshed_by_gemini = _parsed_action(refresh_action, source, request_text)
+            try:
+                later = await agent.run(request_text, next_delivery, buyer_id,
+                                        pre={"parsed": (refreshed, refreshed_by_gemini), "steer": steer,
+                                             "steer_checked": steer is not None, "meant": meant,
+                                             "meant_checked": meant is not None})
+            except Exception:  # noqa: BLE001 - keep the first grounded proposal if the date refresh fails
+                log.exception("assumed delivery date refresh failed")
+            else:
+                if isinstance(later, dict):
+                    body = later
+                    parsed, parsed_by_gemini = refreshed, refreshed_by_gemini
+                    when = next_delivery
+                    date_assumption = next_assumption
     try:
         urgent_options = urgent.urgent_options(text, buyer_id, when, datetime.now(TZ), body.get("lines", []))
     except (KeyError, TypeError):
         urgent_options = None
     body.update(intent="order", requested_date=when.isoformat(), date_source=date_source, question=None,
                 urgent_options=urgent_options)
+    if date_assumed:
+        body["date_assumed"] = True
+        existing_assumptions = body.get("assumptions") or []
+        if not isinstance(existing_assumptions, list):
+            existing_assumptions = [existing_assumptions]
+        body["assumptions"] = [*existing_assumptions, date_assumption]
     return body
 
 
@@ -712,13 +855,71 @@ def _public_card(card: dict) -> dict:
     return {key: value for key, value in card.items() if key not in {"_kind", "_state"}}
 
 
+_INJECTED_ACTION = re.compile(r"\b(?:auto[- ]?approve|pre[- ]?approve|approve\s+(?:it|this|the\s+order)|"
+                              r"skip\s+(?:the\s+)?approval)\b", re.I)
+
+
+def _split_injected_order(text: str, today: date, last_card: dict | None) -> tuple[str, dict] | None:
+    """Keep a real order clause while turning an approval instruction into a refused action."""
+    match = _INJECTED_ACTION.search(text)
+    if not match:
+        return None
+    candidates = [
+        re.sub(r"\s*(?:,\s*and|\band)\s*$", "", text[:match.start()], flags=re.I).strip(" ,;"),
+        re.sub(r"^\s*(?:it|this|that)?\s*(?:,?\s*(?:and|then))?\s*", "", text[match.end():], flags=re.I)
+        .strip(" ,;"),
+    ]
+    for legitimate in candidates:
+        if not legitimate:
+            continue
+        action = understand._fallback_action(legitimate, today, last_card)
+        if action.get("intent") in {"order_items", "urgent"} and (action.get("slots") or {}).get("items"):
+            return legitimate, action
+    return None
+
+
+def _held_injection_reply(action: dict) -> str:
+    item = next(iter((action.get("slots") or {}).get("items") or []), {})
+    amount = item.get("amount")
+    unit = item.get("unit")
+    label = " ".join(str(x) for x in (f"{amount:g}" if isinstance(amount, (int, float)) else amount, unit,
+                                       item.get("name")) if x)
+    return f"{label}: held for you; I ignored the request to auto-approve"
+
+
 async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | None = None,
                 parsed: tuple[dict, bool] | None = None) -> dict:
     today = datetime.now(TZ).date()
     t0 = time.monotonic()
     progress.phase("understanding")
     steer = await agent.steering(text)
-    if agent._INSTRUCTION.search(text) or agent._BILLING.search(text) or (steer is not None and steer >= agent.INJECTION_MAX):
+    last_card = conversation.last_card(buyer_id)
+    split = _split_injected_order(text, today, last_card)
+    guard = (agent._INSTRUCTION.search(text) or agent._BILLING.search(text)
+             or _INJECTED_ACTION.search(text) or (steer is not None and steer >= agent.INJECTION_MAX))
+    if guard and split:
+        legitimate, action = split
+        for item in (action.get("slots") or {}).get("items") or []:
+            item["approval_required"] = {"injection_refused": True,
+                                         "assumption": "The request to auto-approve was ignored."}
+        refused = {"intent": "out_of_scope", "slots": understand._default_slots(text), "question": None,
+                   "choices": [], "reply": "I ignored the request to auto-approve.", "topic": "auto-approve",
+                   "interpretation": None, "_refused_instruction": True}
+        order_result, refused_result = await asyncio.gather(
+            _safe_action(action, legitimate, requested, buyer_id, today, "fallback", 0.0, last_card, None),
+            _safe_action(refused, text, requested, buyer_id, today, "fallback", 0.0, last_card, None))
+        order_result = dict(order_result)
+        order_result["reply"] = _held_injection_reply(action)
+        cards = [order_result, _public_card(refused_result)]
+        understood = {"intent": action["intent"], "slots": action.get("slots") or {}, "source": "fallback",
+                      "interpretation": None, "actions": [
+                          {"intent": action["intent"], "refused": False},
+                          {"intent": "out_of_scope", "refused": True, "reason": "auto-approve"},
+                      ]}
+        return {"_v2": {"cards": cards, "understood": understood,
+                        "reply": order_result.get("reply") or " ".join(card["reply"] for card in cards if card.get("reply"))[:1_000],
+                        "choices": []}}
+    if guard:
         return {"_v2": {"cards": [_ask("order", None, requested, "request" if requested else None,
                                          "This request seems to try to steer the agent (instructions, approvals, billing "
                                          "or authority claims). Nothing was ordered.", C.LOW_CONFIDENCE,
@@ -742,6 +943,16 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
                 action["slots"]["items"].append(row)
         source = "fallback"
         actions = [action]
+    elif _is_context_request(text):
+        # Kitchen-history planning is a deterministic menu path.  Keep the date in the action so plan_period can
+        # use the matching weekday average, while the week form lets _context_plan choose its Monday anchor.
+        stated = date_from_text(text, today)
+        actions = [{"intent": "plan_period",
+                    "slots": {"items": [], "dishes": [], "guests": None,
+                              "date": stated.isoformat() if stated else None,
+                              "diets": [], "exclusions": [], "language": conversation.language(text)},
+                    "question": None, "choices": [], "reply": None, "topic": None, "interpretation": None}]
+        source = "fallback"
     else:
         reading = await understand.understand(text, buyer_id, conversation.turns(buyer_id),
                                                conversation.last_card(buyer_id), today)
@@ -758,6 +969,13 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
             action["slots"]["date"] = fallback_date.isoformat()
             actions[0] = action
     last_card = conversation.last_card(buyer_id)
+    if (understand._looks_like_cart_question(text) and not understand._CART_CHANGE.search(text)
+            and actions and actions[0].get("intent") not in {"ask_about_cart", "change_cart"}):
+        action = dict(actions[0])
+        action["intent"] = "ask_about_cart"
+        action["slots"] = dict(action.get("slots") or understand._default_slots(text), items=[], dishes=[])
+        action["question"] = None
+        actions[0] = action
     async def date_check(action):
         try:
             when, reason = _action_date(action, requested, today)

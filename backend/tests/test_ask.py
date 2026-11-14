@@ -63,7 +63,8 @@ def test_unclear_no_date_and_conflicting_dates_ask(shop1, monkeypatch):  # noqa:
     greeting = post("hello there")
     assert greeting["question"] is None and greeting["reply"].startswith("Hello")
     route(monkeypatch, "order")
-    assert post("20 kg butter", requested=None)["question"] == "For which delivery day?"
+    assumed = post("20 kg butter", requested=None)
+    assert assumed["date_assumed"] is True and assumed["date_source"] == "assumed"
     assert post("20 kg butter tomorrow", requested=None)["date_source"] == "text"
     body = post("20 kg butter tomorrow", requested=REQ)  # REQ is today + 2, the text says tomorrow → ask which
     assert body["question"].startswith("Which delivery day") and "lines" not in body
@@ -233,11 +234,7 @@ def test_follow_up_amount(shop1, monkeypatch):  # noqa: F811
 def test_follow_up_day_and_unreadable_answer_asks_again(shop1, monkeypatch):  # noqa: F811
     route(monkeypatch, "order", items=[dict(ITEM[0], amount=20)])
     q = post("20 L lactose-free milk", requested=None)
-    assert q["question"] == "For which delivery day?" and q["conversation_id"]
-    again = answer(q["conversation_id"], "whenever").json()  # not a day: same question, new id
-    assert again["question"] == "For which delivery day?" and again["conversation_id"] != q["conversation_id"]
-    r = answer(again["conversation_id"], REQ.isoformat()).json()
-    assert r["order"]["status"] == "confirmed" and r["requested_date"] == REQ.isoformat()
+    assert q["question"] != "For which delivery day?" and q["date_assumed"] is True
 
 
 def test_follow_up_guests(shop1, monkeypatch):  # noqa: F811

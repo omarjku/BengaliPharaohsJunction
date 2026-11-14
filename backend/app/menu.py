@@ -495,9 +495,18 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
     in_cart = {ln["item"] for ln in chosen if ln["product"]["id"] in qty}
     priced = {ln["item"] for ln in res["chosen"]}
     missing = [ing["query"] for n, ing in enumerate(ingredients) if n not in priced and not ing.get("have")]
+    needs_look = len(check) + len(missing)
     coverage = {"ingredients": len(ingredients), "in_cart": len(in_cart), "to_check": len(check),
                 "check_total_cents": sum(ln.get("line_total_cents") or 0 for ln in check), "not_found": missing,
-                "have": len(left)}
+                "have": len(left), "needs_look": needs_look}
+    if ingredients and len(in_cart) / len(ingredients) < 0.6:
+        coverage_note = (f"I found {len(in_cart)} of {len(ingredients)} ingredients; {needs_look} need your look."
+                         if needs_look else
+                         f"I found {len(in_cart)} of {len(ingredients)} ingredients; the rest are already in your kitchen.")
+        reasons.append(gate._r(
+            C.COVERAGE_LOW, ASK, coverage_note + (f" Not found: {', '.join(missing)}." if missing else ""),
+            None, "Check the missing and held ingredients before ordering.",
+            in_cart=len(in_cart), ingredients=len(ingredients), needs_look=needs_look, not_found=", ".join(missing)))
     if check or missing:  # the headline total must never look like the whole menu when it isn't
         reasons.append(gate._r(C.MENU_ASSUMPTIONS, gate.INFO, f"EUR {cart_total / 100:,.2f} covers {len(in_cart)} of "
                                f"{len(ingredients)} ingredients" + (f"; {len(check)} need your look (about EUR "
@@ -524,7 +533,7 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
                  "assumption": i.get("assumption")} for i in d["ingredients"]]} for d in kept]},
             "assumptions": assumptions, "ingredients": ingredients, "lines": lines,
             # computed like the front door will (unit price x summed quantity), so the chef sees what they'll pay
-            "cart_total_cents": cart_total, "cart_coverage": coverage,
+            "cart_total_cents": cart_total, "cart_coverage": coverage, "not_found": missing,
             "order_lines": [{"product_id": p, "quantity": q} for p, q in qty.items()],
             "check_lines": [{"product_id": ln["product"]["id"], "quantity": ln["quantity"]["quantity"],
                              "name": agent._name(ln["product"])} for ln in check],

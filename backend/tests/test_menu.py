@@ -1,9 +1,13 @@
 """T15 menu → cart on the offline shop: Gemini faked, Valio faked (conftest.py), Decisions faked (test_agent)."""
+import asyncio
+from datetime import date
+
+import pytest
 from conftest import REQ
 from fastapi.testclient import TestClient
 from test_agent import decisions, shop1  # noqa: F401 - pytest fixtures
 
-from app import agent, menu, orders
+from app import agent, conversation, menu, orders
 from app.main import app
 
 c = TestClient(app, raise_server_exceptions=False)
@@ -205,3 +209,38 @@ def test_menu_parse_is_capped(shop1, monkeypatch, decisions):
     post("Porridge " + "; ".join(f"Porridge {n}" for n in range(30)))
     checks = [q for _, q in decisions["calls"] if "needed" in q]
     assert len(checks) <= menu.MAX_DISHES * menu.MAX_PER_DISH
+
+
+@pytest.mark.parametrize("menu_text, dish_name", [
+    ("vegan lasagna for 20 on Friday", "vegan lasagna"),
+    ("vegan pizza for 20 people, delivered by Tuesday", "vegan pizza"),
+])
+def test_low_coverage_is_held_and_says_what_is_missing(shop1, monkeypatch, menu_text, dish_name):
+    dishes = [{"name": dish_name, "ingredients": [
+        {"name": f"ingredient {n}", "per_cover": 1, "unit": "kg", "assumption": "x", "dietary": ["vegan"]}
+        for n in range(9)]}]
+    product = {"id": "found", "name_en": "Found ingredient", "name_fi": None}
+    quote = {"price": 2.0, "orderable": True}
+
+    async def fake_pipeline(_text, items, *_args):
+        line = {"item": 0, "product": product, "quote": quote,
+                "quantity": {"quantity": 1, "sales_unit": "kg", "requested": {"amount": 1, "unit": "kg"}},
+                "line_total_cents": 200, "chosen": True, "confidence": 0.95, "diet_checks": []}
+        return {"lines": [line], "chosen": [line], "alternatives": [], "rejected": [], "quotes": {},
+                "failed_items": set(), "item_reasons": [], "assumptions": [], "approval_reasons": []}
+
+    async def no_checks(_assumptions):
+        return []
+
+    monkeypatch.setattr(menu.agent, "_pipeline", fake_pipeline)
+    monkeypatch.setattr(menu, "check_assumptions", no_checks)
+    monkeypatch.setattr(menu.valio, "to_contract_quote", lambda _quote: None)
+    body = asyncio.run(menu.propose(menu_text, 20, date.today(), "chef",
+                                    dishes_task=asyncio.sleep(0, result=dishes), steer_score=0.0))
+
+    assert body["cart_coverage"]["in_cart"] == 1
+    assert body["cart_coverage"]["ingredients"] == 9
+    assert "COVERAGE_LOW" in [reason["code"] for reason in body["decision"]["reasons"]]
+    assert body["not_found"] == [f"ingredient {n}" for n in range(1, 9)]
+    assert "I found 1 of 9 ingredients; 8 need your look" in conversation.speak(body, "en")
+    assert "Cart ready" not in conversation.speak(body, "en")
