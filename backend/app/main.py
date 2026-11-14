@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
 from . import agent, auth, catalogue, mandates, config, orders, quantity, valio
@@ -208,12 +208,18 @@ def get_order(order_id: OrderId, who: Approver) -> dict:
     return orders.get(order_id, who.buyer_id)
 
 
+class SignOff(BaseModel):
+    """Optional approve body. decided_at = the decision.decided_at the human was shown; send it so a click can
+    only ever sign off that decision (409 if the order was re-decided since). Other fields are ignored."""
+    decided_at: AwareDatetime | None = None
+
+
 @app.post("/api/orders/{order_id}/approve")
-async def approve_order(order_id: OrderId, who: Approver) -> dict:
+async def approve_order(order_id: OrderId, who: Approver, body: SignOff | None = None) -> dict:
     """Human sign-off as the key's owner; re-runs the gate first (cut-offs pass, prices and stock change).
-    Needs X-Approver-Key; a request body is ignored."""
+    Needs X-Approver-Key. The approver's name comes from the key, never the body."""
     _catalogue_ready()
-    return await orders.approve(order_id, who)
+    return await orders.approve(order_id, who, body.decided_at if body else None)
 
 
 @app.post("/api/orders/{order_id}/reject")
