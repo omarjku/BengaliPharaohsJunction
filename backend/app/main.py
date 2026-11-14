@@ -1,4 +1,5 @@
 """Valio Aimo front door: API entry point. OpenAPI spec is served at /openapi.json, docs at /docs."""
+import re
 import threading
 from contextlib import asynccontextmanager
 from datetime import date
@@ -8,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
-from . import catalogue, config, valio
+from . import catalogue, config, quantity, valio
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -92,3 +93,27 @@ def get_product(product_id: ProductId) -> dict:
     if not (p := catalogue.get(product_id)):
         raise HTTPException(404, detail="Unknown product id")
     return p
+
+
+class QuantityRequest(BaseModel):
+    product_id: ProductId = Field(examples=["463335"])
+    amount: float = Field(gt=0, le=1_000_000, allow_inf_nan=False, examples=[1000])
+    unit: str = Field(max_length=5, examples=["L"])
+
+    @field_validator("unit")
+    @classmethod
+    def known_unit(cls, u: str) -> str:
+        if u.lower() not in quantity.MEASURES and not re.fullmatch(r"[A-Z]{2,4}", u):
+            raise ValueError("unit must be one of L, dl, cl, ml, kg, g, pcs, units, or a product unit code like KI or ST")
+        return u
+
+
+@app.post("/api/quantity/resolve")
+def resolve_quantity(req: QuantityRequest) -> dict:
+    """Human amount ("1000 L", "40 kg", "12 pcs", "3 KI") → sales units to order, rounded up to whole units and
+    the lot size, with over-delivery. Never guesses: missing or contradictory data gives quantity=null and
+    needs_confirmation=true; a conversion that rests on an assumption gives an answer with needs_confirmation=true."""
+    _catalogue_ready()
+    if not (p := catalogue.get(req.product_id)):
+        raise HTTPException(404, detail="Unknown product id")
+    return quantity.resolve(p, req.amount, req.unit)
