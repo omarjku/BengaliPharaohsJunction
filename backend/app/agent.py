@@ -28,6 +28,7 @@ from . import catalogue, config, gate, mandates, orders, quantity, valio
 RULES_VERSION = "m1-buyer-agent-0.1"
 ACTOR = "buyer_agent"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+DECISIONS_URL = "https://generativelanguage.googleapis.com/v1beta/decisions"
 GEMINI_TIMEOUT_S = 15
 SEARCH_LIMIT = 20  # catalogue hits shown to Gemini
 QUOTE_TOP = 5  # candidates per item actually quoted at Valio (no catalogue sweeps)
@@ -97,6 +98,75 @@ async def _gemini(system: str, prompt: str, schema: dict) -> dict | None:
     except Exception as e:  # noqa: BLE001 - any failure means "use the fallback"
         log.warning("Gemini call failed (%s); using fallback", type(e).__name__)
         return None
+
+
+async def _decisions(input_text: str, questions: dict) -> dict | None:
+    """Gemini Decisions API (gemini-decision-1): typed questions answered in one pass with calibrated confidence.
+    → {question_key: answer} or None on no key / any failure (never raises, never logs the key)."""
+    if not config.GEMINI_API_KEY or not questions:
+        return None
+    body = {"model": config.GEMINI_DECISION_MODEL, "input": input_text, "questions": questions}
+    try:
+        async with httpx.AsyncClient(timeout=GEMINI_TIMEOUT_S) as http:
+            r = await http.post(DECISIONS_URL, headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)
+            r.raise_for_status()
+            answers = r.json()["answers"]
+            return {k: answers[k] for k in questions} if all(k in answers for k in questions) else None
+    except Exception as e:  # noqa: BLE001 - no answer means "unverified", handled by the mandate's policy
+        log.warning("Gemini Decisions call failed (%s)", type(e).__name__)
+        return None
+
+
+def _yes(answer: dict) -> float | None:
+    """P(yes) of a noul answer, the number we threshold. (The API's `confidence` is the probability of the TOP
+    answer, so for a likely 'no' it is high too; it must not be read as 'confidence that it is fine'.)"""
+    v = answer.get("noul")
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+def _describe(p: dict) -> str:
+    """In words, not codes: live, 'claims: FREE_FROM_LACTOSE; contains: AM' made the judge doubt lactose-free milk
+    (0.79 → 0.95 once written as 'labelled lactose-free; contains milk')."""
+    claims = [c.lower().replace("free_from_", "").replace("_", " ") + ("-free" if c.startswith("FREE_FROM_") else "")
+              for c in p.get("claims") or []]
+    contains = [catalogue.ALLERGEN_NAMES.get(a, a) for a in (p.get("allergens") or {}).get("contains") or []]
+    return (f"{_name(p)} (brand {p.get('brand') or '-'}; labelled {', '.join(claims) or 'with no claims'}; "
+            f"allergens: {'contains ' + ', '.join(contains) if contains else 'none listed'})")
+
+
+QUESTIONS = {
+    "meets": ("Is {c} the product the buyer asked for, and does it meet every dietary need they stated?",
+              "It is the requested product (not merely made from it) and meets every stated dietary need.",
+              "It is a different product, or it misses a stated dietary need.", "the product matches the request"),
+    "qty": ("Is the quantity interpretation for {c} what the buyer meant?",
+            "The quantity to order delivers what the buyer asked for.",
+            "The quantity is misread (wrong unit, pack size or amount).", "the quantity is what the chef meant"),
+    "sub": ("Is {c} a safe and acceptable substitute for what the buyer asked for?",
+            "A chef would accept it instead: same use in the kitchen, every stated dietary need met.",
+            "It would change the dish or break a stated dietary need.", "the substitute is acceptable"),
+}
+
+
+async def judge(text: str, items: list[tuple[dict, list[str]]]) -> list[tuple[float | None, str]]:
+    """The judgment calls rules can't make, for each (product, [question kinds]) → (P(yes) of the weakest
+    question, why); (None, why) when Gemini couldn't answer. One Decisions call PER candidate, run concurrently:
+    live, judging several candidates in one input wrecked calibration (lactose-free milk 0.51 batched vs 0.95 alone)."""
+    return list(await asyncio.gather(*(_judge_one(text, p, kinds) for p, kinds in items)))
+
+
+async def _judge_one(text: str, p: dict, kinds: list[str]) -> tuple[float | None, str]:
+    questions = {kind: {"type": "noul", "instructions": QUESTIONS[kind][0].format(c="the candidate"),
+                        "criteria": {"true_description": QUESTIONS[kind][1], "false_description": QUESTIONS[kind][2]}}
+                 for kind in kinds}
+    extra = f" Quantity: {p['_qty']}" if p.get("_qty") else ""
+    answers = await _decisions(f"{UNTRUSTED}\n{_wrap(text)}\nCandidate from the wholesaler's catalogue: "
+                               f"{_describe(p)}.{extra}", questions)
+    scores = {kind: _yes(answers[kind]) for kind in kinds} if answers else {}
+    if not scores or None in scores.values():
+        return None, "Gemini Decisions couldn't check this line."
+    weakest = min(scores, key=scores.get)
+    parts = ", ".join(f"{scores[kind]:.2f} that {QUESTIONS[kind][3]}" for kind in kinds)
+    return scores[weakest], f"Gemini Decisions: {parts} (weakest: {QUESTIONS[weakest][3]})."
 
 
 def _item(query: str, amount, unit, tags) -> dict:
@@ -225,11 +295,12 @@ def _unit_ok(unit: str | None) -> bool:
     return bool(unit) and (unit.lower() in quantity.MEASURES or bool(re.fullmatch(r"[A-Z]{2,4}", unit)))
 
 
-def _decision(request_id: str, reasons: list[Reason], alternatives: list[Alternative], now: datetime) -> Decision:
+def _decision(request_id: str, reasons: list[Reason], alternatives: list[Alternative], now: datetime,
+              confidence: float | None = None) -> Decision:
     rs = gate._sorted(reasons)
     outcome = {DECLINE: "DECLINE", ASK: "ASK_HUMAN", INFO: "AUTO"}[rs[0].severity] if rs else "AUTO"
     return Decision(request_id=request_id, outcome=outcome, reasons=rs, alternatives=alternatives[:3],
-                    rules_version=RULES_VERSION, decided_at=now)
+                    confidence=confidence, rules_version=RULES_VERSION, decided_at=now)
 
 
 def _name(p: dict) -> str:
@@ -283,7 +354,8 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
                                "ordered.", None, "Retry in a moment."))
         found = []
 
-    lines, checked, alternatives, chosen = [], [], [], []
+    lines, checked, alternatives, chosen, per_item = [], [], [], [], []
+    threshold = mandates.confidence_threshold(buyer_id)
     limits = gate._nums(m, RuleKind.AUTO_APPROVE_LIMIT_CENTS)
     spent = orders._spent_7d(buyer_id, now)
     for n, (it, (cands, _)) in enumerate(zip(request["items"], found)):
@@ -294,7 +366,7 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
             qty = quantity.resolve(p, it["amount"], it["unit"]) if amount_ok else None
             rs, info = gate.check_line(pid, qty and qty["quantity"], q, requested, m, excluded, now)
             line = {"item": n, "product": p, "quote": q, "quantity": qty, "line_total_cents": info["line_total_cents"],
-                    "why": "", "chosen": False}
+                    "why": "", "chosen": False, "confidence": None, "confidence_reason": None}
             lines.append(line)
             checked.append((line, rs))
             blocking = [r for r in rs if gate._blocking(r)]
@@ -305,9 +377,21 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
             total = info["line_total_cents"]
             over = total is not None and (total > m.per_line_cap_cents or any(total > lim for lim in limits)
                                           or (m.weekly_budget_cents and spent + total > m.weekly_budget_cents))
-            # Safe first, then within the mandate's limits, fewer concerns, cheapest total; Gemini's rank breaks ties.
             scored.append(((not viable, bool(qty and qty["needs_confirmation"]), bool(over), len(asks),
                             total if total is not None else float("inf"), rank), line, asks))
+        per_item.append((n, it, cands, amount_ok, scored))
+
+    # One Decisions call for every line we might order: does it really meet the request, is the quantity right?
+    viable = [line for *_, scored in per_item for key, line, _ in scored if not key[0]]
+    for line, (conf, why) in zip(viable, await judge(text, [(dict(ln["product"], _qty=ln["quantity"]["explanation"]),
+                                                              ["meets", "qty"]) for ln in viable])):
+        line["confidence"], line["confidence_reason"] = conf, why
+
+    for n, it, cands, amount_ok, scored in per_item:
+        # Safe first, then Gemini-confident, within the mandate's limits, fewer concerns, cheapest total; rank last.
+        # When every line is below the threshold, the most likely one goes to the chef, not the cheapest.
+        scored = [((k[0], k[1], low := ln["confidence"] is None or ln["confidence"] < threshold,
+                    -(ln["confidence"] or 0) if low else 0) + k[2:], ln, a) for k, ln, a in scored]
 
         label = f"'{it['query']}'" + (f" ({', '.join(it['claims'] + ['no ' + a for a in it['exclude_allergens']])})"
                                       if it["claims"] or it["exclude_allergens"] else "")
@@ -328,9 +412,16 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
                                        "Confirm the quantity in sales units."))
             reasons += best_asks
             try:  # J4: substitutes from the front door's own finder (same category + dietary claims, re-quoted)
-                alternatives += (await gate._alternatives(cands, set(ids), requested, m, excluded, now))[0]
+                subs = (await gate._alternatives(cands, set(ids), requested, m, excluded, now))[0]
             except Exception:  # noqa: BLE001 - no substitutes is still a valid answer
                 log.exception("substitute search failed")
+                subs = []
+            judged = await judge(text, [(catalogue.get(a.product_id) or {"id": a.product_id}, ["sub"]) for a in subs])
+            ranked = sorted(zip(subs, judged), key=lambda x: -(x[1][0] or 0))  # most acceptable first
+            alternatives += [a.model_copy(update={"summary": a.summary + (
+                f" Gemini Decisions: {conf:.2f} that it is an acceptable substitute"
+                + ("" if conf >= threshold else f", below your {threshold:.2f} threshold: check before accepting")
+                + "." if conf is not None else " Not checked by Gemini Decisions.")}) for a, (conf, _) in ranked]
             continue
         best["chosen"] = True
         chosen.append(best)
@@ -339,6 +430,18 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
         if best["quantity"]["needs_confirmation"]:
             reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, best["quantity"]["explanation"], best["product"]["id"],
                                    "Confirm the quantity in sales units."))
+        conf, pid = best["confidence"], best["product"]["id"]
+        if conf is None:  # unverified: the mandate's uncertainty policy decides (ask by default)
+            reasons.append(gate._unknown(m.uncertainty_policy, C.LOW_CONFIDENCE, f"Gemini Decisions couldn't check "
+                           f"whether {_name(best['product'])} fits the request.", pid,
+                           "Check the product and quantity yourself, or retry.", threshold=threshold))
+        else:  # recorded either way, so the audit shows the confidence behind every chosen line
+            low = conf < threshold
+            reasons.append(gate._r(C.LOW_CONFIDENCE, ASK if low else INFO,
+                           f"{'Not sure' if low else 'Confident'} that {_name(best['product'])} is right "
+                           f"({conf:.2f} vs your {threshold:.2f} threshold). {best['confidence_reason']}", pid,
+                           "Confirm the product and quantity, or pick an alternative." if low else None,
+                           confidence=round(conf, 3), threshold=threshold))
         for key, line, _ in scored[1:]:
             if not key[0]:
                 alternatives.append(Alternative(product_id=line["product"]["id"], summary=(
@@ -358,7 +461,9 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
         orders._append_audit(entry)
         return entry.id
 
-    decision = _decision(run_id, reasons, alternatives, now)
+    confs = [ln["confidence"] for ln in chosen]
+    confidence = min(confs) if confs and None not in confs else None  # Decision.confidence: the weakest chosen line
+    decision = _decision(run_id, reasons, alternatives, now, confidence)
     order, audit_id = None, audit(decision)  # the agent's own decision is logged before the door sees anything
     if chosen and decision.outcome == "AUTO" and mandate:
         qty_by_pid: dict[str, float] = {}
@@ -371,15 +476,15 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
         except HTTPException as e:
             reasons.append(gate._r(C.ENGINE_ERROR, ASK, f"The front door couldn't take the order: {e.detail}", None,
                                    "Retry in a moment."))
-            decision = _decision(run_id, reasons, alternatives, now)
+            decision = _decision(run_id, reasons, alternatives, now, confidence)
             audit_id = audit(decision)
         else:
             door = Decision.model_validate(order["decision"])
             # The door's verdict wins; the agent's INFO notes (e.g. fallback parser) ride along at the end, and the
             # agent's other matches are offered when the door has no alternatives of its own.
-            decision = Decision(**door.model_dump(exclude={"reasons", "primary_reason", "alternatives"}),
+            decision = Decision(**door.model_dump(exclude={"reasons", "primary_reason", "alternatives", "confidence"}),
                                 reasons=door.reasons + [r for r in reasons if r.severity is INFO],
-                                alternatives=door.alternatives or alternatives[:3])
+                                alternatives=door.alternatives or alternatives[:3], confidence=confidence)
             audit_id = order["audit_id"]
     return {"request": request, "lines": lines, "decision": decision.model_dump(mode="json"), "order": order,
             "audit_id": audit_id}
