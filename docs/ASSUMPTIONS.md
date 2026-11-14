@@ -235,9 +235,10 @@ Files: `backend/app/main.py`, `backend/app/auth.py`, `backend/app/agent.py`,
 `data/audit.jsonl`. Render disk is ephemeral, and the files can grow without a
 retention policy.
 
-**Assumption.** File storage is acceptable for the demo only. Orders and audit
-history may disappear when the instance is replaced or redeployed. This is
-not durable production storage.
+**Assumption.** File storage is acceptable for the demo only. On Render, orders
+and the audit history are **lost on every redeploy**, and Render redeploys on
+each push to `main`. They are also lost when the instance restarts. This is not
+durable production storage; Postgres is next (NEXT-STEPS #1).
 
 **Code / human path.** `backend/app/orders.py` loads an in-process order cache,
 writes orders through a temporary file and `os.replace`, and appends audit
