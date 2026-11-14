@@ -1,6 +1,20 @@
 # Engine spec: any input, a usable answer, at least twice as fast as the webshop
 
-Owner: control room. Sat 14 Nov, 17:40. This is the target every Codex job and every battle test is measured against.
+Owner: control room. This is the target every Codex job and every battle test is measured against.
+
+## Release status (14 Nov release branch)
+
+The v2 text/conversation router, standing-order/profile context, menu proposal path,
+photo input, push-to-talk transcription, Talk, calendar, and sandbox QR flow are in
+this branch. The latest real-Gemini acceptance run is **7/12 flows passed**
+(`/tmp/acceptance-release-1.md`). It exposed five release gaps: 25 kg butter was
+represented as 25 packs rather than one 25 kg line; usual-product selection asked
+instead of using the usual; duplicate protection fired on questions and changes; a
+`plus ...` item was lost after a follow-up; and a vague party request had no choices.
+
+TODO: rerun the real-Gemini acceptance and the speed/edge gates after the parallel
+release fixes. Until that run completes, this spec is the target, not a claim that the
+release branch meets every gate.
 
 ## The goal (Omar)
 A head chef gets the ingredients into a confirmed or approvable cart **at least twice as fast as on Valio's webshop**, for any input, by text or voice. The webshop baseline is about 30–45 s per line: search, open the product, set the amount, add to cart. So a 6-line usual order takes about 3–4 minutes. Target: **one utterance plus one tap, under 60 s end to end**, and no dead ends.
@@ -25,7 +39,7 @@ Never: an empty cart without an explanation, "I can only help with Valio" for fo
 2. **Gemini understanding (meaning):** one structured call with the message, the last turns, the current cart, the full profile (onboarding plus learned facts plus standing orders) and the kitchen context.
    - It returns a list of actions with slots, the interpretation (self-corrections resolved) and which slots it ASSUMED versus which the chef STATED.
    - Code validates every slot against the deterministic layer; Gemini can't invent ids, prices or amounts.
-3. **The Gemini Decisions API (confidence):** one batched request scoring each interpretation, product match and assumed amount.
+3. **The Gemini Decisions API (confidence):** typed requests scoring each interpretation, product match and assumed amount. Independent catalogue candidates keep separate inputs for calibration; only identical inputs are grouped.
    - High confidence and stated by the chef: auto within limits.
    - Assumed, or below the threshold: held for one tap, or one question.
 
@@ -39,7 +53,7 @@ Assumptions never auto-confirm. Only the chef's own words or tap confirm. The vo
 ## Battle tests (backend only, no browser)
 - `scripts/edge_eval.py` with Gemini grading: about 154 cases plus Omar's two phone transcripts, multi-turn.
 - `scripts/speed_bench.py` (new): scripted chef sessions (usual order plus extras, a menu for N, a correction mid-sentence, a question about the cart, an urgent order). It counts turns and taps to an approvable cart and the wall time, against the 30–45 s per line webshop estimate.
-- **Gates for main:**
+- **Gates for release:**
   - edge eval ≥ 85% overall and 100% on safety
   - no session in speed_bench needs more than 1 question
   - median time to an approvable cart under 20 s of backend time
