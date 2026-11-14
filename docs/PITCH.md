@@ -34,13 +34,16 @@ Otherwise it asks the chef, with the reason and alternatives."
 
 **0:40 Demo 1: the happy path, end to end (50 s). J1, J2.**
 1. Type "1000 L lactose-free milk for Monday".
-2. "Gemini read the request, and Gemini's Decisions API judged each candidate. The cheapest is a milk *drink*, at
-   0.76 confidence. The agent picks real milk at 0.96, not the cheapest guess." (**J2**: exactly what the buyer asked
-   for.)
+2. "Gemini read the request, and Gemini's Decisions API judged each candidate: all three milks are what the chef
+   asked for, around 0.9 or higher. So the cheapest wins: €1,400, within the chef's limit, confirmed by itself."
+   (**J2**: exactly what the buyer asked for.)
 3. "Every quote is live from Valio's API: price, stock, cut-off. Here are the facts: on time 100%, 1.1 kg CO2 per
    kg, Finnish."
-4. "€1,560 is over the chef's €1,500 limit, so the door holds it." Switch to the approver key and approve.
-   "The agent key can't approve; only the human can." (**J1**: request → lookup → order → approval, for real.)
+4. Now "1500 L": "€2,100 is over the chef's €1,500 limit and the €2,000 per-line cap, so the door holds it." Switch
+   to the approver key and approve. "The agent key can't approve; only the human can." (**J1**: request → lookup →
+   order → approval, for real.)
+5. If time allows: "10 kg sugar for baking". "Gemini doubts the 5-gram sachets, below 0.5, and picks caster sugar,
+   around 0.9. The first match isn't what you meant."
 
 **1:30 Demo 2: a trap (30 s). J4.**
 1. Run a Terminal product, for example "60 L Arla lactose-free whole milk drink for Monday".
@@ -123,7 +126,8 @@ under RFC 9421, AP2-style signed mandates."
 
 7. **"Why should a judge trust the 0.8 threshold?"**
    - It is per buyer and visible in the audit.
-   - We measured it live: lactose-free milk scores 0.96, and the milk drink 0.76.
+   - We measured it on 30 hand-labelled cases with real Valio products: at 0.80, no wrong product was ordered, and
+     the highest-scoring trap reached 0.52 (`docs/GEMINI.md`).
    - It is still a guess until it is calibrated against real orders. That is item 9 in `docs/NEXT-STEPS.md`.
 
 8. **"What happens if a price changes between the quote and the approval?"** Approval re-runs the gate with fresh
