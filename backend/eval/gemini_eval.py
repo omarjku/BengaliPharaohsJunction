@@ -48,6 +48,10 @@ CASES = [
     ("3 kg lactose-free cream cheese", "462876", "meets", False, "regular cream cheese, not lactose-free"),
     ("10 L unsweetened oat drink for cooking", "464226", "meets", False, "chocolate oat drink in 2.5 dl packs"),
     ("5 L coffee milk", "465761", "meets", False, "Starbucks skinny latte drink"),
+    # live bug (room3-rank): coffee milk / coffee cream auto-chosen for plain milk / cream at 0.72
+    ("1000 L lactose-free milk", "464237", "meets", False, "coffee milk, not the milk a kitchen asks for"),
+    ("100 litraa laktoositonta maitoa", "464237", "meets", False, "coffee milk (Finnish request)"),
+    ("10 L lactose-free cream", "463442", "meets", False, "coffee cream, not cooking or whipping cream"),
     # --- substitutes (the requested product can't be delivered)
     ("1000 L lactose-free milk", "462921", "sub", True, "lactose-free milk drink: fine for a lactose-free need"),
     ("20 L whipping cream", "463366", "sub", True, "38 % whipping cream 10 l"),
