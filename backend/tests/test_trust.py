@@ -81,6 +81,7 @@ def test_order_response_is_signed_and_verifies(shop):
     body = order([("463335", 10)]).json()
     st, sig = body["signed_statement"], body["signature"]
     assert sig["alg"] == "Ed25519" and sig["kid"] == signing.KID
+    assert st["build"] == body["build"]
     assert st["order_id"] == body["order_id"] and st["decision"] == body["decision"] and st["total_cents"] == 1400
     [q] = st["quotes"]
     assert q["product_id"] == "463335" and q["unit_price_cents"] == 140 and q["availability"] == "available"
@@ -89,11 +90,50 @@ def test_order_response_is_signed_and_verifies(shop):
     assert r["valid"] is True and r["kid"] == signing.KID
 
 
+def test_order_response_signs_cached_live_build_without_waiting_or_file_fallback(shop, monkeypatch, tmp_path):
+    calls = []
+    live = {"commit": "live-commit", "ci_run": "42", "sbom_sha256": "a" * 64, "status": "ok"}
+    fallback = tmp_path / "build.json"
+    fallback.write_text(json.dumps({"commit": "wrong", "sbom_sha256": "b" * 64}), encoding="utf-8")
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "live-commit")
+    monkeypatch.setenv("BUILD_PROVENANCE_PATH", str(fallback))
+
+    def fetch(commit, token, **kwargs):
+        calls.append((commit, token, kwargs))
+        return live
+
+    monkeypatch.setattr(signing.craci_evidence, "fetch_live_evidence", fetch)
+
+    body = order([("463335", 10)]).json()
+
+    expected = {"commit": "live-commit", "ci_run": "42", "sbom_sha256": "a" * 64,
+                "evidence_status": "ok", "evidence_url": "/.well-known/front-door-build.json"}
+    assert body["build"] == expected
+    assert body["signed_statement"]["build"] == expected
+    assert calls == [("live-commit", "", {"wait": False})]
+    assert verify(body).json()["valid"] is True
+
+
+def test_unavailable_signed_build_keeps_commit_and_never_uses_file_fallback(monkeypatch, tmp_path):
+    fallback = tmp_path / "build.json"
+    fallback.write_text(json.dumps({"commit": "wrong", "sbom_sha256": "b" * 64}), encoding="utf-8")
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "live-commit")
+    monkeypatch.setenv("BUILD_PROVENANCE_PATH", str(fallback))
+    monkeypatch.setattr(signing.craci_evidence, "fetch_live_evidence", lambda commit, token, **_: {
+        "commit": commit, "ci_run": None, "sbom_sha256": None, "status": "unavailable",
+    })
+
+    assert signing.signed_build_provenance() == {
+        "commit": "live-commit", "ci_run": None, "sbom_sha256": None,
+        "evidence_status": "unavailable", "evidence_url": "/.well-known/front-door-build.json",
+    }
+
+
 def test_tampering_with_any_field_breaks_the_signature(shop):
     body = order([("463335", 10)]).json()
     for path, value in [(("total_cents",), 1), (("quotes", 0, "unit_price_cents"), 1),
                         (("quotes", 0, "availability"), "unknown"), (("decision", "outcome"), "ASK_HUMAN"),
-                        (("status",), "pending_approval")]:
+                        (("status",), "pending_approval"), (("build", "sbom_sha256"), "f" * 64)]:
         bad = copy.deepcopy(body)
         node = bad["signed_statement"]
         for k in path[:-1]:
@@ -105,6 +145,17 @@ def test_tampering_with_any_field_breaks_the_signature(shop):
     assert verify(forged).json()["valid"] is False
     forged["signature"] = {"kid": signing.KID, "alg": "Ed25519", "value": "not base64 !!"}
     assert verify(forged).json()["valid"] is False
+
+
+def test_build_commit_changes_kid_but_old_same_key_statement_still_verifies(shop):
+    assert signing.kid_for_commit("build-a") != signing.kid_for_commit("build-b")
+    body = order([("463335", 10)]).json()
+    old_statement = copy.deepcopy(body["signed_statement"])
+    old_statement["build"]["commit"] = "build-a"
+    old_signature = signing.sign(old_statement)
+    old_signature["kid"] = signing.kid_for_commit("build-a")
+
+    assert signing.verify(old_statement, old_signature) is True
 
 
 def test_published_jwk_verifies_independently_of_the_server(shop):

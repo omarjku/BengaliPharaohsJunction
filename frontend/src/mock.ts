@@ -20,11 +20,15 @@ import type { Saved } from './onboardingApi'
 //   anything else                        -> AUTO, order confirmed (small butter order)
 import type {
   AdminFilter, AdminRow, BuyerProfile, KitchenContext, LiveSocket, PhotoRead, SecurityEvent, AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
-  AskInput, AskResponse, CompileResult, Mandate, MenuInput, MenuRun, Product, RuleChange, SaveResult, Quote, QuantityResolution, Reason, RunInput, Substitute,
+  AskInput, AskResponse, CompileResult, Mandate, MenuInput, MenuRun, Product, RuleChange, SaveResult, Quote, QuantityResolution, Reason, RunInput, Substitute, OrderBuild,
 } from './types'
 import type { CalendarDay, CalendarEntry, CalendarLine, CalendarResponse, WeeklyMenu } from './calendarApi'
 
 const NOW = '2026-11-14T10:00:00+00:00'
+const MOCK_BUILD: OrderBuild = {
+  commit: 'mock-build', ci_run: null, sbom_sha256: null, evidence_status: 'unavailable',
+  evidence_url: '/.well-known/front-door-build.json',
+}
 
 const product = (p: Partial<Product> & Pick<Product, 'id' | 'name_en' | 'sales_unit'>): Product => ({
   name_fi: null,
@@ -400,6 +404,7 @@ function ensureCalendarPendingOrder() {
       order_id: CALENDAR_PENDING_ID,
       status: 'pending_approval',
       audit_id: 'aud-calendar-pending',
+      build: MOCK_BUILD,
       total_cents: 156000,
       lines: [{ product_id: '463335', name: 'Valio Eila 3 % milk drink 1 L lactose free', quantity: 1000, unit: 'ST', unit_price_cents: 156, line_total_cents: 156000 }],
       decision: d,
@@ -939,6 +944,7 @@ export const mockApi = {
       const order: OrderResponse = {
         order_id: `00000000-0000-4000-8000-${String(seq + 1).padStart(12, '0')}`, status: 'confirmed',
         audit_id: log('valio_front_door', 'lapland-kitchen', `Order via Valio front door: ${f.request.summary}`, f.decision),
+        build: MOCK_BUILD,
         total_cents: 12980, lines: [{ product_id: '480001', name: f.lines[0].product.name_en!, quantity: 2, unit: 'ST', unit_price_cents: 6490, line_total_cents: 12980 }],
         decision: f.decision, rejected_options: [], substitutes: [], alternative_order: null,
       }
@@ -1031,6 +1037,7 @@ export const mockApi = {
       order_id: f.status === 'refused' ? null : `00000000-0000-4000-8000-${String(seq + 1).padStart(12, '0')}`,
       status: f.status,
       audit_id: log('valio_front_door', buyer, `Order via Valio front door: ${f.request.summary}`, f.decision),
+      build: MOCK_BUILD,
       total_cents: chosen.reduce((a, l) => a + (l.line_total_cents ?? 0), 0),
       lines: chosen.map((l) => ({
         product_id: l.product.id, name: l.product.name_en ?? l.product.id, quantity: l.quantity?.quantity ?? null,
@@ -1067,6 +1074,7 @@ export const mockApi = {
     const res: OrderResponse = {
       order_id: `00000000-0000-4000-8000-${String(seq + 1).padStart(12, '0')}`, status: over ? 'pending_approval' : 'confirmed',
       audit_id: log('valio_front_door', 'lapland-kitchen', 'Order via Valio front door (split proposal)', d),
+      build: MOCK_BUILD,
       total_cents: total, lines, decision: d, rejected_options: [], substitutes: [], alternative_order: null,
     }
     orders.set(res.order_id!, { buyer: 'lapland-kitchen', res })

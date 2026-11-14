@@ -115,6 +115,8 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   const [head, more] = splitLong(text, c)
 
   const total = order?.total_cents || chosen.reduce((a, l) => a + (l.line_total_cents ?? 0), 0)
+  const buildCommit = order?.build?.commit ? order.build.commit.slice(0, 7) : 'unavailable'
+  const buildSbom = order?.build?.sbom_sha256 ? order.build.sbom_sha256.slice(0, 12) : 'unavailable'
   const what = split
     ? null // the headline already says what the split is
     : chosen.length === 1
@@ -310,6 +312,12 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
           ))}
           {ruleWords && <p className="dc-rule">{t.decidedBy(ruleWords)}</p>}
           {signOff && <p className="signoff">{signOff}</p>}
+          {order?.build && (
+            <p className="quiet small">
+              {t.signedByBuild}{' '}
+              <span dir="ltr">{buildCommit} · SBOM {buildSbom}</span>
+            </p>
+          )}
           <p className="answer-sub" ref={reasonsRef}>
             {more && <>{more} </>}
             {what && <>{what}. </>}

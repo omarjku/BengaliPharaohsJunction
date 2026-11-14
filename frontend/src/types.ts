@@ -155,10 +155,19 @@ export type OrderLine = {
 }
 
 // POST /api/orders and /api/orders/{id}/approve|reject.
+export type OrderBuild = {
+  commit: string | null
+  ci_run: string | null
+  sbom_sha256: string | null
+  evidence_status: 'ok' | 'unavailable'
+  evidence_url: string
+}
+
 export type OrderResponse = {
   order_id: string | null // null when refused (nothing stored)
   status: OrderStatus
   audit_id: string
+  build: OrderBuild
   total_cents: number
   lines: OrderLine[]
   decision: Decision

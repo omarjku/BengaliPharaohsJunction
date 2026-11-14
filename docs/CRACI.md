@@ -104,6 +104,14 @@ Inspect the network trace destinations and vulnerability lists separately;
 the digest covers SBOM bytes only. A missing or failed fetch is reported as
 unavailable, never silently presented as verified.
 
+## Signed provenance
+
+To prove which audited build signed an order:
+
+1. Verify the order's `signed_statement` and `signature` with `POST /api/verify` (or the Ed25519 key in `/.well-known/front-door-keys.json`). Continue only when the result is `valid: true`.
+2. Read `signed_statement.build.commit` and `signed_statement.build.sbom_sha256`; these values are covered by the order signature.
+3. Fetch `signed_statement.build.evidence_url` (`/.well-known/front-door-build.json`) and compare its `commit` and `sbom_sha256` to the signed values. If `evidence_status` is `unavailable`, the signed commit remains identifiable but the missing digest is not evidence of a verified SBOM.
+
 
 ## Security notes
 - The public endpoint publishes integrity data and vulnerability **counts** only, never vulnerability details.
