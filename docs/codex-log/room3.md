@@ -27,7 +27,26 @@
 ## 4. Design attack on M2 (Gemini Decisions confidence): gpt-reserve, effort max
 - **Asked:** attack the M2 design before coding: noul vs confidence semantics, injection through input text or
   product names, threshold edge cases, multi-item orders, failure modes blocking the milk demo, latency.
-- **Status: PENDING** at push; it was coded in parallel because of the time-box.
+- **Result** (finished after M2 was pushed, so it reviewed the uncommitted M2 code): 10 findings, 5 marked P0.
+- **Kept and fixed** (follow-up commit):
+  - P0 #4: answers were not validated. A NaN, boolean or out-of-range `noul` passed as a number, and since
+    NaN < 0.8 is False it would have counted as CONFIDENT. Now anything but a finite 0..1 float is "unverified".
+  - P0 #3, part: the instruction-phrase flag only ran when Gemini parsed. Now it runs on the fallback path too
+    (the text still reaches Decisions).
+  - P1 #9: 0.7996 displayed as "0.80 vs your 0.80 threshold". Display now rounds down; facts keep the unrounded value.
+  - P1 #6, part: audit facts now include the weakest question (`question: meets|qty`).
+  - P1 #10: no item cap. Now max 10 items per run; more → ASK_HUMAN, nothing ordered.
+- **Rejected, with reasons:**
+  - P0 #1 ("noul misused as confidence"): for a yes/no question the API's `confidence` is max(P(yes), P(no)),
+    so thresholding P(yes) is the correct, stricter reading. "P(yes)=0.85, confidence=0.51" can't happen.
+  - P0 #2 ("one batched call violated"): deliberate. Live, batching several candidates in one input dropped
+    lactose-free milk from 0.95 to 0.51 (see below), so it is one concurrent call per candidate.
+  - P0 #5 (milk-drink false negative blocks the demo): measured live, lactose-free milk scores 0.96 and is chosen;
+    the milk drink at 0.76 correctly drops behind it.
+  - P0 #3, rest (catalogue names as an injection vector): Valio's own catalogue is a trusted source here.
+- **Deferred** (follow-ups): #7 (stock for the same product across items isn't aggregated before the door);
+  #8 (substitute judging when every line is orderable but low-confidence); #6 rest (one audit record linking
+  agent and door).
 
 ## M2 findings from live runs (Claude, measured, not from Codex)
 - Decisions API `confidence` = probability of the TOP answer, so it is high for a confident "no" too. We threshold

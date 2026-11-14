@@ -11,6 +11,7 @@ come back from the door, which holds the order for sign-off or refuses it.
 import asyncio
 import json
 import logging
+import math
 import re
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
@@ -32,6 +33,7 @@ DECISIONS_URL = "https://generativelanguage.googleapis.com/v1beta/decisions"
 GEMINI_TIMEOUT_S = 15
 SEARCH_LIMIT = 20  # catalogue hits shown to Gemini
 QUOTE_TOP = 5  # candidates per item actually quoted at Valio (no catalogue sweeps)
+MAX_ITEMS = 10  # bounds Valio, Gemini and Decisions calls per run
 ASK, DECLINE, INFO = gate.ASK, gate.DECLINE, gate.INFO
 
 # Dietary tag (closed list Gemini must pick from) → (claims that must be present, GS1 allergens to exclude).
@@ -120,8 +122,16 @@ async def _decisions(input_text: str, questions: dict) -> dict | None:
 def _yes(answer: dict) -> float | None:
     """P(yes) of a noul answer, the number we threshold. (The API's `confidence` is the probability of the TOP
     answer, so for a likely 'no' it is high too; it must not be read as 'confidence that it is fine'.)"""
-    v = answer.get("noul")
-    return float(v) if isinstance(v, (int, float)) else None
+    v = answer.get("noul") if isinstance(answer, dict) else None
+    # bool is an int in Python, and NaN < threshold is False, so anything but a real probability is "unverified".
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 <= v <= 1:
+        return None
+    return float(v)
+
+
+def _pct(c: float) -> str:
+    """Rounded DOWN for display: 0.7996 must never read as '0.80 vs your 0.80 threshold'."""
+    return f"{math.floor(c * 100) / 100:.2f}"
 
 
 def _describe(p: dict) -> str:
@@ -147,14 +157,14 @@ QUESTIONS = {
 }
 
 
-async def judge(text: str, items: list[tuple[dict, list[str]]]) -> list[tuple[float | None, str]]:
+async def judge(text: str, items: list[tuple[dict, list[str]]]) -> list[tuple[float | None, str, str | None]]:
     """The judgment calls rules can't make, for each (product, [question kinds]) → (P(yes) of the weakest
-    question, why); (None, why) when Gemini couldn't answer. One Decisions call PER candidate, run concurrently:
+    question, why, weakest question kind); (None, why, None) when Gemini couldn't answer. One Decisions call PER candidate, run concurrently:
     live, judging several candidates in one input wrecked calibration (lactose-free milk 0.51 batched vs 0.95 alone)."""
     return list(await asyncio.gather(*(_judge_one(text, p, kinds) for p, kinds in items)))
 
 
-async def _judge_one(text: str, p: dict, kinds: list[str]) -> tuple[float | None, str]:
+async def _judge_one(text: str, p: dict, kinds: list[str]) -> tuple[float | None, str, str | None]:
     questions = {kind: {"type": "noul", "instructions": QUESTIONS[kind][0].format(c="the candidate"),
                         "criteria": {"true_description": QUESTIONS[kind][1], "false_description": QUESTIONS[kind][2]}}
                  for kind in kinds}
@@ -163,10 +173,10 @@ async def _judge_one(text: str, p: dict, kinds: list[str]) -> tuple[float | None
                                f"{_describe(p)}.{extra}", questions)
     scores = {kind: _yes(answers[kind]) for kind in kinds} if answers else {}
     if not scores or None in scores.values():
-        return None, "Gemini Decisions couldn't check this line."
+        return None, "Gemini Decisions couldn't check this line.", None
     weakest = min(scores, key=scores.get)
-    parts = ", ".join(f"{scores[kind]:.2f} that {QUESTIONS[kind][3]}" for kind in kinds)
-    return scores[weakest], f"Gemini Decisions: {parts} (weakest: {QUESTIONS[weakest][3]})."
+    parts = ", ".join(f"{_pct(scores[kind])} that {QUESTIONS[kind][3]}" for kind in kinds)
+    return scores[weakest], f"Gemini Decisions: {parts} (weakest: {QUESTIONS[weakest][3]}).", weakest
 
 
 def _item(query: str, amount, unit, tags) -> dict:
@@ -353,7 +363,12 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
     if not parsed_by_gemini:
         reasons.append(gate._r(C.LOW_CONFIDENCE, INFO, "Gemini was unavailable, so the request was read by the simple "
                                "fallback parser; check the items.", None, "Check the items, or retry later."))
-    if parsed_by_gemini and _INSTRUCTION.search(text):
+    if len(request["items"]) > MAX_ITEMS:
+        reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The request has {len(request['items'])} items; the agent "
+                               f"handles {MAX_ITEMS} per run. Nothing was ordered.", None,
+                               f"Split the request into orders of at most {MAX_ITEMS} items."))
+        request["items"] = request["items"][:MAX_ITEMS]
+    if _INSTRUCTION.search(text):  # whichever parser ran: the text still goes to Gemini Decisions
         reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, "The request contains instruction-like text (e.g. 'ignore', "
                                "'return only'), which may be an attempt to steer the agent. Nothing was ordered.",
                                None, "Check where the text came from, then send just the order."))
@@ -410,9 +425,9 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
 
     # One Decisions call for every line we might order: does it really meet the request, is the quantity right?
     viable = [line for *_, scored in per_item for key, line, _ in scored if not key[0]]
-    for line, (conf, why) in zip(viable, await judge(text, [(dict(ln["product"], _qty=ln["quantity"]["explanation"]),
+    for line, (conf, why, weakest) in zip(viable, await judge(text, [(dict(ln["product"], _qty=ln["quantity"]["explanation"]),
                                                               ["meets", "qty"]) for ln in viable])):
-        line["confidence"], line["confidence_reason"] = conf, why
+        line["confidence"], line["confidence_reason"], line["_weakest"] = conf, why, weakest
 
     for n, it, cands, amount_ok, scored in per_item:
         # Safe first, then Gemini-confident, within the mandate's limits, fewer concerns, cheapest total; rank last.
@@ -453,9 +468,9 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
             judged = await judge(text, [(catalogue.get(a.product_id) or {"id": a.product_id}, ["sub"]) for a in subs])
             ranked = sorted(zip(subs, judged), key=lambda x: -(x[1][0] or 0))  # most acceptable first
             alternatives += [a.model_copy(update={"summary": a.summary + (
-                f" Gemini Decisions: {conf:.2f} that it is an acceptable substitute"
+                f" Gemini Decisions: {_pct(conf)} that it is an acceptable substitute"
                 + ("" if conf >= threshold else f", below your {threshold:.2f} threshold: check before accepting")
-                + "." if conf is not None else " Not checked by Gemini Decisions.")}) for a, (conf, _) in ranked]
+                + "." if conf is not None else " Not checked by Gemini Decisions.")}) for a, (conf, *_) in ranked]
             continue
         best["chosen"] = True
         chosen.append(best)
@@ -474,9 +489,9 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
             low = conf < threshold
             reasons.append(gate._r(C.LOW_CONFIDENCE, ASK if low else INFO,
                            f"{'Not sure' if low else 'Confident'} that {_name(best['product'])} is right "
-                           f"({conf:.2f} vs your {threshold:.2f} threshold). {best['confidence_reason']}", pid,
+                           f"({_pct(conf)} vs your {threshold:.2f} threshold). {best['confidence_reason']}", pid,
                            "Confirm the product and quantity, or pick an alternative." if low else None,
-                           confidence=round(conf, 3), threshold=threshold))
+                           confidence=conf, threshold=threshold, question=best["_weakest"]))
         for key, line, _ in scored[1:]:
             if not key[0]:
                 alternatives.append(Alternative(product_id=line["product"]["id"], summary=(
@@ -521,5 +536,7 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
                                 reasons=door.reasons + [r for r in reasons if r.severity is INFO],
                                 alternatives=door.alternatives or alternatives[:3], confidence=confidence)
             audit_id = order["audit_id"]
+    for ln in lines:
+        ln.pop("_weakest", None)  # internal: the weakest question is in confidence_reason and the audit facts
     return {"request": request, "lines": lines, "decision": decision.model_dump(mode="json"), "order": order,
             "audit_id": audit_id}
