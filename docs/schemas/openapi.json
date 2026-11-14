@@ -30,7 +30,7 @@
     "/api/quotes": {
       "post": {
         "summary": "Quotes",
-        "description": "Live price + availability from Valio for specific products, merged into one quote each,\nwith explicit trap flags (cutoff_passed, quantity_unknown, undeliverable, out_of_stock, unknown_product).",
+        "description": "Live price + availability from Valio for specific products, merged into one quote each,\nwith explicit trap flags (cutoff_passed, quantity_unknown, quantity_unreported, undeliverable, out_of_stock,\nunknown_product). Money: `unit_price_cents` (integer, net of VAT); `price` is the same in euros, kept for\ncompatibility.",
         "operationId": "quotes_api_quotes_post",
         "requestBody": {
           "content": {
@@ -277,6 +277,25 @@
         "operationId": "place_order_api_orders_post",
         "parameters": [
           {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[\\x21-\\x7e]{1,255}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional. Retrying with the same key and body returns the original response instead of acting twice (24 h).",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional. Retrying with the same key and body returns the original response instead of acting twice (24 h)."
+          },
+          {
             "name": "x-agent-key",
             "in": "header",
             "required": false,
@@ -332,7 +351,7 @@
     "/api/orders/{order_id}": {
       "get": {
         "summary": "Get Order",
-        "description": "One of the approver's buyer's orders. Needs X-Approver-Key.",
+        "description": "One of the caller's buyer's orders (read-only). X-Approver-Key, or X-Agent-Key so an agent can follow an\norder it placed. Another buyer's order is 404, like an unknown id, so ids don't leak.",
         "operationId": "get_order_api_orders__order_id__get",
         "parameters": [
           {
@@ -343,6 +362,22 @@
               "type": "string",
               "pattern": "^[0-9a-f-]{36}$",
               "title": "Order Id"
+            }
+          },
+          {
+            "name": "x-agent-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Agent-Key"
             }
           },
           {
@@ -403,6 +438,25 @@
               "pattern": "^[0-9a-f-]{36}$",
               "title": "Order Id"
             }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[\\x21-\\x7e]{1,255}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional. Retrying with the same key and body returns the original response instead of acting twice (24 h).",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional. Retrying with the same key and body returns the original response instead of acting twice (24 h)."
           },
           {
             "name": "x-approver-key",
@@ -479,6 +533,25 @@
               "pattern": "^[0-9a-f-]{36}$",
               "title": "Order Id"
             }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[\\x21-\\x7e]{1,255}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional. Retrying with the same key and body returns the original response instead of acting twice (24 h).",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional. Retrying with the same key and body returns the original response instead of acting twice (24 h)."
           },
           {
             "name": "x-approver-key",
@@ -587,6 +660,307 @@
                     "additionalProperties": true
                   },
                   "title": "Response Audit Api Audit Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/front-door-keys.json": {
+      "get": {
+        "summary": "Front Door Keys",
+        "description": "The front door's public signing key(s) as a JWK Set (RFC 8037, Ed25519), matched by `kid`.",
+        "operationId": "front_door_keys__well_known_front_door_keys_json_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Front Door Keys  Well Known Front Door Keys Json Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/verify": {
+      "post": {
+        "summary": "Verify Statement",
+        "description": "Checks an order response's `signed_statement` + `signature`. valid=true proves this front door issued\nexactly that statement (decision + quote facts as Valio's API reported them at fetched_at); it does not prove\nthe stock is physically there. Public: anyone holding a statement may check it.",
+        "operationId": "verify_statement_api_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Verify Statement Api Verify Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/demo/status": {
+      "get": {
+        "summary": "Demo Status",
+        "description": "Pre-demo checklist data: weekly budget used / left and confidence threshold per buyer, signing key id.\nNeeds X-Valio-Admin-Key; read-only.",
+        "operationId": "demo_status_api_admin_demo_status_get",
+        "parameters": [
+          {
+            "name": "x-valio-admin-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Valio-Admin-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Demo Status Api Admin Demo Status Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/demo/reset": {
+      "post": {
+        "summary": "Demo Reset",
+        "description": "Archive orders, audit trail and idempotency keys to DATA_DIR/archive/<timestamp>/ and start empty (nothing is\ndeleted); saved mandates stay unless restore_mandate=true. Only when DEMO_RESET_ENABLED=1. Needs X-Valio-Admin-Key.",
+        "operationId": "demo_reset_api_admin_demo_reset_post",
+        "parameters": [
+          {
+            "name": "x-valio-admin-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Valio-Admin-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/DemoReset"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Demo Reset Api Admin Demo Reset Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/audit": {
+      "get": {
+        "summary": "Admin Audit",
+        "description": "Valio's side of the audit trail: every buyer's entries (contract AuditEntry + `front_door` annotation:\naction, status after the event, signed_off_by) and refused-access security events, oldest first. Filters: one\nbuyer, a decision outcome, and/or the order status (status=refused finds every refusal, whatever its outcome).\nNeeds X-Valio-Admin-Key; read-only.",
+        "operationId": "admin_audit_api_admin_audit_get",
+        "parameters": [
+          {
+            "name": "buyer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.:-]{1,64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Buyer Id"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "AUTO",
+                    "ASK_HUMAN",
+                    "DECLINE"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "confirmed",
+                    "pending_approval",
+                    "refused",
+                    "rejected"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "x-valio-admin-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Valio-Admin-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Admin Audit Api Admin Audit Get"
                 }
               }
             }
@@ -721,6 +1095,358 @@
           }
         }
       }
+    },
+    "/api/mandate/compile": {
+      "post": {
+        "summary": "Compile Mandate Route",
+        "description": "Plain-language rules → {proposed_mandate, diff_from_current, open_questions, assumptions, used_fallback,\ninjection_flagged}. Nothing is saved. Needs X-Approver-Key.",
+        "operationId": "compile_mandate_route_api_mandate_compile_post",
+        "parameters": [
+          {
+            "name": "x-approver-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Approver-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Compile Mandate Route Api Mandate Compile Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mandate": {
+      "get": {
+        "summary": "Get Mandate",
+        "description": "The mandate in force for the approver's buyer (saved, else the seeded default); its version is the ETag\nheader (send it back as If-Match when saving). Needs X-Approver-Key.",
+        "operationId": "get_mandate_api_mandate_get",
+        "parameters": [
+          {
+            "name": "x-approver-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Approver-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Mandate Api Mandate Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Save Mandate",
+        "description": "Save the confirmed mandate for the approver's buyer → {mandate, changes, audit_id, version}. With If-Match\n(the ETag from GET), a save over rules someone else changed meanwhile is 412, never a silent overwrite. 422 while\nopen questions remain; 409 for big loosenings unless confirm_large_change=true. Audited. Needs X-Approver-Key.",
+        "operationId": "save_mandate_api_mandate_put",
+        "parameters": [
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "x-approver-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Approver-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveMandateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Save Mandate Api Mandate Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/ask": {
+      "post": {
+        "summary": "Agent Ask",
+        "description": "Free text → {intent: order|menu|unclear, covers, requested_date, date_source: request|text|null,\nquestion: str|null, ...the /api/agent/run body (order) or the /api/agent/menu body (menu)}. When a question is\nasked (no date, menu without guests, unclear, conflicting dates), only `decision` (ASK_HUMAN) follows and nothing\nruns. Needs X-Agent-Key.",
+        "operationId": "agent_ask_api_agent_ask_post",
+        "parameters": [
+          {
+            "name": "x-agent-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Agent-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Agent Ask Api Agent Ask Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/voice/transcribe": {
+      "post": {
+        "summary": "Voice Transcribe",
+        "description": "Body: the raw recording (Content-Type audio/webm, audio/ogg, audio/mp4, audio/wav...; at most 1 MB / 30 s).\n→ {text, seconds, model}. The UI shows the text and sends it to POST /api/agent/ask; nothing is ordered here.\nNeeds X-Agent-Key; rate-limited like agent runs.",
+        "operationId": "voice_transcribe_api_voice_transcribe_post",
+        "parameters": [
+          {
+            "name": "x-agent-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Agent-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Voice Transcribe Api Voice Transcribe Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/ask/stream": {
+      "post": {
+        "summary": "Agent Ask Stream",
+        "description": "POST /api/agent/ask, streamed as Server-Sent Events so the UI can show progress while it works:\n`event: phase` {phase, text} (understanding, searching, stock, judging, planning, ordering) as each step starts,\nthen one `event: result` with exactly the /api/agent/ask body, or `event: error` {status, detail}.\nNeeds X-Agent-Key.",
+        "operationId": "agent_ask_stream_api_agent_ask_stream_post",
+        "parameters": [
+          {
+            "name": "x-agent-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Agent-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -769,6 +1495,69 @@
         ],
         "title": "AgentRunRequest"
       },
+      "AskRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text",
+            "examples": [
+              "milk and 30 croissants for tomorrow"
+            ]
+          },
+          "requested_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Date",
+            "description": "Optional when the text states a day."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "AskRequest"
+      },
+      "CompileRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text",
+            "examples": [
+              "Never anything with peanuts. Auto-approve up to €1,500 per order, €6,000 a week. Prefer Finnish."
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "CompileRequest"
+      },
+      "DemoReset": {
+        "properties": {
+          "restore_mandate": {
+            "type": "boolean",
+            "title": "Restore Mandate",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "DemoReset"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -781,6 +1570,142 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HardRule": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RuleKind"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Value",
+            "description": "Allergen/claim name, or a number (cents for *_cents kinds), depending on kind."
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PreferenceScope",
+            "default": "always"
+          },
+          "source_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Text",
+            "description": "The buyer's own words."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "value"
+        ],
+        "title": "HardRule",
+        "description": "A check that is either met or not. Breaking one is a hard violation\n(except AUTO_APPROVE_LIMIT_CENTS, which only decides who signs off)."
+      },
+      "Mandate": {
+        "properties": {
+          "contract_version": {
+            "type": "string",
+            "const": "0.2",
+            "title": "Contract Version",
+            "default": "0.2"
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "buyer_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Buyer Id"
+          },
+          "hard_rules": {
+            "items": {
+              "$ref": "#/components/schemas/HardRule"
+            },
+            "type": "array",
+            "title": "Hard Rules"
+          },
+          "uncertainty_policy": {
+            "$ref": "#/components/schemas/UncertaintyPolicy",
+            "default": "ask"
+          },
+          "guidance": {
+            "items": {
+              "$ref": "#/components/schemas/Preference"
+            },
+            "type": "array",
+            "title": "Guidance"
+          },
+          "open_questions": {
+            "items": {
+              "$ref": "#/components/schemas/OpenQuestion"
+            },
+            "type": "array",
+            "title": "Open Questions"
+          },
+          "blocklist": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Blocklist",
+            "description": "Product ids that may never be ordered."
+          },
+          "per_line_cap_cents": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Per Line Cap Cents",
+            "description": "Max net cents for one order line (default EUR 300).",
+            "default": 30000
+          },
+          "weekly_budget_cents": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weekly Budget Cents",
+            "description": "Optional net-cents budget for a rolling 7 days."
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At",
+            "description": "After this the mandate is expired (decisions ask a human)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "buyer_id"
+        ],
+        "title": "Mandate"
       },
       "MenuRequest": {
         "properties": {
@@ -819,6 +1744,33 @@
           "requested_date"
         ],
         "title": "MenuRequest"
+      },
+      "OpenQuestion": {
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Question"
+          },
+          "why": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Why"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "title": "OpenQuestion",
+        "description": "Something the compiler could not resolve; asked, not guessed."
       },
       "OrderLine": {
         "properties": {
@@ -883,6 +1835,35 @@
         ],
         "title": "OrderRequest",
         "description": "An order at fixed prices. Price and stock are re-read from Valio here; the client can't set them.\nThe buyer is the one the X-Agent-Key belongs to; buyer_id is optional and must match it if sent.\nNo mandate field: the order is judged by the buyer's mandate stored at Valio (sending one is a 422)."
+      },
+      "Preference": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Text"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PreferenceScope"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text",
+          "scope"
+        ],
+        "title": "Preference",
+        "description": "Soft guidance that is not a clean check; shapes ranking, never blocks."
+      },
+      "PreferenceScope": {
+        "type": "string",
+        "enum": [
+          "this_order",
+          "always"
+        ],
+        "title": "PreferenceScope",
+        "description": "How long a preference lasts (D5: don't over-generalise)."
       },
       "QuantityRequest": {
         "properties": {
@@ -954,6 +1935,36 @@
         ],
         "title": "QuoteRequest"
       },
+      "RuleKind": {
+        "type": "string",
+        "enum": [
+          "excluded_allergen",
+          "required_claim",
+          "max_unit_price_cents",
+          "min_delivery_reliability",
+          "auto_approve_limit_cents"
+        ],
+        "title": "RuleKind",
+        "description": "Closed list of checks a hard rule may express. Money values are net cents."
+      },
+      "SaveMandateRequest": {
+        "properties": {
+          "mandate": {
+            "$ref": "#/components/schemas/Mandate"
+          },
+          "confirm_large_change": {
+            "type": "boolean",
+            "title": "Confirm Large Change",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "mandate"
+        ],
+        "title": "SaveMandateRequest"
+      },
       "SignOff": {
         "properties": {
           "decided_at": {
@@ -972,6 +1983,16 @@
         "type": "object",
         "title": "SignOff",
         "description": "Optional approve body. decided_at = the decision.decided_at the human was shown; send it so a click can\nonly ever sign off that decision (409 if the order was re-decided since). Other fields are ignored."
+      },
+      "UncertaintyPolicy": {
+        "type": "string",
+        "enum": [
+          "ask",
+          "decline",
+          "approve"
+        ],
+        "title": "UncertaintyPolicy",
+        "description": "What the agent does when it cannot verify something."
       },
       "ValidationError": {
         "properties": {
@@ -1005,6 +2026,27 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VerifyRequest": {
+        "properties": {
+          "signed_statement": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Signed Statement"
+          },
+          "signature": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Signature"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "signed_statement",
+          "signature"
+        ],
+        "title": "VerifyRequest"
       }
     }
   }

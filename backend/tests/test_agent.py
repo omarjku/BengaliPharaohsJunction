@@ -100,7 +100,9 @@ def test_milk_end_to_end_orders_through_front_door(shop1, monkeypatch):
     assert eila["quote"]["price"] == 1.4 and "1,000 L" in eila["why"]
     assert body["order"]["status"] == "confirmed" and body["decision"]["outcome"] == "AUTO"
     assert body["order"]["lines"][0]["quantity"] == 1000 and body["audit_id"] == body["order"]["audit_id"]
-    agent_entry, door_entry = audit()
+    door_entry, agent_entry = audit()  # the agent's entry is written once the door has answered, and links to it
+    [link] = [r for r in agent_entry["decision"]["reasons"] if r["code"] == "FRONT_DOOR"]
+    assert link["facts"]["door_audit_id"] == door_entry["id"] and link["facts"]["status"] == "confirmed"
     assert agent_entry["actor"] == "buyer_agent" and agent_entry["input"]["request"]["text"] == MILK
     assert agent_entry["input"]["mandate"]["id"] == "lapland-kitchen-2026-11"
     assert agent_entry["rejected_options"][0]["product_id"] == "462775"
@@ -113,6 +115,8 @@ def test_over_auto_limit_is_held_by_the_front_door(shop1, monkeypatch):
     body = run("2000 L lactose-free milk for Monday")
     assert body["order"]["status"] == "pending_approval" and body["decision"]["outcome"] == "ASK_HUMAN"
     assert {"SPEND_OVER_LIMIT", "LINE_OVER_CAP"} <= set(codes(body))
+    agent_entry = [e for e in orders.audit_log("lapland-kitchen", 100) if e["actor"] == "buyer_agent"][-1]
+    assert agent_entry["decision"]["outcome"] == "ASK_HUMAN"  # QA round 2: not AUTO for an order the door held
     gemini(monkeypatch, [dict(ITEM[0], amount=2000)], ranked=["463335", "476240"])
     body = run("2000 L lactose-free milk for Monday")  # cheaper 476240 is chosen; the other is offered
     assert [ln["product"]["id"] for ln in body["lines"] if ln["chosen"]] == ["476240"]
@@ -248,9 +252,9 @@ def test_confident_line_orders_and_records_confidence(shop1, monkeypatch, decisi
     for inp in (meets_in, qty_in):
         assert "<buyer_request>" in inp and "Eila milk 1 l" in inp
         assert "labelled lactose-free" in inp and "contains milk" in inp  # words, not codes
-    agent_entry = orders.audit_log("lapland-kitchen", 100)[0]
+    agent_entry = [e for e in orders.audit_log("lapland-kitchen", 100) if e["actor"] == "buyer_agent"][0]
     assert agent_entry["decision"]["confidence"] == 0.95
-    [r] = [r for r in agent_entry["decision"]["reasons"] if r["code"] == "LOW_CONFIDENCE"]
+    [r] = [r for r in agent_entry["decision"]["reasons"] if r["code"] == "CONFIDENCE_OK"]  # passes get a neutral code
     assert r["severity"] == "INFO" and r["facts"] == {"confidence": 0.95, "threshold": 0.7, "question": "meets"}
     assert "_weakest" not in line
 

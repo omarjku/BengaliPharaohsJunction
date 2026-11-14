@@ -848,7 +848,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                                "Check the product and quantity yourself, or retry.", threshold=threshold))
             else:  # recorded either way, so the audit shows the confidence behind every chosen line
                 low = conf < threshold
-                reasons.append(gate._r(C.LOW_CONFIDENCE, ASK if low else INFO,
+                reasons.append(gate._r(C.LOW_CONFIDENCE if low else C.CONFIDENCE_OK, ASK if low else INFO,
                                f"{'Not sure' if low else 'Confident'} that {_name(best['product'])} is right "
                                f"({_pct(conf)} vs your {threshold:.2f} threshold). {best['confidence_reason']}", pid,
                                "Confirm the product and quantity, or pick an alternative." if low else None,
@@ -1011,7 +1011,7 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
     confs = [ln["confidence"] for ln in chosen]
     confidence = min(confs) if confs and None not in confs else None  # Decision.confidence: the weakest chosen line
     decision = _decision(run_id, reasons, alternatives, now, confidence)
-    order, audit_id = None, audit(decision)  # the agent's own decision is logged before the door sees anything
+    order, audit_id = None, None  # the agent's entry is written once the outcome is known (linked to the door's)
     # QA HP-02: a problem with ONE item (not found, no amount, low confidence...) holds that item only; the others
     # still go to the door. Request-level problems (injection, grounding, no mandate, duplicates) hold everything.
     item_ids = {id(r) for r in res["item_reasons"]}
@@ -1046,7 +1046,16 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
                                                            "outcome"}),
                                 outcome={DECLINE: "DECLINE", ASK: "ASK_HUMAN", INFO: "AUTO"}[rs[0].severity] if rs else "AUTO",
                                 reasons=rs, alternatives=door.alternatives or alternatives[:3], confidence=confidence)
+            # QA round 2: the agent's audit entry carries the door's verdict (not a bare AUTO for an order the door
+            # held) and links to the door's entry and the order.
+            link = gate._r(C.FRONT_DOOR, INFO, f"Sent to Valio's front door: {order['status'].replace('_', ' ')}"
+                           + (f", order {order['order_id']}" if order.get("order_id") else "") + ".", None, None,
+                           order_id=order.get("order_id"), door_audit_id=order["audit_id"], status=order["status"])
+            decision = decision.model_copy(update={"reasons": [*decision.reasons, link]})
+            audit(decision)
             audit_id = order["audit_id"]
+    if audit_id is None:  # nothing reached the door: the agent's own decision is the record
+        audit_id = audit(decision)
     for ln in lines:
         ln.pop("_weakest", None)  # internal: the weakest question is in confidence_reason and the audit facts
     return {"request": request, "lines": lines, "decision": decision.model_dump(mode="json"), "order": order,
