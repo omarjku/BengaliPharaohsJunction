@@ -12,6 +12,7 @@ VALIO_API_KEY = os.getenv("VALIO_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-4-hydrogen")
 GEMINI_DECISION_MODEL = os.getenv("GEMINI_DECISION_MODEL", "gemini-decision-1")  # Decisions API
+GEMINI_LISTEN_MODEL = os.getenv("GEMINI_LISTEN_MODEL", "gemini-3.5-transcribe-live")  # voice (Live API)
 # Comma-separated origins allowed to call the API (the frontend's URL on Render, plus local dev).
 FRONTEND_ORIGINS = [o.strip() for o in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",") if o.strip()]
 # Front-door API keys, comma-separated `key=buyer_id[:name]`. Unset → the order/audit routes return 503 (never open).

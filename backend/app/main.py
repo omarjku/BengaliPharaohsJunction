@@ -1,6 +1,8 @@
 """Valio Aimo front door: API entry point. OpenAPI spec is served at /openapi.json, docs at /docs."""
 import asyncio
 import hashlib
+import json
+import logging
 import re
 import threading
 from contextlib import asynccontextmanager
@@ -10,11 +12,11 @@ from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import ask, agent, auth, catalogue, config, gate, mandates, menu, orders, quantity, ratelimit, rules, signing, valio
+from . import ask, agent, auth, catalogue, config, gate, mandates, menu, orders, quantity, ratelimit, rules, signing, valio, voice, progress
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -146,8 +148,9 @@ async def limit_body(request: Request, call_next):
         size = request.headers.get("content-length")
         if size is None and request.headers.get("transfer-encoding"):
             return JSONResponse({"detail": "Content-Length required"}, status_code=411)
-        if size is not None and (not size.isdigit() or int(size) > MAX_BODY_BYTES):
-            return JSONResponse({"detail": f"Request body over {MAX_BODY_BYTES} bytes"}, status_code=413)
+        cap = voice.MAX_BYTES if request.url.path == "/api/voice/transcribe" else MAX_BODY_BYTES  # audio clips
+        if size is not None and (not size.isdigit() or int(size) > cap):
+            return JSONResponse({"detail": f"Request body over {cap} bytes"}, status_code=413)
     return await call_next(request)
 
 
@@ -477,3 +480,47 @@ async def agent_ask(req: AskRequest, who: Agent) -> dict:
     runs. Needs X-Agent-Key."""
     _catalogue_ready()
     return await ask.ask(req.text, req.requested_date, who.buyer_id)
+
+
+# --- Voice: push-to-talk audio → the chef's words (Gemini Live via our backend; the key never reaches the browser).
+@app.post("/api/voice/transcribe")
+async def voice_transcribe(request: Request, who: Agent) -> dict:
+    """Body: the raw recording (Content-Type audio/webm, audio/ogg, audio/mp4, audio/wav...; at most 1 MB / 30 s).
+    → {text, seconds, model}. The UI shows the text and sends it to POST /api/agent/ask; nothing is ordered here.
+    Needs X-Agent-Key; rate-limited like agent runs."""
+    return await voice.transcribe(await request.body(), request.headers.get("content-type", ""))
+
+
+@app.post("/api/agent/ask/stream")
+async def agent_ask_stream(req: AskRequest, who: Agent) -> StreamingResponse:
+    """POST /api/agent/ask, streamed as Server-Sent Events so the UI can show progress while it works:
+    `event: phase` {phase, text} (understanding, searching, stock, judging, planning, ordering) as each step starts,
+    then one `event: result` with exactly the /api/agent/ask body, or `event: error` {status, detail}.
+    Needs X-Agent-Key."""
+    _catalogue_ready()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def work():
+        progress.set_sink(queue.put_nowait)  # inside the task's own context: only this request's phases
+        try:
+            queue.put_nowait(("result", await ask.ask(req.text, req.requested_date, who.buyer_id)))
+        except HTTPException as e:
+            queue.put_nowait(("error", {"status": e.status_code, "detail": e.detail}))
+        except Exception:  # noqa: BLE001 - details stay in the server log
+            logging.getLogger(__name__).exception("ask stream failed")
+            queue.put_nowait(("error", {"status": 500, "detail": "Something went wrong; nothing was ordered."}))
+
+    async def events():
+        task = asyncio.create_task(work())
+        try:
+            while True:
+                item = await queue.get()
+                kind, data = item if isinstance(item, tuple) else ("phase", item)
+                yield f"event: {kind}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+                if kind != "phase":
+                    return
+        finally:
+            if not task.done():
+                task.cancel()
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

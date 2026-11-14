@@ -514,6 +514,7 @@ function diffRules(a: Mandate, b: Mandate): RuleChange[] {
   return out
 }
 
+let voiceTurn = 0
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
 // The date the backend would read from the words ("Friday", "tomorrow"), else the override, else next Monday.
 function dateFrom(text: string, override?: string): string {
@@ -527,6 +528,13 @@ function dateFrom(text: string, override?: string): string {
 }
 
 export const mockApi = {
+  // Pretend speech-to-text: the demo's example sentences, in turn.
+  async transcribe(audio: Blob): Promise<string> {
+    await wait()
+    if (audio.size === 0) throw new Error('Nothing was recorded. Hold the mic while you talk, or type it.')
+    return ['1000 L lactose-free milk for Monday', '20 kg döner kebab meat for the rotisserie, Friday'][voiceTurn++ % 2]
+  },
+
   async ask(input: AskInput): Promise<AskResponse> {
     const text = input.text.trim()
     const requested_date = dateFrom(text, input.requested_date)

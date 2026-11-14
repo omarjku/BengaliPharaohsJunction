@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { askAgent, getHealth, getKeys, getOrder, MOCK, setKeys, type ApiKeys } from './api'
+import { askAgent, getHealth, getKeys, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
 import { errorText, nextMonday } from './format'
 import { groupHistory } from './history'
@@ -9,6 +9,8 @@ import { Rules } from './Rules'
 import { RunResult } from './RunResult'
 import type { AskResponse, AuditEntry } from './types'
 import { UrgentOptions } from './Urgent'
+import { useReadBack, useVoice, voiceSupported } from './useVoice'
+import { MicButton, VoiceStatus } from './Voice'
 
 type View = 'order' | 'rules' | 'history'
 
@@ -64,6 +66,16 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   // A menu without a guest count gets a number field; any other question is said plainly, with the box open.
   const asksGuests = question?.intent === 'menu' && question.covers == null && /guest|hengel|vier/i.test(question.question)
   const example = useCyclingExample(text === '', c.EXAMPLES)
+  // Voice: the words land in the box (editable), then the request goes as if typed. The answer is read back.
+  const [byVoice, setByVoice] = useState(false)
+  const readBack = useReadBack()
+  const voice = useVoice(transcribe, (words) => {
+    readBack.forget()
+    setText(words)
+    setByVoice(true)
+    void ask(words)
+  })
+  const micOn = VOICE_READY && voiceSupported()
   const [editing, setEditing] = useState(false) // phone: the composer is collapsed to a summary row after a result
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -133,6 +145,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
 
   function submit(e: FormEvent) {
     e.preventDefault()
+    setByVoice(false)
     void ask(text)
   }
 
@@ -154,6 +167,12 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
       f.setSelectionRange(f.value.length, f.value.length)
     })
   }
+
+  // Read the answer's first sentence aloud for a request made by voice (status + headline, as announced).
+  const { speak } = readBack
+  useEffect(() => {
+    if (byVoice && result && announce && !announce.endsWith('…')) speak(announce)
+  }, [announce, byVoice, result, speak])
 
   const empty = !result && !running && !error
   const collapsed = !!(run || menu) && !editing
@@ -218,10 +237,11 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                 <label className="ask-label" htmlFor="text">
                   {u.ask.label}
                 </label>
+                <div className="ask-box">
                 <textarea
                   id="text"
                   ref={field}
-                  className="ask-field"
+                  className={`ask-field${micOn ? ' with-mic' : ''}`}
                   rows={3}
                   value={text}
                   onChange={(e) => setText(e.target.value)}
@@ -230,6 +250,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                   aria-describedby="text-help"
                   required
                 />
+                {micOn && <MicButton voice={voice} disabled={running || deciding} />}
+                </div>
                 <p className="sr-only" id="text-help">
                   {u.ask.help(c.EXAMPLES)}
                 </p>
@@ -255,6 +277,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                     {running ? u.ask.asking : result ? u.ask.again : u.ask.ask}
                   </button>
                 </div>
+                {micOn && <VoiceStatus voice={voice} />}
                 {empty && (
                   <p className="try">
                     {MOCK ? u.ask.tryDemo : u.ask.try}
@@ -281,6 +304,14 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                   <strong>{u.failed}</strong>
                   {error}
                 </div>
+              )}
+              {byVoice && result && readBack.canSpeak && (
+                <p className="voice-status readback">
+                  {readBack.muted ? u.voice.readOff : u.voice.readOn}{' '}
+                  <button type="button" className="link accent inline" aria-pressed={readBack.muted} onClick={readBack.toggle}>
+                    {readBack.muted ? u.voice.turnOn : u.voice.mute}
+                  </button>
+                </p>
               )}
               {question && asksGuests && (
                 <GuestsQuestion key={question.audit_id ?? question.question} question={question.question} onAnswer={answerGuests} busy={running} />

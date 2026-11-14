@@ -18,7 +18,7 @@ from trade_contracts import AuditEntry, AuditInput, Mandate, PurchaseRequest, Re
 from trade_contracts import ReasonCode as C
 from trade_contracts.common import Channel, RuleKind
 
-from . import agent, catalogue, gate, mandates, orders, quantity, valio
+from . import agent, catalogue, gate, mandates, orders, quantity, valio, progress
 
 MAX_INGREDIENTS = 20
 MAX_DISHES, MAX_PER_DISH = 12, 15  # bound what a (possibly steered) menu parse can make the agent check and price
@@ -172,6 +172,7 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -
                                "Check where the menu came from before ordering anything from this cart."))
     excluded = set().union(*(gate._allergen_codes(str(v)) for v in gate._rules(m, RuleKind.EXCLUDED_ALLERGEN)))
 
+    progress.phase("planning")
     dishes, steer = await asyncio.gather(parse_menu(menu_text), agent.steering(menu_text))
     if steer is not None and steer >= agent.INJECTION_MAX:
         reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, "This menu seems to try to change limits, delivery, invoicing or "

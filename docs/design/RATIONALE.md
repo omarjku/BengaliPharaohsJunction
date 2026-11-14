@@ -65,6 +65,14 @@ A kebab shop ordering döner meat shouldn't be asked "for how many guests". So t
 - **Need it sooner?** It sits right under the answer, not below the details. It is always a suggestion, never an order: walk-in at the Helsinki Cash & Carry with today's hours and the number to call, Click & Collect, and the next delivery. The facts are re-said in the chef's language.
 - **Rules versioning.** The screen saves against the version it showed (`If-Match`). If someone changed the rules meanwhile: "Someone changed these rules a moment ago. Here's the latest." The latest rules load, and the chef's text stays in the box.
 
+## Voice (shell; the transcription endpoint comes from Room 3)
+- **The mic lives in the box.** It sits in the field's corner, which on a phone is right above the main action, in the thumb zone. Hold to talk and let go to send. A quick tap toggles instead (tap again to send), and so do Enter and Space, for anyone who can't hold.
+- **Quiet feedback.** While listening, the mic turns solid accent and a soft ring grows with the live voice level. No waveform art. One line under the box says "Listening… let go to send", then "Thinking…".
+- **The words stay editable.** The transcript lands in the box as normal text and is sent as if typed, so a misheard word is one tap from fixed.
+- **Read-back.** For a request made by voice, the answer's status and headline are spoken ("Your call. 60 euros over the 1,500 euro order limit."). A small "Mute" next to it is remembered on this device.
+- **Asked once, honest about failure.** The first press explains what happens ("Audio is only used to transcribe this request") before the browser asks for the microphone. A blocked or missing microphone says so and points back to typing.
+- **No made-up words in production.** `transcribe()` in `api.ts` calls Room 3's `POST /api/voice/transcribe`. A production build shows the mic only when built with `VITE_VOICE=1`.
+
 ## Known gaps
 - Product names come straight from Valio's catalogue ("Valio Eila® 3 % milk drink 1 l lactose free"). Cleaning them up would need a naming pass in the data.
 - History can't tell "Valio held for your OK" apart from "Valio refused" when the front door's outcome was an ask, because the audit entry doesn't store the order status. The opening screen's waiting count avoids this by checking each order's real status.
