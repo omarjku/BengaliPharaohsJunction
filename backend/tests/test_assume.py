@@ -321,3 +321,22 @@ def test_off_topic_reply_is_specific_and_sanitized(shop1, monkeypatch):  # noqa:
 def test_live_prompt_declines_off_topic_without_a_tool_call():
     assert "food and kitchen supplies" in live.SYSTEM
     assert "LEGO" in live.SYSTEM and "do not call tools" in live.SYSTEM
+
+
+def test_product_swap_in_reply_is_held_even_without_prior_assumption(monkeypatch):
+    """Security review: a stated amount, then a reply that swaps the product, must not auto-confirm the new match."""
+    from app import ask
+    calls = {}
+
+    async def fake_flow(text, requested, buyer_id, covers=None, parsed=None):
+        calls["item"] = dict(parsed[0]["items"][0])
+        return {"intent": "order"}
+
+    monkeypatch.setattr(ask, "_flow", fake_flow)
+    entry = {"text": "20 L milk for Friday", "kind": "amount", "unit": "l", "item": 0,
+             "request": {"items": [{"query": "milk", "amount": None, "unit": "l"}]}}
+    import asyncio
+    out, _, _ = asyncio.run(ask._answer(entry, "20 l oat milk", "smoke-kitchen"))
+    assert calls["item"]["query"] == "oat milk"
+    assert calls["item"]["approval_required"]["product_changed"] is True
+    assert out["changes"][0]["to"] == "oat milk"
