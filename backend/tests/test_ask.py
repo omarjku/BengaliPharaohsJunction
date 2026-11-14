@@ -336,3 +336,23 @@ def test_spoken_amounts_ground_and_wrong_readings_dont(text, amount):
 
 def test_dozen_eggs_ground_as_a_count():
     assert agent.ungrounded("two dozen eggs for Monday", {"query": "eggs", "amount": 24, "unit": "pcs"}) is None
+
+def test_menu_skips_the_order_parse_and_streams_each_ingredient(shop1, monkeypatch):  # noqa: F811
+    """room3-menu-speed: menu markers start the menu parse at once (the unused order parse blocked it ~8 s), and a
+    menu streams one progress event per ingredient."""
+    cream = {"name": "cream", "per_cover": 0.05, "unit": "L", "assumption": "Porridge: 0.5 dl cream", "dietary": []}
+    route(monkeypatch, "menu", covers=10, dishes=({"name": "Porridge", "ingredients": [*PORRIDGE["ingredients"], cream]},))
+    seen = []
+    real = agent._gemini
+
+    async def spy(system, prompt, schema):
+        seen.append(schema)
+        return await real(system, prompt, schema)
+    monkeypatch.setattr(agent, "_gemini", spy)
+    r = c.post("/api/agent/ask/stream", json={"text": "Menu for 10 guests: porridge with milk and cream",
+                                              "requested_date": REQ.isoformat()}, headers={"X-Agent-Key": "agent-lk"})
+    ev = _events(r.text)
+    assert agent._PARSE_SCHEMA not in seen and menu._MENU_SCHEMA in seen
+    texts = [d["text"] for k, d in ev if k == "phase" and d["phase"] == "searching"]
+    assert len(texts) == 3 and texts[1].endswith("… 1 of 2") and texts[2].endswith("… 2 of 2")
+    assert ev[-1][0] == "result" and ev[-1][1]["intent"] == "menu" and ev[-1][1]["order_lines"]
