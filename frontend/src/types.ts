@@ -29,8 +29,8 @@ export type Decision = {
 
 export type RequestItem = {
   query: string
-  amount: number
-  unit: string
+  amount: number | null
+  unit: string | null
   claims: string[]
   exclude_allergens: string[]
 }
@@ -84,7 +84,7 @@ export type QuantityResolution = {
 export type Line = {
   product: Product
   quote: Quote | null
-  quantity: QuantityResolution
+  quantity: QuantityResolution | null
   line_total_cents: number | null
   why: string
   chosen: boolean

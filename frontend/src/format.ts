@@ -25,7 +25,7 @@ export const formatDay = (ymd: string) =>
 
 const FLAG_LABELS: Record<string, string> = {
   cutoff_passed: 'Order deadline passed',
-  quantity_unknown: 'Stock unknown (supplier delivers)',
+  quantity_unknown: 'Stock availability unknown',
   undeliverable: 'Cannot be delivered on the requested date',
   out_of_stock: 'Out of stock',
   sales_block: 'Sales blocked at Valio',

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { decideOrder } from './api'
+import { decideOrder, getKeys, MOCK } from './api'
 import { errorText, flagLabel, formatCents, formatDateTime, formatDay, formatEuro, outcomeView, resultView } from './format'
 import type { AgentRun, Line, OrderResponse } from './types'
 
@@ -24,7 +24,7 @@ export function RunResult({ run, ...rest }: Props) {
         <ul className="items">
           {run.request.items.map((it, i) => (
             <li key={i}>
-              {it.amount} {it.unit} {it.query}
+              {[it.amount, it.unit, it.query].filter((x) => x !== null).join(' ')}
               {it.claims.length > 0 && <span className="muted"> · {it.claims.map(humanize).join(', ')}</span>}
               {it.exclude_allergens.length > 0 && <span className="muted"> · without {it.exclude_allergens.join(', ')}</span>}
             </li>
@@ -68,7 +68,7 @@ const humanize = (code: string) => code.toLowerCase().replace(/_/g, ' ')
 
 function LineItem({ line }: { line: Line }) {
   const { product: p, quote: q, quantity } = line
-  const unit = quantity.sales_unit || p.sales_unit || 'units'
+  const unit = quantity?.sales_unit || p.sales_unit || 'units'
   return (
     <li className="line">
       <p className="line-name">
@@ -78,8 +78,14 @@ function LineItem({ line }: { line: Line }) {
       <dl>
         <dt>Quantity</dt>
         <dd>
-          {quantity.quantity !== null ? `${quantity.quantity.toLocaleString('en-US')} × ${unit}` : 'Not worked out'}{' '}
-          <span className="muted">({quantity.explanation})</span>
+          {quantity === null ? (
+            'Quantity not given'
+          ) : (
+            <>
+              {quantity.quantity !== null ? `${quantity.quantity.toLocaleString('en-US')} × ${unit}` : 'Not worked out'}{' '}
+              <span className="muted">({quantity.explanation})</span>
+            </>
+          )}
         </dd>
         <dt>Price</dt>
         <dd>
@@ -109,25 +115,22 @@ function LineItem({ line }: { line: Line }) {
           </>
         )}
       </dl>
-      {((q?.flags.length ?? 0) > 0 || quantity.needs_confirmation) && (
+      {((q?.flags.length ?? 0) > 0 || quantity?.needs_confirmation) && (
         <ul className="warnings">
           {q?.flags.map((f) => (
             <li key={f}>{flagLabel(f)}</li>
           ))}
-          {quantity.needs_confirmation && <li>Quantity needs your confirmation</li>}
+          {quantity?.needs_confirmation && <li>Quantity needs your confirmation</li>}
         </ul>
       )}
     </li>
   )
 }
 
-const NAME_OK = /^[\p{L}\p{N}_ .'-]{1,64}$/u // same rule as the backend's SignOff.approver
-
 function DecisionCard({ run, onAction, onBusy, onAnnounce }: Omit<Props, 'run'> & { run: AgentRun }) {
   const [busy, setBusy] = useState<'approve' | 'reject' | null>(null)
   const [result, setResult] = useState<OrderResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [approver, setApprover] = useState('')
   const heading = useRef<HTMLHeadingElement>(null)
 
   // The front door's verdict wins over the agent's own: it re-checks with fresh quotes.
@@ -147,7 +150,7 @@ function DecisionCard({ run, onAction, onBusy, onAnnounce }: Omit<Props, 'run'> 
     onBusy(true)
     setError(null)
     try {
-      setResult(await decideOrder(order.order_id, action, approver.trim()))
+      setResult(await decideOrder(order.order_id, action))
       onAction()
     } catch (err) {
       setError(errorText(err))
@@ -157,7 +160,7 @@ function DecisionCard({ run, onAction, onBusy, onAnnounce }: Omit<Props, 'run'> 
     }
   }
 
-  const nameOk = NAME_OK.test(approver.trim())
+  const canDecide = MOCK || Boolean(getKeys().approverKey)
 
   return (
     <div className={`card decision ${tone}`}>
@@ -197,20 +200,12 @@ function DecisionCard({ run, onAction, onBusy, onAnnounce }: Omit<Props, 'run'> 
       )}
       {awaitingApproval && (
         <>
-          <label htmlFor="approver">Your name (recorded in the audit log)</label>
-          <input
-            id="approver"
-            value={approver}
-            onChange={(e) => setApprover(e.target.value)}
-            placeholder="e.g. Chef Aino"
-            maxLength={64}
-            autoComplete="name"
-          />
+          {!canDecide && <p className="muted">Enter the approver key in Keys to approve.</p>}
           <div className="actions">
-            <button type="button" onClick={() => act('approve')} disabled={busy !== null || !nameOk}>
+            <button type="button" onClick={() => act('approve')} disabled={busy !== null || !canDecide}>
               {busy === 'approve' ? 'Approving…' : 'Approve order'}
             </button>
-            <button type="button" className="secondary" onClick={() => act('reject')} disabled={busy !== null || !nameOk}>
+            <button type="button" className="secondary" onClick={() => act('reject')} disabled={busy !== null || !canDecide}>
               {busy === 'reject' ? 'Rejecting…' : 'Reject'}
             </button>
           </div>

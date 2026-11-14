@@ -1,18 +1,17 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { getHealth, MOCK, runAgent } from './api'
+import { getHealth, getKeys, MOCK, runAgent, setKeys } from './api'
 import { AuditLog } from './AuditLog'
 import { errorText, nextMonday } from './format'
 import { RunResult } from './RunResult'
 import type { AgentRun, Health } from './types'
 
 const EXAMPLE = 'We need 1000 L of lactose-free milk delivered by Monday.'
-const DEFAULT_BUYER = 'lapland-restaurant-1'
-
+const DEFAULT_BUYER = 'lapland-kitchen' // the buyer with a server-side mandate; the agent key decides once /api/agent/run checks it
 export default function App() {
+  const [keys, setKeyDraft] = useState(getKeys) // the inputs; applied on Save
   const [text, setText] = useState(EXAMPLE)
   const [date, setDate] = useState(nextMonday)
   const [buyerId, setBuyerId] = useState(DEFAULT_BUYER)
-  const [auditBuyer, setAuditBuyer] = useState(DEFAULT_BUYER)
   const [run, setRun] = useState<AgentRun | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -21,6 +20,13 @@ export default function App() {
   const [announce, setAnnounce] = useState('')
   const refreshAudit = () => setAuditKey((k) => k + 1)
 
+  function saveKeys(e: FormEvent) {
+    e.preventDefault()
+    setKeys(keys)
+    setKeyDraft(getKeys())
+    refreshAudit()
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault()
     const buyer = buyerId.trim()
@@ -28,7 +34,6 @@ export default function App() {
     setAnnounce('Asking the agent…')
     setError(null)
     setRun(null)
-    setAuditBuyer(buyer)
     try {
       setRun(await runAgent({ text: text.trim(), requested_date: date, buyer_id: buyer }))
     } catch (err) {
@@ -53,6 +58,35 @@ export default function App() {
             the front door, “error” fails, anything else is ordered.
           </p>
         )}
+
+        <form className="card" aria-labelledby="keys-title" onSubmit={saveKeys}>
+          <h2 id="keys-title">Keys</h2>
+          <div className="row">
+            <div>
+              <label htmlFor="agent-key">Agent key</label>
+              <input
+                id="agent-key"
+                type="password"
+                autoComplete="off"
+                value={keys.agentKey}
+                onChange={(e) => setKeyDraft({ ...keys, agentKey: e.target.value })}
+              />
+            </div>
+            <div>
+              <label htmlFor="approver-key">Approver key</label>
+              <input
+                id="approver-key"
+                type="password"
+                autoComplete="off"
+                value={keys.approverKey}
+                onChange={(e) => setKeyDraft({ ...keys, approverKey: e.target.value })}
+              />
+            </div>
+          </div>
+          <button type="submit" className="secondary">
+            Save keys
+          </button>
+        </form>
 
         <form className="card" onSubmit={submit}>
           <h2>What do you need?</h2>
@@ -86,7 +120,7 @@ export default function App() {
           <RunResult key={run.audit_id} run={run} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} />
         )}
 
-        <AuditLog buyerId={auditBuyer} refreshKey={auditKey} />
+        <AuditLog refreshKey={auditKey} />
       </main>
     </>
   )
@@ -97,7 +131,14 @@ function BackendStatus() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    getHealth().then(setHealth, (e) => setError(errorText(e)))
+    let cancelled = false
+    getHealth().then(
+      (h) => !cancelled && (setHealth(h), setError(null)),
+      (e) => !cancelled && setError(errorText(e)),
+    )
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   if (error) return <p className="status bad">Backend offline: {error}</p>

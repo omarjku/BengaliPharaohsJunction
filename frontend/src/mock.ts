@@ -106,7 +106,10 @@ const MILK: Fixture = {
 const BUTTER: Fixture = {
   request: {
     summary: '10 kg unsalted butter, delivered Monday 16 Nov',
-    items: [{ query: 'unsalted butter', amount: 10, unit: 'kg', claims: [], exclude_allergens: [] }],
+    items: [
+      { query: 'unsalted butter', amount: 10, unit: 'kg', claims: [], exclude_allergens: [] },
+      { query: 'fresh herbs', amount: null, unit: null, claims: [], exclude_allergens: [] },
+    ],
   },
   lines: [
     {
@@ -119,6 +122,14 @@ const BUTTER: Fixture = {
       line_total_cents: 9700,
       why: 'Exact match (unsalted, 500 g), in stock for Monday.',
       chosen: true,
+    },
+    {
+      product: product({ id: '467000', name_en: 'Fresh herbs', sales_unit: 'ST', claims: [] }),
+      quote: quote({ product_id: '467000', price: 2.5 }),
+      quantity: null,
+      line_total_cents: null,
+      why: 'The request did not include an amount.',
+      chosen: false,
     },
   ],
   decision: decision('AUTO', []),
@@ -194,7 +205,7 @@ export const mockApi = {
       audit_id: log('valio_front_door', input.buyer_id, `Order via Valio front door: ${f.request.summary}`, f.decision),
       total_cents: chosen.reduce((a, l) => a + (l.line_total_cents ?? 0), 0),
       lines: chosen.map((l) => ({
-        product_id: l.product.id, name: l.product.name_en ?? l.product.id, quantity: l.quantity.quantity,
+        product_id: l.product.id, name: l.product.name_en ?? l.product.id, quantity: l.quantity?.quantity ?? null,
         unit: l.product.sales_unit, unit_price_cents: l.quote?.price != null ? Math.round(l.quote.price * 100) : null,
         line_total_cents: l.line_total_cents,
       })),
@@ -205,19 +216,19 @@ export const mockApi = {
     return { request: f.request, lines: f.lines, decision: f.decision, order, audit_id: log('buyer_agent', input.buyer_id, input.text, f.decision) }
   },
 
-  async decide(orderId: string, action: 'approve' | 'reject', approver: string): Promise<OrderResponse> {
+  async decide(orderId: string, action: 'approve' | 'reject'): Promise<OrderResponse> {
     await wait()
     const o = orders.get(orderId)
     if (!o) throw new Error('Request failed (404): Unknown order id')
     if (o.res.status !== 'pending_approval') throw new Error(`Request failed (409): Order is ${o.res.status}, not pending approval`)
     const status: OrderStatus = action === 'approve' ? 'confirmed' : 'rejected'
     const d = o.res.decision // the backend re-runs the gate on approve; the reasons the human saw stay on it
-    o.res = { ...o.res, status, decision: d, audit_id: log(`human:${approver}:${action}`, o.buyer, `Order ${orderId}`, d) }
+    o.res = { ...o.res, status, decision: d, audit_id: log(`human:Chef (mock key):${action}`, o.buyer, `Order ${orderId}`, d) }
     return o.res
   },
 
-  async audit(buyerId: string): Promise<AuditEntry[]> {
+  async audit(): Promise<AuditEntry[]> {
     await wait()
-    return audit.filter((e) => e.input.request.buyer_id === buyerId)
+    return audit
   },
 }
