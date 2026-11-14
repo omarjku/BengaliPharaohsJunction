@@ -39,3 +39,6 @@ class RuleContext:
     now: datetime  # timezone-aware; the only clock
     config: DecisionConfig
     recent_spend_cents: int = 0  # spend in the weekly window incl. pending orders (case 32)
+    # product ids that appear more than once in quotes or facts with DIFFERENT content: the rules
+    # cannot trust either copy, so ordered products among them ask a human.
+    conflicts: frozenset[str] = frozenset()

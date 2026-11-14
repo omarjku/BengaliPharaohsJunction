@@ -28,13 +28,6 @@ DEFAULT_PER_LINE_CAP_CENTS = 30000
 # They are never silently skipped: check_mandate asks a human instead.
 _UNENFORCED_KINDS = frozenset({RuleKind.REQUIRED_CLAIM, RuleKind.MAX_UNIT_PRICE_CENTS})
 
-_LIMIT_CHANGE = re.compile(
-    r"\b(raise|increase|change|set|update|override|remove|disable|lift|bypass|edit|modify)\b"
-    r"[^.\n]{0,40}\b(limit|limits|mandate|cap|budget|allergen rules?)\b",
-    re.IGNORECASE,
-)
-
-
 # ----------------------------------------------------------------------------- helpers
 
 
@@ -178,7 +171,7 @@ def unit_family(text: str | None) -> str | None:
 
 def check_mandate(ctx: RuleContext) -> list[Reason]:
     """D15/D16, cases 42, 47: missing / expired / unreadable mandate -> ASK; defaulted -> INFO;
-    agent trying to change its own limits -> DECLINE (LIMIT_CHANGE_ATTEMPT)."""
+    (T06.1: no text-based limit-change detection; the mandate cannot be changed from a request)."""
     out: list[Reason] = []
     mandate = ctx.mandate
     if mandate is None:
@@ -253,8 +246,6 @@ def check_mandate(ctx: RuleContext) -> list[Reason]:
                     {"limit_cents": order_limit_cents(ctx)},
                 )
             )
-    if _LIMIT_CHANGE.search(ctx.request.text or ""):
-        out.append(make_reason(ReasonCode.LIMIT_CHANGE_ATTEMPT, Severity.DECLINE))
     return out
 
 
@@ -337,6 +328,22 @@ def check_product(ctx: RuleContext) -> list[Reason]:
                     pid,
                 )
             )
+    return out
+
+
+def check_data_conflicts(ctx: RuleContext) -> list[Reason]:
+    """T06.1: a product that appears twice in quotes or facts with different content cannot be
+    trusted (the engine keeps one copy); ordered products among them ask a human."""
+    out: list[Reason] = []
+    for pid in sorted({line.product_id for line in ctx.lines} & ctx.conflicts):
+        out.append(
+            make_reason(
+                ReasonCode.DATA_MISSING,
+                Severity.ASK_HUMAN,
+                {"missing": "consistent data", "product": _name(ctx, pid), "conflict": True},
+                pid,
+            )
+        )
     return out
 
 
@@ -502,12 +509,12 @@ def _qty_unknown(ctx: RuleContext, quote) -> bool:
     return (
         not info.known
         or info.value is None
-        or info.value >= ctx.config.qty_unknown_threshold
+        or info.value in ctx.config.unknown_quantity_sentinels
     )
 
 
 def check_stock(ctx: RuleContext) -> list[Reason]:
-    """D7, D8, cases 4-8: unknown qty (known=False, None or >= threshold) -> QTY_UNKNOWN;
+    """D7, D8, cases 4-8: unknown qty (known=False, None or the exact placeholder 999999) -> QTY_UNKNOWN;
     0 < available < requested -> STOCK_PARTIAL; available == 0 -> STOCK_NONE. All ASK,
     always with alternatives. Compare against the MERGED line quantity."""
     out: list[Reason] = []
@@ -565,7 +572,7 @@ def check_stock(ctx: RuleContext) -> list[Reason]:
 
 def check_cutoff(ctx: RuleContext) -> list[Reason]:
     """D9, case 16-17: compare quote.cut_off.closing_time to ctx.now in config.timezone
-    (do not trust cut_off.passed); reached = passed -> ASK CUTOFF_PASSED with alternatives."""
+    (passed = the flag OR the clock); reached = passed -> ASK CUTOFF_PASSED with alternatives."""
     out: list[Reason] = []
     tz = ZoneInfo(ctx.config.timezone)
     now = _aware(ctx).astimezone(tz)
@@ -574,7 +581,7 @@ def check_cutoff(ctx: RuleContext) -> list[Reason]:
         if quote is None or quote.cut_off is None:
             continue
         closing = quote.cut_off.closing_time.astimezone(tz)
-        if now >= closing:
+        if now >= closing or quote.cut_off.passed:
             out.append(
                 make_reason(
                     ReasonCode.CUTOFF_PASSED,
@@ -591,14 +598,17 @@ def check_cutoff(ctx: RuleContext) -> list[Reason]:
 
 
 def check_delivery(ctx: RuleContext) -> list[Reason]:
-    """D10, D13, D14, cases 18-22: UNDELIVERABLE (availability UNAVAILABLE with unknown
-    quantity; STOCK_NONE is the known-zero case), DATE_NOT_HONOURED (INFO always; ASK when the
+    """D10, D13, D14, cases 18-22: UNDELIVERABLE (availability UNAVAILABLE, whatever the stock
+    number says; any other non-AVAILABLE status asks too), DATE_NOT_HONOURED (INFO always; ASK when the
     available_date is later than request.needed_by), LOW_RELIABILITY (< min_reliability; missing
     record only ASK above reliability_missing_ask_above_cents), QUOTE_STALE."""
     out: list[Reason] = []
     now = _aware(ctx)
     total = _order_total(ctx)
     min_rel = _min_reliability(ctx)
+    rel_rule = ctx.mandate is not None and any(
+        r.kind is RuleKind.MIN_DELIVERY_RELIABILITY for r in ctx.mandate.hard_rules
+    )
     needed = ctx.request.needed_by
     for line in ctx.lines:
         pid = line.product_id
@@ -606,9 +616,23 @@ def check_delivery(ctx: RuleContext) -> list[Reason]:
         facts = ctx.facts.get(pid)
         product = _name(ctx, pid)
         if quote is not None:
-            if quote.availability is Availability.UNAVAILABLE and _qty_unknown(ctx, quote):
+            if quote.availability is Availability.UNAVAILABLE:
+                # sales-blocked / undeliverable: never AUTO, even with a normal-looking stock number
                 out.append(
                     make_reason(ReasonCode.UNDELIVERABLE, Severity.ASK_HUMAN, {"product": product}, pid)
+                )
+            elif quote.availability is not Availability.AVAILABLE:
+                out.append(
+                    make_reason(
+                        ReasonCode.DATA_MISSING,
+                        Severity.ASK_HUMAN,
+                        {
+                            "missing": "confirmed availability",
+                            "product": product,
+                            "availability": quote.availability.value,
+                        },
+                        pid,
+                    )
                 )
             avail_date = quote.available_date
             if avail_date is not None and needed is not None and avail_date != needed:
@@ -644,14 +668,18 @@ def check_delivery(ctx: RuleContext) -> list[Reason]:
         if facts is not None:
             score = facts.reliability
             if score is None:
-                if total > ctx.config.reliability_missing_ask_above_cents:
+                if rel_rule or total > ctx.config.reliability_missing_ask_above_cents:
                     out.append(
                         make_reason(
                             ReasonCode.LOW_RELIABILITY,
                             Severity.ASK_HUMAN,
                             {
-                                "detail": f"No delivery track record for {product}, "
-                                "and this order is large enough to matter.",
+                                "detail": f"No delivery track record for {product}, and "
+                                + (
+                                    "your rules require a minimum reliability."
+                                    if rel_rule
+                                    else "this order is large enough to matter."
+                                ),
                                 "reliability": None,
                                 "order_total_cents": total,
                             },
@@ -733,6 +761,7 @@ RULES: tuple[Rule, ...] = (
     check_mandate,
     check_quantity,
     check_product,
+    check_data_conflicts,
     check_blocklist,
     check_allergens,
     check_price,

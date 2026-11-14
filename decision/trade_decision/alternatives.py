@@ -64,19 +64,19 @@ def find_alternatives(ctx: RuleContext, product_id: str) -> list[Alternative]:
         facts = ctx.facts.get(pid)
         if facts is None:
             continue
-        if quote.availability is Availability.UNAVAILABLE:
+        if quote.availability is not Availability.AVAILABLE:  # same rule as check_delivery
             continue
         if quote.unit_price_cents is None or quote.unit_price_cents <= 0:
             continue
         if not _allergen_safe(ctx, facts):
             continue
-        if quote.cut_off is not None and now >= quote.cut_off.closing_time:
+        if quote.cut_off is not None and (now >= quote.cut_off.closing_time or quote.cut_off.passed):
             continue
         info = quote.quantity
         if (
             not info.known
             or info.value is None
-            or info.value >= ctx.config.qty_unknown_threshold
+            or info.value in ctx.config.unknown_quantity_sentinels
             or info.value < qty
         ):
             continue

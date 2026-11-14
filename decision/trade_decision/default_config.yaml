@@ -2,7 +2,7 @@
 # Rule logic stays in code; only numbers live here.
 default_order_limit_cents: 50000        # EUR 500 per order when the mandate has no limit (D1, D15)
 price_change_tolerance_pct: 5.0         # D11: price moved more than this vs the expected price -> ASK
-qty_unknown_threshold: 100000           # D7: available qty >= this (or null) means "unknown", not "plenty"
+unknown_quantity_sentinels: [999999]    # D7: only Valio's exact placeholder means 'unknown'; other big stock is plenty
 suspicious_quantity: 100000             # cases 3, 15: a requested quantity this large looks like a typo
 min_reliability: 0.8                    # D13: score below this -> ASK
 reliability_missing_ask_above_cents: 20000  # D13: no reliability record only matters above EUR 200
