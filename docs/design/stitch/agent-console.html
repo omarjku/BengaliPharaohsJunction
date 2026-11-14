@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+
+<html lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="web_standard" name="shell-type"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config = { darkMode: "class", theme: { extend: { "colors": { "secondary-container": "#dae3ef", "surface-container": "#eceef3", "good-bg": "#E8F5EC", "surface-container-low": "#f2f3f9", "secondary-fixed-dim": "#bec7d3", "on-secondary": "#ffffff", "primary-container": "#0b5cad", "on-error": "#ffffff", "surface-container-high": "#e6e8ed", "primary": "#004485", "bad-bg": "#FDECEA", "on-secondary-fixed-variant": "#3f4851", "warn": "#8A5A00", "surface-dim": "#d8dadf", "surface-container-lowest": "#ffffff", "primary-fixed": "#d5e3ff", "tertiary": "#3d464d", "bad": "#B3261E", "tertiary-fixed-dim": "#bec7d1", "on-primary-container": "#c0d6ff", "on-primary": "#ffffff", "on-surface": "#191c20", "error-container": "#ffdad6", "primary-fixed-dim": "#a8c8ff", "good": "#1E7A3C", "on-tertiary-fixed-variant": "#3f4850", "tertiary-fixed": "#dae3ed", "on-primary-fixed-variant": "#004689", "inverse-surface": "#2e3135", "border": "#D9DDE2", "tertiary-container": "#545d65", "on-tertiary-fixed": "#141d24", "inverse-on-surface": "#eff0f6", "on-tertiary-container": "#cdd6e0", "on-background": "#191c20", "error": "#ba1a1a", "surface": "#FFFFFF", "secondary": "#565f69", "background": "#F4F5F7", "surface-tint": "#115eaf", "on-error-container": "#93000a", "outline-variant": "#c2c6d3", "on-primary-fixed": "#001b3c", "on-tertiary": "#ffffff", "on-secondary-container": "#5c656f", "surface-bright": "#f8f9ff", "surface-container-highest": "#e1e2e8", "warn-bg": "#FFF4DC", "on-surface-variant": "#424751", "surface-variant": "#e1e2e8", "outline": "#727783", "inverse-primary": "#a8c8ff", "on-secondary-fixed": "#141c25", "secondary-fixed": "#dae3ef" }, "borderRadius": { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" }, "spacing": { "space-sm": "0.5rem", "space-lg": "1.5rem", "margin-desktop": "2rem", "margin": "1rem", "space-xl": "2rem", "gutter": "1rem", "gutter-desktop": "1.5rem", "space-md": "1rem", "space-xs": "0.25rem" }, "fontFamily": { "label-md": ["Inter"], "headline-md": ["Inter"], "headline-lg": ["Inter"], "label-sm": ["Inter"], "body-lg": ["Inter"], "headline-lg-mobile": ["Inter"], "numeric-table": ["Inter"], "body-md": ["Inter"] }, "fontSize": { "label-md": ["14px", { "lineHeight": "20px", "fontWeight": "500" }], "headline-md": ["20px", { "lineHeight": "28px", "letterSpacing": "-0.005em", "fontWeight": "600" }], "headline-lg": ["28px", { "lineHeight": "34px", "letterSpacing": "-0.01em", "fontWeight": "600" }], "label-sm": ["12px", { "lineHeight": "16px", "letterSpacing": "0.04em", "fontWeight": "500" }], "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }], "headline-lg-mobile": ["24px", { "lineHeight": "30px", "letterSpacing": "-0.01em", "fontWeight": "600" }], "numeric-table": ["14px", { "lineHeight": "20px", "fontWeight": "600" }], "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }] } } } }</script></head><body class="bg-background font-body-md text-body-md text-on-surface antialiased"><header class="fixed top-0 left-0 right-0 z-50 bg-surface border-b border-border"><div class="h-16 max-w-[1120px] mx-auto px-margin md:px-margin-desktop flex items-center justify-between"><div class="flex items-center gap-space-lg"><div class="flex items-center gap-space-sm"><img alt="Front Door Logo" class="h-8 w-auto object-contain" src="https://lh3.googleusercontent.com/aida/ALJJyrAfqoxVoi5xruTrbVM0f27JAE660K3fTXosc7si4jaFoJLyKmhVDf34pmhB6kjoUszzArYAmxnxj-Z0ivxeS2AwCMxjyun1_bLtSXBxoWKDPNDii1NsNVFF5HGM-FH01kZ-SnXGaPZ5VLoq_Ws3DF0UFL4_uJjn7znhEublRr0OdQ4YBOb5-og_wPpoa8X-dObdsoUtOmETNC_I2BghF3doBIiSXWvYvorUS1UZaFI-xA"/><span class="font-headline-md text-headline-md text-on-surface tracking-tight">Front Door</span></div><div class="h-4 w-[1px] bg-border hidden sm:block"></div><nav class="flex items-center gap-space-lg h-16" data-active-classes="text-primary font-label-md text-label-md border-b-2 border-primary"><a aria-current="page" class="flex items-center h-full px-space-xs transition-colors text-primary font-label-md text-label-md border-b-2 border-primary" data-path="agent-console" href="#">Agent Console</a><a class="text-on-surface-variant font-label-md text-label-md hover:text-on-surface flex items-center h-full px-space-xs transition-colors" data-path="audit-log" href="#">Audit Log</a><a class="text-on-surface-variant font-label-md text-label-md hover:text-on-surface flex items-center h-full px-space-xs transition-colors" data-path="keys-panel" href="#">Keys</a></nav></div><div class="flex items-center gap-space-md"><div class="text-right hidden sm:block"><span class="block font-label-md text-label-md text-on-surface leading-tight">Chef Aino</span><span class="block font-label-sm text-label-sm text-on-surface-variant">Lapland Kitchen</span></div><img alt="Profile" class="w-8 h-8 rounded-full object-cover border border-border" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDmM3CfdLQJUqf2SbVZ_J8d8cvbsseLZ6uaOObX6m69UeilxswMJU2HvkjiM44AX7lYaDpUqvzHXhIuz2Zxo1vEqTvbN2nrbIv8CKSo9JXYDPI7E_xvxpaWCEpVN6uC2jUhMGZsoO834zeyANOjGYQ-Q-_tHhDN1TIiuMmdRSEKtYpIWS-WFLtbN28yEQd5X6SOJrCq2G8NiTxl8fFDbULiFS2rE5hrp-SQTkp2TDHq"/></div></div></header><main class="w-full pt-16 min-h-screen bg-background"><div class="flex flex-col w-full">
+<div class="w-full max-w-[1120px] mx-auto px-margin md:px-margin-desktop py-space-md md:py-space-xl space-y-space-lg">
+<!-- Top Connectivity Sub-Header / Context Bar -->
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-space-xs bg-surface border border-border rounded-lg px-space-md py-space-sm">
+<div class="flex items-center gap-space-sm min-w-0">
+<span class="relative flex h-2.5 w-2.5 shrink-0">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-good opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-good"></span>
+</span>
+<span class="font-label-md text-label-md text-on-surface truncate">
+          Valio Aimo B2B Purchasing Connection
+        </span>
+<span class="hidden md:inline font-label-sm text-label-sm text-on-surface-variant">·</span>
+<span class="font-label-sm text-label-sm text-good bg-good-bg px-2 py-0.5 rounded-full whitespace-nowrap">
+          Connected (API Sync 2m ago)
+        </span>
+</div>
+<div class="flex items-center gap-space-sm text-on-surface-variant font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[16px]">lock</span>
+<span>Secured Node · Node ID: FI-RVN-04</span>
+</div>
+</div>
+<!-- Request Card -->
+<section class="bg-surface border border-border rounded-lg p-space-md md:p-space-lg space-y-space-md">
+<div class="flex items-center justify-between border-b border-border pb-space-sm">
+<div class="flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-primary text-[18px]">terminal</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant tracking-wider uppercase">Order Request</span>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Chef Terminal Session #8491</span>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-space-md items-end">
+<div class="lg:col-span-6 space-y-space-xs">
+<label class="block font-label-md text-label-md text-on-surface" for="request-input">What do you need?</label>
+<div class="relative">
+<input class="w-full h-10 px-space-md bg-surface border border-border rounded-lg font-body-md text-body-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all" id="request-input" type="text" value="1,000 L lactose-free milk for Monday"/>
+</div>
+</div>
+<div class="lg:col-span-4 space-y-space-xs">
+<label class="block font-label-md text-label-md text-on-surface" for="delivery-date">Delivery date</label>
+<div class="relative">
+<input class="w-full h-10 px-space-md bg-surface border border-border rounded-lg font-body-md text-body-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all" id="delivery-date" type="text" value="Mon, 21 Oct 2024 · Before 07:00"/>
+<span class="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant pointer-events-none text-[20px]">calendar_today</span>
+</div>
+</div>
+<div class="lg:col-span-2">
+<button class="w-full h-10 px-space-md bg-primary-container hover:bg-primary text-on-primary font-label-md text-label-md rounded-lg flex items-center justify-center gap-space-xs transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2" type="button">
+<span class="material-symbols-outlined text-[18px]">bolt</span>
+<span>Ask the agent</span>
+</button>
+</div>
+</div>
+</section>
+<!-- Hero Decision Card -->
+<section class="bg-surface border border-border border-l-4 border-l-warn rounded-lg p-space-md md:p-space-lg space-y-space-md">
+<!-- Status Chip & AI Confidence -->
+<div class="flex flex-wrap items-center justify-between gap-space-sm">
+<div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-warn-bg text-warn font-label-md text-label-md">
+<span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 1;">warning</span>
+<span>Needs your OK</span>
+</div>
+<div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-good-bg text-good font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[16px]">verified</span>
+<span>Gemini confidence 0.96 · High match confidence</span>
+</div>
+</div>
+<!-- Plain Headline -->
+<div>
+<h1 class="font-headline-lg text-headline-lg text-on-surface tracking-tight">
+          €1,560.00 is above your €1,500.00 auto-approve limit
+        </h1>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1">
+          Automated purchasing holds orders breaching custom kitchen ceiling constraints until manual authorization.
+        </p>
+</div>
+<!-- Itemized Triggers List -->
+<div class="space-y-space-xs bg-surface-container-low rounded-lg p-space-md border border-border">
+<div class="flex items-start gap-space-sm">
+<span class="material-symbols-outlined text-warn text-[20px] shrink-0 mt-0.5">shield</span>
+<span class="font-body-md text-body-md text-on-surface">
+            Order value exceeds threshold by <strong class="font-numeric-table text-numeric-table">€60.00</strong>. <span class="text-on-surface-variant">Fix: One-click Chef approval required.</span>
+</span>
+</div>
+<div class="flex items-start gap-space-sm">
+<span class="material-symbols-outlined text-on-surface-variant text-[20px] shrink-0 mt-0.5">schedule</span>
+<span class="font-body-md text-body-md text-on-surface">
+            Order cut-off is Sunday 17:00 (<strong class="font-label-md text-label-md">14 hours remaining</strong>). <span class="text-on-surface-variant">Fix: Ready to dispatch upon your approval.</span>
+</span>
+</div>
+<div class="flex items-start gap-space-sm">
+<span class="material-symbols-outlined text-good text-[20px] shrink-0 mt-0.5">check_circle</span>
+<span class="font-body-md text-body-md text-on-surface">
+            100% lactose-free compliance verified against Valio product specifications.
+          </span>
+</div>
+</div>
+<!-- Actions Toolbar -->
+<div class="flex flex-wrap items-center justify-between gap-space-md pt-space-xs">
+<div class="flex flex-wrap items-center gap-space-sm">
+<button class="h-10 px-space-md bg-primary-container hover:bg-primary text-on-primary font-label-md text-label-md rounded-lg flex items-center gap-space-xs transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2" id="btn-approve" type="button">
+<span class="material-symbols-outlined text-[18px]">check</span>
+<span>Approve order (€1,560.00)</span>
+</button>
+<button class="h-10 px-space-md bg-surface border border-bad hover:bg-bad-bg text-bad font-label-md text-label-md rounded-lg transition-colors focus:outline-none" id="btn-reject" type="button">
+            Reject
+          </button>
+</div>
+<button class="font-label-md text-label-md text-primary hover:text-on-primary-fixed-variant inline-flex items-center gap-1 hover:underline" type="button">
+<span>Modify quantities</span>
+<span class="material-symbols-outlined text-[16px]">edit</span>
+</button>
+</div>
+</section>
+<!-- Candidate Products Section -->
+<section class="space-y-space-sm">
+<div class="flex items-center justify-between">
+<div>
+<h2 class="font-headline-md text-headline-md text-on-surface">Evaluated Candidates</h2>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Valio Aimo Catalog · 3 items evaluated</span>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Live Stock Matrix FI</span>
+</div>
+<div class="space-y-space-xs">
+<!-- Chosen Item Row -->
+<div class="bg-[#E7F0FA] border border-border border-l-4 border-l-primary-container rounded-lg p-space-md transition-all">
+<div class="flex flex-col lg:flex-row lg:items-center justify-between gap-space-md">
+<div class="space-y-1.5 min-w-0">
+<div class="flex flex-wrap items-center gap-2">
+<span class="px-2 py-0.5 rounded-full bg-primary-container text-on-primary font-label-sm text-label-sm font-semibold">Chosen</span>
+<span class="px-2 py-0.5 rounded-full bg-good-bg text-good font-label-sm text-label-sm">Gemini 0.96</span>
+<h3 class="font-headline-md text-body-lg font-semibold text-on-surface">Valio Eila® Lactose-Free Whole Milk 1 L</h3>
+<span class="font-label-sm text-label-sm text-on-surface-variant">· Valio Meijerit Oy</span>
+</div>
+<p class="font-body-md text-body-md text-on-surface">
+<strong class="font-medium text-primary">Why this one:</strong> Exact match, best freshness guarantee, direct pallet delivery to Lapland storage.
+              </p>
+<div class="flex flex-wrap items-center gap-2 pt-0.5">
+<span class="inline-flex items-center gap-1 text-good font-label-sm text-label-sm font-medium">
+<span class="material-symbols-outlined text-[16px]">check</span> In stock, order by Sun 17:00
+                </span>
+<span class="font-label-sm text-label-sm text-border">|</span>
+<span class="px-2 py-0.5 rounded bg-surface border border-border text-on-surface-variant font-label-sm text-label-sm">on time 98.4%</span>
+<span class="px-2 py-0.5 rounded bg-surface border border-border text-on-surface-variant font-label-sm text-label-sm">origin FI 🇫🇮</span>
+<span class="px-2 py-0.5 rounded bg-surface border border-border text-on-surface-variant font-label-sm text-label-sm">1.1 kg CO₂/kg</span>
+</div>
+</div>
+<div class="flex lg:flex-col items-baseline lg:items-end justify-between shrink-0">
+<span class="font-numeric-table text-numeric-table text-on-surface-variant">1,000 × 1 L · €1.56 / L</span>
+<span class="font-headline-md text-headline-md text-on-surface tabular-nums">€1,560.00</span>
+</div>
+</div>
+</div>
+<!-- Alternate Row 2 (Muted / Rejected) -->
+<div class="bg-surface border border-border rounded-lg p-space-md opacity-85 hover:opacity-100 transition-opacity">
+<div class="flex flex-col lg:flex-row lg:items-center justify-between gap-space-md">
+<div class="space-y-1.5 min-w-0">
+<div class="flex flex-wrap items-center gap-2">
+<span class="px-2 py-0.5 rounded-full bg-warn-bg text-warn font-label-sm text-label-sm">Gemini 0.72</span>
+<h3 class="font-body-lg text-body-lg text-secondary font-medium">Valio Arki® Lactose-Free Milk Drink 1 L</h3>
+<span class="font-label-sm text-label-sm text-on-surface-variant">· Valio Meijerit Oy</span>
+</div>
+<p class="font-body-md text-body-md text-secondary">
+<span class="font-label-sm text-label-sm text-bad bg-bad-bg px-2 py-0.5 rounded font-medium">Rejected</span>
+<span class="ml-1 text-on-surface-variant">"Milk drink" does not meet kitchen whole-milk culinary spec.</span>
+</p>
+<div class="flex flex-wrap items-center gap-2 pt-0.5">
+<span class="inline-flex items-center gap-1 text-warn font-label-sm text-label-sm font-medium">
+<span class="material-symbols-outlined text-[16px]">help</span> Stock unknown · Requires supplier inquiry
+                </span>
+<span class="font-label-sm text-label-sm text-border">|</span>
+<span class="px-2 py-0.5 rounded bg-surface-container-low border border-border text-on-surface-variant font-label-sm text-label-sm">origin FI 🇫🇮</span>
+<span class="px-2 py-0.5 rounded bg-surface-container-low border border-border text-on-surface-variant font-label-sm text-label-sm">1.3 kg CO₂/kg</span>
+</div>
+</div>
+<div class="flex lg:flex-col items-baseline lg:items-end justify-between shrink-0">
+<span class="font-numeric-table text-numeric-table text-on-surface-variant">1,000 × 1 L · €1.38 / L</span>
+<span class="font-numeric-table text-numeric-table text-secondary tabular-nums">€1,380.00</span>
+</div>
+</div>
+</div>
+<!-- Alternate Row 3 (Muted / Rejected) -->
+<div class="bg-surface border border-border rounded-lg p-space-md opacity-85 hover:opacity-100 transition-opacity">
+<div class="flex flex-col lg:flex-row lg:items-center justify-between gap-space-md">
+<div class="space-y-1.5 min-w-0">
+<div class="flex flex-wrap items-center gap-2">
+<span class="px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface font-label-sm text-label-sm">Gemini 0.88</span>
+<h3 class="font-body-lg text-body-lg text-secondary font-medium">Valio Luomu® Organic Lactose-Free Milk 1 L</h3>
+<span class="font-label-sm text-label-sm text-on-surface-variant">· Valio Luomu Oy</span>
+</div>
+<p class="font-body-md text-body-md text-secondary">
+<span class="font-label-sm text-label-sm text-bad bg-bad-bg px-2 py-0.5 rounded font-medium">Rejected</span>
+<span class="ml-1 text-on-surface-variant">Delivery date cannot be met for Monday morning service.</span>
+</p>
+<div class="flex flex-wrap items-center gap-2 pt-0.5">
+<span class="inline-flex items-center gap-1 text-bad font-label-sm text-label-sm font-medium">
+<span class="material-symbols-outlined text-[16px]">cancel</span> Cut-off passed for Monday delivery
+                </span>
+<span class="font-label-sm text-label-sm text-border">|</span>
+<span class="px-2 py-0.5 rounded bg-surface-container-low border border-border text-on-surface-variant font-label-sm text-label-sm">origin FI 🇫🇮</span>
+<span class="px-2 py-0.5 rounded bg-surface-container-low border border-border text-on-surface-variant font-label-sm text-label-sm">0.9 kg CO₂/kg</span>
+</div>
+</div>
+<div class="flex lg:flex-col items-baseline lg:items-end justify-between shrink-0">
+<span class="font-numeric-table text-numeric-table text-on-surface-variant">1,000 × 1 L · €1.85 / L</span>
+<span class="font-numeric-table text-numeric-table text-secondary tabular-nums">€1,850.00</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Split-Order Proposal Card (Stock Constrained Scenario) -->
+<section class="bg-surface border border-border rounded-lg p-space-md md:p-space-lg space-y-space-md">
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-space-xs border-b border-border pb-space-sm">
+<div>
+<div class="flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-primary text-[20px]">alt_route</span>
+<h3 class="font-headline-md text-headline-md text-on-surface">Split-order proposal · Stock distribution</h3>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant mt-0.5">
+            Only 850 L available in primary warehouse hub, remaining 150 L routed from regional depot
+          </p>
+</div>
+<span class="font-label-sm text-label-sm text-good bg-good-bg px-2.5 py-1 rounded-full whitespace-nowrap self-start sm:self-auto">
+          Combined ETA Guaranteed
+        </span>
+</div>
+<!-- Compact Routing Table -->
+<div class="border border-border rounded-lg overflow-x-auto">
+<table class="w-full text-left font-body-md text-body-md">
+<thead class="bg-surface-container-low font-label-sm text-label-sm text-on-surface-variant uppercase border-b border-border">
+<tr>
+<th class="px-space-md py-space-sm font-medium">Batch</th>
+<th class="px-space-md py-space-sm font-medium">Quantity</th>
+<th class="px-space-md py-space-sm font-medium">Dispatch Node</th>
+<th class="px-space-md py-space-sm font-medium">Target Delivery</th>
+<th class="px-space-md py-space-sm font-medium text-right">Freight Surcharge</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-border">
+<tr>
+<td class="px-space-md py-space-sm font-medium text-on-surface">Consignment 1</td>
+<td class="px-space-md py-space-sm font-numeric-table text-numeric-table">850 L</td>
+<td class="px-space-md py-space-sm">Hub Vantaa (Central)</td>
+<td class="px-space-md py-space-sm text-good font-medium">Mon 06:30</td>
+<td class="px-space-md py-space-sm text-right font-numeric-table text-numeric-table">€0.00</td>
+</tr>
+<tr>
+<td class="px-space-md py-space-sm font-medium text-on-surface">Consignment 2</td>
+<td class="px-space-md py-space-sm font-numeric-table text-numeric-table">150 L</td>
+<td class="px-space-md py-space-sm">Hub Tampere (Regional)</td>
+<td class="px-space-md py-space-sm text-good font-medium">Mon 07:15</td>
+<td class="px-space-md py-space-sm text-right font-numeric-table text-numeric-table">€0.00</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-space-md pt-space-xs">
+<div>
+<span class="font-label-sm text-label-sm text-on-surface-variant block">Consolidated Order Amount</span>
+<span class="font-headline-md text-headline-md text-on-surface tabular-nums">€1,560.00</span>
+<span class="font-label-sm text-label-sm text-good ml-2">(No extra freight charge)</span>
+</div>
+<button class="h-10 px-space-md bg-surface border border-border hover:border-primary text-on-surface font-label-md text-label-md rounded-lg flex items-center justify-center gap-space-xs transition-colors" type="button">
+<span class="material-symbols-outlined text-[18px]">done_all</span>
+<span>Use this order</span>
+</button>
+</div>
+</section>
+<!-- Substitutes Panel (Fallback options) -->
+<section class="space-y-space-sm">
+<div class="flex items-center justify-between">
+<div>
+<h2 class="font-headline-md text-headline-md text-on-surface">Pre-screened Alternatives</h2>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Verified catalog fallbacks match chef profile parameters</span>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-space-md">
+<!-- Best Tier -->
+<div class="bg-surface border border-border rounded-lg p-space-md flex flex-col justify-between space-y-space-md hover:border-primary-container transition-colors">
+<div class="space-y-space-sm">
+<div class="flex items-center justify-between">
+<span class="px-2 py-0.5 rounded-full bg-primary-fixed text-on-primary-fixed-variant font-label-sm text-label-sm font-semibold">Best</span>
+<span class="font-label-sm text-label-sm text-good">99.2% on-time</span>
+</div>
+<div>
+<h3 class="font-body-lg text-body-lg font-semibold text-on-surface">Valio Eila® Whole 1 L (Pallet Pack)</h3>
+<p class="font-label-sm text-label-sm text-on-surface-variant mt-0.5">Bulk unit SKU #49021</p>
+</div>
+<div class="bg-surface-container-low rounded p-2.5 space-y-1">
+<span class="font-label-sm text-label-sm text-on-surface font-medium block">Why it's safe:</span>
+<p class="font-label-sm text-label-sm text-on-surface-variant leading-relaxed">
+                Zero lactose verified, 100% pasteurized Finnish dairy. Same culinary density and froth characteristics.
+              </p>
+</div>
+</div>
+<div class="border-t border-border pt-space-sm flex items-center justify-between">
+<span class="font-numeric-table text-numeric-table text-on-surface">€1.56 / L</span>
+<button class="font-label-md text-label-md text-primary hover:underline" type="button">Select option</button>
+</div>
+</div>
+<!-- Better Tier -->
+<div class="bg-surface border border-border rounded-lg p-space-md flex flex-col justify-between space-y-space-md hover:border-primary-container transition-colors">
+<div class="space-y-space-sm">
+<div class="flex items-center justify-between">
+<span class="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm text-label-sm font-semibold">Better</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">97.8% on-time</span>
+</div>
+<div>
+<h3 class="font-body-lg text-body-lg font-semibold text-on-surface">Valio Eila® Semi-Skimmed 1 L</h3>
+<p class="font-label-sm text-label-sm text-on-surface-variant mt-0.5">Light culinary alternative SKU #49018</p>
+</div>
+<div class="bg-surface-container-low rounded p-2.5 space-y-1">
+<span class="font-label-sm text-label-sm text-on-surface font-medium block">Why it's safe:</span>
+<p class="font-label-sm text-label-sm text-on-surface-variant leading-relaxed">
+                Zero lactose guaranteed, certified Finnish dairy origin. Fat level 1.5% instead of requested whole 3.0%.
+              </p>
+</div>
+</div>
+<div class="border-t border-border pt-space-sm flex items-center justify-between">
+<span class="font-numeric-table text-numeric-table text-on-surface">€1.49 / L</span>
+<button class="font-label-md text-label-md text-primary hover:underline" type="button">Select option</button>
+</div>
+</div>
+<!-- Good Tier -->
+<div class="bg-surface border border-border rounded-lg p-space-md flex flex-col justify-between space-y-space-md hover:border-primary-container transition-colors">
+<div class="space-y-space-sm">
+<div class="flex items-center justify-between">
+<span class="px-2 py-0.5 rounded-full bg-surface-container-low text-on-surface-variant font-label-sm text-label-sm font-semibold">Good</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">95.4% on-time</span>
+</div>
+<div>
+<h3 class="font-body-lg text-body-lg font-semibold text-on-surface">Maitomaa Free 1 L</h3>
+<p class="font-label-sm text-label-sm text-on-surface-variant mt-0.5">Third-party certified dairy SKU #88120</p>
+</div>
+<div class="bg-surface-container-low rounded p-2.5 space-y-1">
+<span class="font-label-sm text-label-sm text-on-surface font-medium block">Why it's safe:</span>
+<p class="font-label-sm text-label-sm text-on-surface-variant leading-relaxed">
+                Standard enzyme treated lactose-free liquid. Fully certified FI hygiene chain.
+              </p>
+</div>
+</div>
+<div class="border-t border-border pt-space-sm flex items-center justify-between">
+<span class="font-numeric-table text-numeric-table text-on-surface">€1.42 / L</span>
+<button class="font-label-md text-label-md text-primary hover:underline" type="button">Select option</button>
+</div>
+</div>
+</div>
+</section>
+</div>
+</div>
+<script>
+  // Simple UI Feedback for primary decision actions
+  document.getElementById('btn-approve')?.addEventListener('click', function() {
+    this.innerHTML = '<span class="material-symbols-outlined text-[18px]">done</span><span>Order Authorized</span>';
+    this.classList.remove('bg-primary-container', 'hover:bg-primary');
+    this.classList.add('bg-good', 'text-on-primary');
+  });
+
+  document.getElementById('btn-reject')?.addEventListener('click', function() {
+    this.textContent = 'Order Rejected';
+    this.classList.add('bg-bad', 'text-on-primary', 'border-bad');
+  });
+</script></main><footer class="w-full border-t border-border bg-surface py-space-md"><div class="max-w-[1120px] mx-auto px-margin md:px-margin-desktop flex flex-col sm:flex-row items-center justify-between gap-space-xs"><span class="font-label-sm text-label-sm text-on-surface-variant">Front Door Autonomous Purchasing · Nordic Operations Console</span><span class="font-label-sm text-label-sm text-on-surface-variant">Operational Node: Rovaniemi Core</span></div></footer></body></html>
