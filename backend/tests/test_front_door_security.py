@@ -244,7 +244,7 @@ def test_file_io_runs_off_the_event_loop(shop, monkeypatch):
         return await real(fn, *a, **k)
     monkeypatch.setattr(orders.asyncio, "to_thread", spy)
     order([("463335", 1)])
-    assert ran == ["_save", "_append_audit"]
+    assert ran == ["_commit_sync"]  # order save + audit line: one thread call, all or nothing
 
 
 def test_torn_audit_lines_are_skipped(shop):

@@ -275,3 +275,59 @@ def test_rules_saved_mid_approval_make_it_a_409(shop, monkeypatch):
     r = c.post(f"/api/orders/{oid}/approve", headers=AP)
     assert r.status_code == 409 and "rules changed" in r.json()["detail"]
     assert orders._store()[oid]["status"] == "pending_approval"
+
+
+# --- Codex #11 (Room 3's review): an order never exists without its audit line
+def failing_audit(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(orders, "_append_audit", boom)
+
+
+def test_audit_failure_on_place_rolls_the_order_back(shop, monkeypatch):
+    store_mandate(MANDATE)
+    failing_audit(monkeypatch)
+    r = c.post("/api/orders", headers=AG, json=body(1000))  # would be stored as pending
+    assert r.status_code == 503 and "nothing was changed" in r.json()["detail"]
+    assert orders._store() == {}
+    monkeypatch.setattr(orders, "_orders", None)
+    assert orders._store() == {}  # not on disk either
+
+
+def test_audit_failure_on_approve_or_reject_leaves_the_order_as_it_was(shop, monkeypatch):
+    held = post(1000).json()
+    before = json.loads(json.dumps(orders._store()[held["order_id"]]))
+    failing_audit(monkeypatch)
+    for action in ("approve", "reject"):
+        r = c.post(f"/api/orders/{held['order_id']}/{action}", headers=AP)
+        assert r.status_code == 503, action
+        assert orders._store()[held["order_id"]] == before
+        monkeypatch.setattr(orders, "_orders", None)
+        assert orders._store()[held["order_id"]] == before  # the file was rolled back too
+
+
+def test_cancelled_request_still_commits_order_and_audit_together(shop, monkeypatch):
+    store_mandate(MANDATE)
+    real, done = orders._save, []
+
+    def slow_save(*a, **k):  # the order file is being written when the client goes away: before the fix the
+        import time as _t    # coroutine was cancelled here and the audit line after it never written
+        _t.sleep(0.2)
+        real(*a, **k)
+        done.append(1)
+    monkeypatch.setattr(orders, "_save", slow_save)
+    orders._order_lock = asyncio.Lock()
+
+    async def go():
+        from types import SimpleNamespace as L
+        task = asyncio.create_task(orders.place("chef", REQ, [L(product_id="463335", quantity=1000)],
+                                                mandates.get("chef")))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0.4)  # the shielded commit finishes in its thread
+    asyncio.run(go())
+    assert done and len(orders._store()) == 1
+    [entry] = orders.audit_log("chef", 10)
+    assert entry["input"]["request"]["id"] == next(iter(orders._store()))  # the order and its audit line, together

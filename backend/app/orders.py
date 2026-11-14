@@ -6,6 +6,7 @@ refused → nothing stored, still audited. Approve re-runs the gate with fresh q
 Who may call what is decided in auth.py: the buyer comes from the caller's key, never from the body.
 """
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -173,9 +174,9 @@ def security_event(event: str, route: str, ip: str | None, buyer_id: str | None 
                  **detail})
 
 
-async def _audit(actor: str, order_id: str, buyer_id: str, requested_date: str, lines: list[dict], mandate: Mandate | None,
+def _entry(actor: str, order_id: str, buyer_id: str, requested_date: str, lines: list[dict], mandate: Mandate | None,
            res: gate.GateResult | None, decision=None, now: datetime | None = None, action: str = "order",
-           status: str | None = None) -> str:
+           status: str | None = None) -> tuple[AuditEntry, dict]:
     """The contracts have no Order shape, so the order is recorded as the PurchaseRequest it fulfils."""
     now = now or datetime.now(timezone.utc)
     text = "Order via Valio front door: " + "; ".join(
@@ -189,8 +190,51 @@ async def _audit(actor: str, order_id: str, buyer_id: str, requested_date: str, 
         input=AuditInput(request=request, mandate=mandate, quotes=res.quotes if res else []),
         decision=res.decision if res else decision, rejected_options=res.rejected_options if res else [])
     signer = actor.split(":")[1] if actor.startswith("human:") else None
-    await asyncio.to_thread(_append_audit, entry, {"action": action, "status": status, "signed_off_by": signer,
-                                                   "mandate_version": mandates.version(mandate)})
+    return entry, {"action": action, "status": status, "signed_off_by": signer,
+                   "mandate_version": mandates.version(mandate)}
+
+
+async def _audit(*args, **kwargs) -> str:
+    """An audit line on its own (no order change goes with it)."""
+    entry, fd = _entry(*args, **kwargs)
+    await asyncio.to_thread(_append_audit, entry, fd)
+    return entry.id
+
+
+_commit_lock = threading.Lock()
+
+
+def _commit_sync(apply, undo, entry: AuditEntry, fd: dict) -> None:
+    """Order change + its audit line, all or nothing: apply in memory, save orders.json, append the audit line; if
+    either write fails, undo in memory and on disk. So an order never exists without its audit line (Codex #11)."""
+    with _commit_lock:
+        if apply:
+            apply()
+        try:
+            if apply:
+                _save()
+            _append_audit(entry, fd)
+        except BaseException:
+            if apply:
+                undo()
+                try:
+                    _save()
+                except Exception:  # noqa: BLE001 - the in-memory store is already back; the file follows on the next save
+                    log.exception("rollback save failed")
+            raise
+
+
+async def _commit(apply, undo, entry: AuditEntry, fd: dict) -> str:
+    """Run the commit in a thread, shielded: a cancelled request (client gone, shutdown) can't stop it halfway;
+    the caller just loses the response. A failed write is a clean 503 with nothing changed."""
+    try:
+        await asyncio.shield(asyncio.to_thread(_commit_sync, apply, undo, entry, fd))
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.exception("order commit failed; rolled back")
+        raise HTTPException(503, detail="The change couldn't be recorded in the audit trail, so nothing was changed. "
+                                        "Retry shortly.") from None
     return entry.id
 
 
@@ -261,16 +305,16 @@ async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | N
             if mandate is not None and mandates.version(current := mandates.get(buyer_id)) != mandates.version(mandate):
                 mandate = current  # the rules were saved meanwhile (Codex audit #7): decide again under the new ones
                 continue
-            if res.status != "refused":
-                _store()[oid] = {
-                    "id": oid, "buyer_id": buyer_id, "status": res.status, "requested_date": requested_date.isoformat(),
-                    "lines": res.lines, "total_cents": res.total_cents, "mandate": mandate.model_dump(mode="json"),
-                    "mandate_version": res.mandate_version,
-                    "decision": res.decision.model_dump(mode="json"), "signed_off_by": None,
-                    "created_at": now.isoformat(), "updated_at": now.isoformat()}
-                await asyncio.to_thread(_save)
-            audit_id = await _audit(FRONT_DOOR, oid, buyer_id, requested_date.isoformat(), res.lines, mandate, res,
-                                    now=now, status=res.status)
+            record = None if res.status == "refused" else {
+                "id": oid, "buyer_id": buyer_id, "status": res.status, "requested_date": requested_date.isoformat(),
+                "lines": res.lines, "total_cents": res.total_cents, "mandate": mandate.model_dump(mode="json"),
+                "mandate_version": res.mandate_version,
+                "decision": res.decision.model_dump(mode="json"), "signed_off_by": None,
+                "created_at": now.isoformat(), "updated_at": now.isoformat()}
+            entry, fd = _entry(FRONT_DOOR, oid, buyer_id, requested_date.isoformat(), res.lines, mandate, res,
+                               now=now, status=res.status)
+            audit_id = await _commit((lambda: _store().__setitem__(oid, record)) if record else None,
+                                     lambda: _store().pop(oid, None), entry, fd)
         return _response(oid if res.status != "refused" else None, res.status, _view(res), audit_id)
     raise _busy()
 
@@ -341,15 +385,15 @@ async def approve(order_id: str, who: Principal, seen_decided_at: datetime | Non
             raise HTTPException(409, detail="The order or the buyer's spend changed while it was being re-checked; "
                                             "review it and approve again.")
         status = _approval_status(o, res)
+        changes = dict(status=status, lines=res.lines, total_cents=res.total_cents, updated_at=now.isoformat(),
+                       decision=res.decision.model_dump(mode="json"),
+                       signed_off_by=who.name if status == "confirmed" else None)
         if mandate:  # judged under these (no mandate left = refused, keep the last snapshot for the record)
-            o.update(mandate=mandate.model_dump(mode="json"), mandate_version=res.mandate_version)
-        o.update(status=status, lines=res.lines, total_cents=res.total_cents, updated_at=now.isoformat(),
-                 decision=res.decision.model_dump(mode="json"),
-                 signed_off_by=who.name if status == "confirmed" else None)
-        await asyncio.to_thread(_save)
-        audit_id = await _audit(f"human:{who.name}:approve", order_id, o["buyer_id"], o["requested_date"],
-                                res.lines, mandate, res, now=now, status=status,
-                                action="approved" if status == "confirmed" else "approval_blocked")
+            changes.update(mandate=mandate.model_dump(mode="json"), mandate_version=res.mandate_version)
+        entry, fd = _entry(f"human:{who.name}:approve", order_id, o["buyer_id"], o["requested_date"],
+                           res.lines, mandate, res, now=now, status=status,
+                           action="approved" if status == "confirmed" else "approval_blocked")
+        audit_id = await _commit(*_changing(o, changes), entry, fd)
     out = _response(order_id, status, {**_view(res), "signed_off_by": o["signed_off_by"]}, audit_id)
     if status != "confirmed":  # QA round 2 N3: an approve that didn't approve is never a 200
         raise final_error(409, {
@@ -366,16 +410,26 @@ async def reject(order_id: str, who: Principal) -> dict:
     async with _order_lock:
         o = _pending(order_id, who.buyer_id, "reject")
         now = datetime.now(timezone.utc)
-        o.update(status="rejected", signed_off_by=who.name, updated_at=now.isoformat())
-        await asyncio.to_thread(_save)
         decision = Decision.model_validate(o["decision"])
-        audit_id = await _audit(f"human:{who.name}:reject", order_id, o["buyer_id"], o["requested_date"], o["lines"],
-                                Mandate.model_validate(o["mandate"]), None, decision=decision, now=now,
-                                action="rejected", status="rejected")
+        entry, fd = _entry(f"human:{who.name}:reject", order_id, o["buyer_id"], o["requested_date"], o["lines"],
+                           Mandate.model_validate(o["mandate"]), None, decision=decision, now=now,
+                           action="rejected", status="rejected")
+        audit_id = await _commit(*_changing(o, dict(status="rejected", signed_off_by=who.name,
+                                                    updated_at=now.isoformat())), entry, fd)
     return _response(order_id, "rejected", {"total_cents": o["total_cents"], "lines": o["lines"],
                                             "decision": o["decision"], "rejected_options": [],
                                             "mandate_version": o.get("mandate_version"),
                                             "signed_off_by": who.name}, audit_id)
+
+
+def _changing(o: dict, changes: dict):
+    """(apply, undo) for an in-place update of a stored order."""
+    before = copy.deepcopy(o)
+
+    def undo():
+        o.clear()
+        o.update(before)
+    return (lambda: o.update(changes)), undo
 
 
 def _buyer(r: dict) -> str | None:
