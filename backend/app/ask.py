@@ -417,6 +417,9 @@ async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, d
             assumption=prior_amount_assumption,
             product_assumed=bool(prior_product_assumed),
         )
+    if change:  # a product swapped in a reply is re-matched by the agent: the chef confirms the new product
+        prior_approval.update(product_changed=True)
+    if prior_approval:
         item["approval_required"] = prior_approval
     item.pop("amount_assumed", None)
     item.pop("amount_assumption", None)
