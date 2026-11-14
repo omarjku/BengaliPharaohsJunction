@@ -56,6 +56,7 @@ Set the variables from `.env.example`:
 | `APPROVER_KEYS` | Comma-separated `key=buyer_id[:name]` entries for human approvers. |
 | `VALIO_ADMIN_KEYS` | Comma-separated `key=valio[:name]` entries for Valio staff: read-only `GET /api/admin/audit` across all buyers (`X-Valio-Admin-Key`). |
 | `FRONT_DOOR_SIGNING_KEY` | Base64 of a 32-byte Ed25519 seed; signs every order response (public key at `/.well-known/front-door-keys.json`, check with `POST /api/verify`; see `docs/STANDARDS.md`). Unset = ephemeral key. |
+| `AGENT_SIGNING_KEYS` | Optional RFC 9421 agent signing: a comma list of `buyer:kid:base64pub` (Ed25519). A listed buyer must also sign every `POST /api/orders` and `/api/agent/*`, otherwise 401. `scripts/sign_request.py` shows how. Unset = no signing required. |
 | `DATA_DIR` | Directory for all front-door state: orders, audit trail, idempotency keys and saved mandates/rules. Default: the repo's `data/`. On Render, mount a persistent disk (e.g. `/var/data`) and set this. |
 | `TRUST_X_FORWARDED_FOR` | Set `1` behind a proxy that appends the client IP (Render, where it's set), so per-IP rate limits see real callers. Leave it unset when the API is reachable directly. |
 
@@ -63,6 +64,54 @@ Use long random values for the front-door keys. `AGENT_KEYS` authenticates
 `X-Agent-Key`; `APPROVER_KEYS` authenticates `X-Approver-Key`. If either key
 set is empty, its protected routes return `503`; an agent key cannot approve, and a
 Valio admin key can only read the audit trail (filters: `buyer_id`, `outcome`, `limit`).
+
+## Signed agent requests (RFC 9421, optional)
+
+A buyer can make its agent sign every write, on top of `X-Agent-Key`:
+1. Register the agent's Ed25519 public key in `AGENT_SIGNING_KEYS` (`buyer:kid:base64pub`).
+2. From then on, every `POST /api/orders` and `POST /api/agent/*` for that buyer must carry three headers:
+   - `Content-Digest: sha-256=:<base64 sha256(body)>:` (RFC 9530);
+   - `Signature-Input: sig1=("@method" "@path" "content-digest");created=<unix time>;keyid="<kid>";alg="ed25519"`;
+   - `Signature: sig1=:<base64 Ed25519 signature>:`.
+3. A missing, stale, replayed or wrong signature gets `401`, and the attempt is audited.
+
+Buyers without a registered key work as before. `scripts/sign_request.py` signs a request end to end. The exact
+signature base and the limits are in `docs/STANDARDS.md` ("Signed agent requests").
+
+## Testing
+
+- **Unit and integration tests:** `cd backend && .venv/bin/python -m pytest -q tests` gives 318 passed, 1 skipped
+  (offline, with Valio and Gemini faked).
+- **Labelled Gemini evaluation:** `backend/eval/` has 30 cases with real Valio products. It set the 0.70 threshold,
+  and now includes the coffee-milk and coffee-cream traps.
+- **Two independent black-box QA rounds** against a real backend with the live Valio mock and live Gemini. The
+  tester wrote the cases and expectations from the docs only, and read the code afterwards.
+
+  | Round | Cases | Pass | Fail | Questionable | Report |
+  |---|---|---|---|---|---|
+  | 1 (Sat 14 Nov, early) | 50 | 35 | 6 | 9 | [`docs/testing/independent-qa-2026-11-14.md`](docs/testing/independent-qa-2026-11-14.md) |
+  | 2 (Sat 14 Nov, ~09:45) | 95 | 74 | 6 | 15 | [`docs/testing/independent-qa-round2-2026-11-14.md`](docs/testing/independent-qa-round2-2026-11-14.md) |
+
+  **Round 1 found:**
+  - an unstable pick for the headline milk request;
+  - peanut products with empty allergen data that could be approved into a peanut-free kitchen;
+  - Finnish requests blocked by the grounding check;
+  - "Finnish tomatoes" not found;
+  - 2.5 cartons and a 1,000,000 L order accepted.
+
+  Round 2 re-checked those: 8 were fixed, 4 partly fixed, 2 changed or still open, and 1 was unchanged.
+
+  **Round 2 found:**
+  - the headline request auto-buying *coffee* milk (cheapest, and just above the threshold);
+  - a silent voice clip taking 16 s to fail;
+  - substitutes that added allergens;
+  - Finnish "voita" (butter) blocked;
+  - no guard against duplicate orders.
+
+  **Fixed after round 2:** the ranking now lets confidence pick the product, and price only breaks near-ties
+  (`ffa93e1`). Voice silence, Finnish case forms, off-topic messages, urgency, billing and duplicates (`a79caa5`).
+  An approve that doesn't approve returns 409, the approver is signed, and substitutes that add allergens are
+  demoted (`f30c0cd`). Each of these commits adds regression tests.
 
 ## Demo buyers
 
@@ -92,6 +141,8 @@ routes derive the buyer identity from the key, not from a trusted request body.
 | Method and route | What it does | Header |
 | --- | --- | --- |
 | `POST /api/agent/ask` | **The one input box.** Free text, in English or Finnish: an order or a menu. It routes to run or menu, and asks back when it must ("For how many guests?", "For which delivery day?"). Urgent needs for a Helsinki buyer also get pickup suggestions. | `X-Agent-Key` |
+| `POST /api/voice/transcribe` | Push-to-talk audio (wav, webm, ogg or mp4; at most 1 MB / 30 s) → the chef's words (Gemini transcribe-live, about 1.3 s). Nothing is ordered here: the UI sends the text to `/api/agent/ask/stream`. | `X-Agent-Key` |
+| `POST /api/agent/ask/stream` | The same as `/api/agent/ask`, streamed as Server-Sent Events: progress lines, then the result. | `X-Agent-Key` |
 | `POST /api/agent/run` | Runs the buyer-agent flow end to end; the mandate is loaded server-side. | `X-Agent-Key` |
 | `POST /api/agent/menu` | Menu to cart: proposes `order_lines` for a menu and covers; always asks the chef. | `X-Agent-Key` |
 | `POST /api/orders` | Places an order through the front door. Send an `Idempotency-Key`. | `X-Agent-Key` |
@@ -133,13 +184,13 @@ show request → Gemini or fallback parse → catalogue → Valio quote → quan
 allergen exclusions, and uses Gemini to distinguish the requested product from
 keyword neighbours. `backend/app/quantity.py` converts amounts without silently
 guessing. The demo story, the same in every doc (measured live on Sun 15 Nov):
-- **1000 L lactose-free milk:** Gemini scores the cheapest option, Eila lactose-free
-  milk drink, ≈0.9. At EUR 1,400 that is within the mandate, so it is **confirmed
-  automatically**.
-- **1500 L:** EUR 2,100 is over the EUR 2,000 per-line cap and the EUR 1,500 limit,
-  so the door holds it (`pending_approval`) and the approver key confirms it.
-- **Gemini's doubt:** for "10 kg sugar for baking", 500 × 5 g sachets score below 0.5
-  and caster sugar ≈0.9, so the agent picks the caster sugar.
+- **"100 litraa laktoositonta maitoa maanantaiksi"** (typed or spoken): lactose-free
+  semi-skimmed milk, EUR 156, **confirmed automatically**. Among the milks Gemini is
+  confident about, confidence leads and price only breaks near-ties.
+- **1000 L lactose-free milk:** the same milk, EUR 1,560: EUR 60 over the EUR 1,500
+  limit, so the door holds it (`pending_approval`) and the approver key confirms it.
+- **Judgment:** "10 kg sugar for baking" → caster sugar. In the labelled evaluation,
+  5 g sugar sachets for baking score under 0.4, and coffee milk is a trap.
 - The second path is menu to cart. Exact scores per run are in `docs/GEMINI.md`.
 Details: [`docs/m1-e2e.md`](docs/m1-e2e.md), [`docs/GEMINI.md`](docs/GEMINI.md).
 

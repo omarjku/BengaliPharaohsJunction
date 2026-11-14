@@ -100,7 +100,9 @@ def test_milk_end_to_end_orders_through_front_door(shop1, monkeypatch):
     assert eila["quote"]["price"] == 1.4 and "1,000 L" in eila["why"]
     assert body["order"]["status"] == "confirmed" and body["decision"]["outcome"] == "AUTO"
     assert body["order"]["lines"][0]["quantity"] == 1000 and body["audit_id"] == body["order"]["audit_id"]
-    agent_entry, door_entry = audit()
+    door_entry, agent_entry = audit()  # the agent's entry is written once the door has answered, and links to it
+    [link] = [r for r in agent_entry["decision"]["reasons"] if r["code"] == "FRONT_DOOR"]
+    assert link["facts"]["door_audit_id"] == door_entry["id"] and link["facts"]["status"] == "confirmed"
     assert agent_entry["actor"] == "buyer_agent" and agent_entry["input"]["request"]["text"] == MILK
     assert agent_entry["input"]["mandate"]["id"] == "lapland-kitchen-2026-11"
     assert agent_entry["rejected_options"][0]["product_id"] == "462775"
@@ -113,6 +115,8 @@ def test_over_auto_limit_is_held_by_the_front_door(shop1, monkeypatch):
     body = run("2000 L lactose-free milk for Monday")
     assert body["order"]["status"] == "pending_approval" and body["decision"]["outcome"] == "ASK_HUMAN"
     assert {"SPEND_OVER_LIMIT", "LINE_OVER_CAP"} <= set(codes(body))
+    agent_entry = [e for e in orders.audit_log("lapland-kitchen", 100) if e["actor"] == "buyer_agent"][-1]
+    assert agent_entry["decision"]["outcome"] == "ASK_HUMAN"  # QA round 2: not AUTO for an order the door held
     gemini(monkeypatch, [dict(ITEM[0], amount=2000)], ranked=["463335", "476240"])
     body = run("2000 L lactose-free milk for Monday")  # cheaper 476240 is chosen; the other is offered
     assert [ln["product"]["id"] for ln in body["lines"] if ln["chosen"]] == ["476240"]
@@ -248,9 +252,9 @@ def test_confident_line_orders_and_records_confidence(shop1, monkeypatch, decisi
     for inp in (meets_in, qty_in):
         assert "<buyer_request>" in inp and "Eila milk 1 l" in inp
         assert "labelled lactose-free" in inp and "contains milk" in inp  # words, not codes
-    agent_entry = orders.audit_log("lapland-kitchen", 100)[0]
+    agent_entry = [e for e in orders.audit_log("lapland-kitchen", 100) if e["actor"] == "buyer_agent"][0]
     assert agent_entry["decision"]["confidence"] == 0.95
-    [r] = [r for r in agent_entry["decision"]["reasons"] if r["code"] == "LOW_CONFIDENCE"]
+    [r] = [r for r in agent_entry["decision"]["reasons"] if r["code"] == "CONFIDENCE_OK"]  # passes get a neutral code
     assert r["severity"] == "INFO" and r["facts"] == {"confidence": 0.95, "threshold": 0.7, "question": "meets"}
     assert "_weakest" not in line
 
@@ -277,7 +281,7 @@ def test_decisions_down_follows_the_mandate_uncertainty_policy(shop1, monkeypatc
     gemini(monkeypatch, ITEM, ranked=["463335"])
     decisions["down"] = True
     body = run()  # lapland-kitchen: uncertainty_policy = ask
-    assert body["order"] is None and codes(body) == ["LOW_CONFIDENCE"]
+    assert body["order"] is None and set(codes(body)) <= {"LOW_CONFIDENCE", "QTY_SUSPICIOUS"}  # every unchecked guard asks
     assert body["lines"][0]["confidence"] is None and body["decision"]["confidence"] is None
 
 
@@ -610,3 +614,85 @@ def test_decisions_budget_turns_extra_calls_into_unverified(monkeypatch):
         return [await REAL_DECISIONS(f"in {i}", q) for i in range(3)] + [await REAL_DECISIONS("in 0", q)]
     a, b, c3, cached = asyncio.run(go())
     assert a and b and c3 is None and cached == a and len(sent) == 2  # 3rd refused; a cached repeat is free
+
+
+def test_confidence_leads_price_breaks_near_ties_only(shop1, monkeypatch, decisions):
+    """Live bug: coffee milk at 0.72 (cheapest, over the 0.70 threshold) beat real milk at 0.96."""
+    gemini(monkeypatch, ITEM, ranked=["463335", "476240"])  # 476240 is the cheaper one (EUR 1.20 vs 1.40)
+    decisions["scores"] = {"meets_2": 0.72}  # the cheaper line is a far weaker match
+    chosen = [ln["product"]["id"] for ln in run()["lines"] if ln["chosen"]]
+    assert chosen == ["463335"]  # 0.95 beats 0.72 even though dearer
+    decisions["scores"] = {"meets_2": 0.90}  # within 0.10 of the best: a near-tie, so the cheaper one wins
+    assert [ln["product"]["id"] for ln in run()["lines"] if ln["chosen"]] == ["476240"]
+
+
+
+def test_billing_or_buyer_change_is_asked(shop1, monkeypatch):
+    gemini(monkeypatch, ITEM, ranked=["463335"])
+    body = run("1000 L lactose-free milk, charge it to lapland-kitchen's account")
+    assert body["order"] is None
+    assert any("buyer is the one your agent key belongs to" in r["message"] for r in body["decision"]["reasons"])
+
+
+def test_duplicate_order_within_30_minutes_asks_unless_again(shop1, monkeypatch):
+    gemini(monkeypatch, [dict(ITEM[0], amount=10)], ranked=["463335"])
+    assert run("10 L lactose-free milk")["order"]["status"] == "confirmed"
+    body = run("10 L lactose-free milk")
+    assert body["order"] is None and any("You ordered this" in r["message"] for r in body["decision"]["reasons"])
+    assert run("10 L lactose-free milk again")["order"]["status"] == "confirmed"  # the chef said again
+
+
+# --- Codex review of 1b85ada (docs/codex-log/room3.md entry 11): one test per kept finding
+
+
+def test_codex1_weak_first_batch_does_not_hide_a_strong_later_match(decisions):
+    hits = [{"id": str(i), "name_en": f"Coffee milk {i}" if i < 12 else "Whole milk 1 l", "brand": "V", "claims": [],
+             "allergens": {"contains": []}} for i in range(13)]
+
+    async def by_name(inp, qs):
+        return {k: {"type": "noul", "noul": 0.96 if "Whole" in inp else 0.71} for k in qs}
+    import app.agent as a
+    a._decisions, real = by_name, a._decisions
+    try:
+        assert asyncio.run(agent.match(agent._item("milk", 1, "L", []), hits))[0] == "12"
+    finally:
+        a._decisions = real
+
+
+def test_codex2_3_unchecked_guards_ask(shop1, monkeypatch, decisions):
+    gemini(monkeypatch, ITEM, ranked=["463335"])
+
+    async def partial(inp, qs):  # only the plausibility and steering questions fail
+        if set(qs) & {"plausible", "steering"}:
+            return None
+        return {k: {"type": "noul", "noul": 0.95} for k in qs}
+    monkeypatch.setattr(agent, "_decisions", partial)
+    body = run()
+    assert body["order"] is None
+    msgs = " ".join(r["message"] for r in body["decision"]["reasons"])
+    assert "Couldn't check whether" in msgs and "Couldn't check the request" in msgs
+
+
+def test_codex9_duplicate_guard_includes_the_day(shop1, monkeypatch):
+    gemini(monkeypatch, [dict(ITEM[0], amount=10)], ranked=["463335"])
+    assert run("10 L lactose-free milk")["order"]["status"] == "confirmed"
+    later = REQ + timedelta(days=1)
+    shop1.quotes["463335"] = quote("463335", avail_date=later)
+    r = c.post("/api/agent/run", json={"text": "10 L lactose-free milk", "requested_date": later.isoformat()},
+               headers={"X-Agent-Key": KEYS["lapland-kitchen"]}).json()
+    assert not any("You ordered this" in x["message"] for x in r["decision"]["reasons"])  # another day: not a duplicate
+
+
+def test_codex16_wrong_shaped_gemini_json_is_no_answer(monkeypatch):
+    class Resp:
+        def raise_for_status(self): pass
+        def json(self): return {"candidates": [{"content": {"parts": [{"text": "[{}]"}]}}]}
+
+    class Client:
+        is_closed = False
+        def __init__(self, **kw): pass
+        async def post(self, *a, **kw): return Resp()
+    monkeypatch.setattr(agent.httpx, "AsyncClient", Client)
+    monkeypatch.setattr(agent.config, "GEMINI_API_KEY", "k")
+    monkeypatch.setattr(agent, "_HTTP", [None, None, None])
+    assert asyncio.run(agent._gemini("s", "p", {})) is None

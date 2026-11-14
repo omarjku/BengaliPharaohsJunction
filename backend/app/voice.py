@@ -8,6 +8,8 @@ numbers that gemini-3.8-live misheard: "Sata" → "Saat"); GEMINI_LISTEN_MODEL o
 """
 import asyncio
 import base64
+import math
+from array import array
 import io
 import json
 import logging
@@ -24,6 +26,8 @@ MAX_BYTES = 1_000_000
 MAX_SECONDS = 30
 RATE = 16_000
 CHUNK = RATE * 2 // 10  # 100 ms of PCM16 mono
+LIVE_BUDGET_S = 8  # the whole Live round trip (a 3 s clip takes ~1.3 s); past it, a plain 503
+SPEECH_RMS = 300  # loudest 100 ms window below this (of 32767) = no speech: silence/room noise is ~0-100
 TIMEOUT_S = 15
 # Declared type → the ONE demuxer allowed to read it (never auto-probed: a crafted file must not be able to pick a
 # playlist/HLS/concat demuxer that opens URLs), and no network protocol is allowed at all.
@@ -69,6 +73,14 @@ def to_pcm16(data: bytes, kind: str = "audio/webm") -> tuple[bytes, float]:
     return bytes(out), len(out) / (RATE * 2)
 
 
+def has_speech(pcm: bytes) -> bool:
+    """Any 100 ms window loud enough to be a voice (RMS over PCM16). Cheap: no model call for a silent clip."""
+    samples = array("h", pcm[: len(pcm) // 2 * 2])
+    step = RATE // 10
+    return any(math.sqrt(sum(x * x for x in samples[i:i + step]) / max(1, len(samples[i:i + step]))) >= SPEECH_RMS
+               for i in range(0, len(samples), step))
+
+
 async def live_transcribe(pcm: bytes) -> str:
     """One push-to-talk turn on Gemini Live; returns the input transcription."""
     model = config.GEMINI_LISTEN_MODEL
@@ -77,7 +89,7 @@ async def live_transcribe(pcm: bytes) -> str:
                        "inputAudioTranscription": {},
                        "realtimeInputConfig": {"automaticActivityDetection": {"disabled": True}},
                        "systemInstruction": {"parts": [{"text": "Only listen. Reply with the single word OK."}]}}}
-    async with connect(LIVE_URL, additional_headers={"x-goog-api-key": config.GEMINI_API_KEY}, max_size=None) as ws:
+    async with connect(LIVE_URL, additional_headers={"x-goog-api-key": config.GEMINI_API_KEY}, max_size=2**20) as ws:  # bounded frames
         await ws.send(json.dumps(setup))
         if "setupComplete" not in json.loads(await asyncio.wait_for(ws.recv(), TIMEOUT_S)):
             raise RuntimeError("Live setup failed")
@@ -91,6 +103,8 @@ async def live_transcribe(pcm: bytes) -> str:
             msg = json.loads(await asyncio.wait_for(ws.recv(), TIMEOUT_S))
             content = msg.get("serverContent", {})
             text += content.get("inputTranscription", {}).get("text", "")  # final text (interim* ones are ignored)
+            if len(text) > 4000:  # a 30 s clip is a few hundred characters (Codex #12)
+                raise RuntimeError("transcript too long")
             # The transcribe model ends with generationComplete / ACTIVITY_END and never sends turnComplete
             # (measured); gemini-3.8-live ends its reply with turnComplete.
             ended = msg.get("voiceActivity", {}).get("type") == "ACTIVITY_END"
@@ -112,11 +126,14 @@ async def transcribe(data: bytes, content_type: str) -> dict:
     try:
         pcm, seconds = await asyncio.to_thread(to_pcm16, data, kind)
     except ValueError as e:
-        raise HTTPException(422, detail=f"Couldn't read the recording ({e}). Try again, or type it.") from None
+        log.info("voice decode refused (%s)", e)  # the decoder's own wording stays in the log
+        raise HTTPException(422, detail="I couldn't read that recording. Try again, or type the order.") from None
+    if not has_speech(pcm):  # silence costs nothing and answers at once (a silent clip took 16.6 s to fail)
+        raise HTTPException(422, detail="I didn't hear any words. Try again, closer to the microphone.")
     if seconds < 0.3:
         raise HTTPException(422, detail="The recording is too short. Hold the button while you speak.")
     try:
-        text = await live_transcribe(pcm)
+        text = await asyncio.wait_for(live_transcribe(pcm), LIVE_BUDGET_S)
     except Exception as e:  # noqa: BLE001 - upstream details stay in the log, never the key
         log.warning("Live transcription failed (%s)", type(e).__name__)
         raise HTTPException(503, detail="Voice is unavailable right now; type the order instead.") from None

@@ -5,7 +5,7 @@ Carry address and opening hours, and that Click & Collect is Helsinki-only and r
 confirming. Store stock and pickup are NOT in the mock API, so every suggestion says so.
 """
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from . import mandates
 
@@ -17,8 +17,10 @@ CASH_AND_CARRY = {
 }
 CLICK_AND_COLLECT_HOURS = 4  # "as early as four hours after confirmation", Helsinki only
 
-URGENT = re.compile(r"\b(asap|as soon as possible|right away|right now|now|urgent\w*|today|tonight|this morning|"
-                    r"this afternoon|in \d+\s*(min|mins|minutes|h|hours?)|heti|nyt|kiire\w*|tänään|pikaisesti)\b", re.I)
+# Timing wording only: a bare "now"/"nyt" elsewhere in a sentence is not urgency (QA round 2).
+URGENT = re.compile(r"\b(asap|as soon as possible|right away|right now|(need|needed|want)\w*\s+(it\s+|them\s+|this\s+)?now|"
+                    r"now please|urgent\w*|today|tonight|this morning|this afternoon|in \d+\s*(min|mins|minutes|h|"
+                    r"hours?)|heti|kiire\w*|tänään|pikaisesti|nyt heti)\b", re.I)
 
 
 def _late(lines: list[dict], requested: date) -> bool:
@@ -39,8 +41,10 @@ def _hours_text(now: datetime) -> str:
 
 def _next_delivery(lines: list[dict]) -> dict:
     """The honest answer outside Helsinki: the earliest delivery day and its cut-off, from the live quotes."""
+    now = datetime.now(timezone.utc)
     best = min(((q["available_date"][:10], q.get("order_cutoff")) for ln in lines if (q := ln.get("quote"))
-                and q.get("available_date") and "undeliverable" not in q["flags"] and "cutoff_passed" not in q["flags"]),
+                and q.get("available_date") and q.get("orderable")  # orderable: no stock/block/cut-off trap (Codex #7)
+                and not (q.get("order_cutoff") and datetime.fromisoformat(q["order_cutoff"]) <= now)),
                default=None)
     text = (f"The earliest Valio delivery for these products is {best[0]}"
             + (f" if ordered before {best[1]}" if best[1] else "") + "." if best else
@@ -49,8 +53,9 @@ def _next_delivery(lines: list[dict]) -> dict:
 
 
 def urgent_options(text: str, buyer_id: str, requested: date, now: datetime, lines: list[dict]) -> list[dict] | None:
-    """None unless the chef signals urgency, the delivery is for today, or Valio can't deliver in time."""
-    if not (URGENT.search(text) or requested <= now.date() or _late(lines, requested)):
+    """Only when it IS urgent (timing wording, or delivery wanted today) AND Valio's earliest delivery is later than
+    needed: otherwise the normal delivery already serves the chef and pickup suggestions are noise."""
+    if not ((URGENT.search(text) or requested <= now.date()) and _late(lines, requested)):
         return None
     if mandates.location(buyer_id) != "helsinki":
         return [_next_delivery(lines)]

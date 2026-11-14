@@ -51,6 +51,20 @@ On price alone, the agent would have bought the "milk drink" (EUR 1,400, within 
 - "10 kg sugar for baking for Monday": Dansukker caster sugar 1 kg **0.94** (chosen), icing sugar 0.62, Segafredo
   brown sugar 500 × 5 g sachets **0.44**. The order is held for `ALLERGEN_DATA_MISSING`.
 
+**Live check on the deployed API, Sun 15 Nov, after the ranking fix** (`smoke-kitchen`, threshold 0.70; confidence
+leads, price breaks ties within 0.10):
+- "100 litraa laktoositonta maitoa maanantaiksi": whole milk 0.90 (EUR 164), **semi-skimmed 0.85 (EUR 156, chosen:
+  a near-tie, so the cheaper wins), confirmed**; Eila milk drink 0.68 (a different product).
+- "1000 L lactose-free milk for Monday": the same scores, semi-skimmed EUR 1,560, held (`SPEND_OVER_LIMIT`, EUR 60
+  over). 1500 L: EUR 2,340, held (`LINE_OVER_CAP` + `SPEND_OVER_LIMIT`).
+- "10 L of lactose-free cream for Monday": **low-fat cream 0.74 (EUR 29.70, confirmed)**, whipping cream 0.70.
+- "10 kg sugar for baking for Monday": caster sugar 1 kg **0.84**, chosen. The sachets aren't among the candidates
+  any more. Held for `ALLERGEN_DATA_MISSING`.
+- Kebab: "20 kg döner kebab meat" → Well Kebab kebab meat at 0.61, below 0.70, so the agent asks.
+- Before the fix, at 09:45: Valio *coffee* milk lactose free scored 0.72 and won on price (EUR 1,300, confirmed), and
+  "10 L lactose-free cream" picked coffee cream. Our QA caught it. Coffee milk and coffee cream are now labelled
+  traps in the eval.
+
 This is the one place for exact live scores. Other docs say ≈0.9 or below 0.5.
 
 **Trap, "60 L Arla lactose-free whole milk drink for Monday"**: the only match is a Terminal product whose cut-off has passed, so nothing is ordered (ASK_HUMAN). The substitutes the door's finder suggests are each judged: "Eila 3 % milk drink: 0.82 that it is an acceptable substitute", most acceptable first. Substitutes below 0.80 are marked "check before accepting".
@@ -143,6 +157,26 @@ Profile of one `/ask` "200 L lactose-free milk for Monday" (real Valio + Gemini,
 No check was removed or loosened. The matcher is the same calibrated question the evaluation measured. Every match over 0.5 still competes on confidence, limits and price (up to 10: a top-5-by-score cut once dropped the cheapest milk behind small packs). One keep-alive HTTP client per event loop saves a TLS handshake per call. Each `/ask` returns `timings_ms` {understand, total} and logs it.
 
 `POST /api/agent/ask/stream` streams the same request as Server-Sent Events: `event: phase` {phase, text} with "Reading your request…", "Searching Valio's catalogue…", "Checking Valio stock and prices…", "Asking Gemini to double-check each match…" and "Placing the order at Valio's front door…" (menus add "Turning the menu into ingredients…"), then one `event: result` with exactly the `/ask` body, or `event: error` {status, detail}.
+
+## Ranking fix: confidence picks the product, price breaks near-ties (room3-rank, Sat 14 Nov)
+
+Room 1 measured on the live API: "1000 L lactose-free milk" auto-confirmed **Valio coffee milk** (0.72, just over the 0.70 threshold, cheapest at €1,300) while plain milks scored 0.96. "10 L lactose-free cream" picked coffee cream. Two fixes; the 0.70 threshold is unchanged, because it decides whether the agent may act alone, not which product wins:
+1. **Ranking:** among confident lines, a line more than **0.10** below the item's best confidence loses even if cheaper. Within that near-tie band, limits, Finnish preference and price decide as before.
+2. **Judge wording:** "is it the product?" now says that a narrower special-purpose variant the buyer didn't ask for (coffee milk or coffee cream for milk or cream) is not a match. Coffee milk for "lactose-free milk" fell from 0.72 to 0.12 (and still scores 0.91 when coffee milk is what was asked).
+3. **Search recall:** a generic word like "cream" lists sour cream, ice cream and coffee cream first, and real creams only from hit ~21. The matcher now judges up to 36 hits in batches of 12, stopping at the first batch with real matches.
+
+**Eval** (33 cases, with three new coffee traps): **33/33**, 0 wrong autos at every threshold. At 0.70: precision 100 %, recall 93 %. Traps score ≤ 0.26, correct products ≥ 0.67.
+
+**Live as `smoke-kitchen`** (Sat 14 Nov):
+
+| request | chosen (confidence, total) | outcome |
+|---|---|---|
+| 1000 L lactose-free milk | Valio semi-skimmed lactose-free (0.85, **€1,560**); whole milk 0.90 at €1,640 is a near-tie, so the cheaper wins; Eila "milk drink" 0.68 is below the threshold | held: **€60 over the €1,500 auto-approve limit** (SPEND_OVER_LIMIT) |
+| 1500 L lactose-free milk | the same, €2,340 | held: per-line cap and auto-approve limit |
+| 100 litraa laktoositonta maitoa | the same, €156 | **confirmed** |
+| 10 L lactose-free cream | Valio low-fat cream 1 l (0.74, €29.70) over whipping cream (0.70) | **confirmed** |
+
+Note for the demo story: with this judge, the brief's 1000 L example is held for sign-off (€60 over the limit). It no longer auto-confirms the "milk drink", which the judge now rates as a different product.
 
 ## Interface for T06 `decide()`
 
