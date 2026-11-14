@@ -45,6 +45,14 @@ On price alone, the agent would have bought the "milk drink" (EUR 1,400, within 
 
 **Re-run after the evaluation below (same request, current judge):** the judge now reads the canonical item "1,000 L milk (lactose-free)", with the product question asked without amounts. The Eila 3 % lactose-free milk drink scores **0.81**, above 0.80, so the cheapest correct milk wins: EUR 1,400, within the auto-approve limit, **confirmed automatically, identically on five consecutive runs**. The 0.76 above came from the earlier raw-text, combined-question input that the evaluation showed to be biased. The run is kept here to show how the evidence changed the agent.
 
+**Re-run on Sun 15 Nov (integration code, live Valio + Gemini, two identical runs):**
+- 1000 L: Eila milk drink **0.90** (EUR 1,400, chosen, AUTO confirmed), semi-skimmed 0.97, whole 0.95.
+- 1500 L: the same choice, EUR 2,100, held (`LINE_OVER_CAP`, `SPEND_OVER_LIMIT`).
+- "10 kg sugar for baking for Monday": Dansukker caster sugar 1 kg **0.94** (chosen), icing sugar 0.62, Segafredo
+  brown sugar 500 × 5 g sachets **0.44**. The order is held for `ALLERGEN_DATA_MISSING`.
+
+This is the one place for exact live scores. Other docs say ≈0.9 or below 0.5.
+
 **Trap, "60 L Arla lactose-free whole milk drink for Monday"**: the only match is a Terminal product whose cut-off has passed, so nothing is ordered (ASK_HUMAN). The substitutes the door's finder suggests are each judged: "Eila 3 % milk drink: 0.82 that it is an acceptable substitute", most acceptable first. Substitutes below 0.80 are marked "check before accepting".
 
 ## Is 0.80 the right threshold? A small labelled evaluation

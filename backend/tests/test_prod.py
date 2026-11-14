@@ -87,8 +87,8 @@ def test_keys_survive_a_restart_and_expire_after_24h(shop, monkeypatch):
 
 
 def kid(key: str) -> str:
-    import hashlib
-    return hashlib.sha256(key.encode()).hexdigest()[:16]
+    """The credential label conftest gives each key (its name, else its buyer): never derived from the secret."""
+    return {"agent-chef": "chef", "agent-other": "other"}[key]
 
 
 def test_in_flight_duplicate_is_409(shop):
@@ -236,3 +236,10 @@ def test_stored_replay_is_served_while_the_catalogue_loads(shop, monkeypatch):
     monkeypatch.setattr(catalogue, "_ready", type("E", (), {"is_set": lambda self: False})())
     assert post(10, key="boot").json() == first   # replay: no catalogue needed
     assert post(11, key="new").status_code == 503  # a new action still waits for it
+
+
+def test_idempotency_store_holds_no_trace_of_the_secret(shop):
+    post(10, key="k1")
+    import hashlib
+    text = orders.IDEM_FILE.read_text()
+    assert "agent-chef" not in text and hashlib.sha256(b"agent-chef").hexdigest()[:16] not in text
