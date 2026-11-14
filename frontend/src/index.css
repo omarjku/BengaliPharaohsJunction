@@ -7,6 +7,7 @@
   --ink-2: #5d6670; /* secondary text */
   --ink-3: #676f78; /* tertiary: times, supporting numbers (4.9:1 on paper, 4.5:1 on wash) */
   --paper: #fbfaf7; /* warm paper: the page */
+  --paper-clear: rgb(251 250 247 / 0); /* paper at 0%: fades to nothing without a grey fringe */
   --surface: #ffffff; /* fields sit on it as white */
   --wash: #f2f0eb; /* pressed states */
   --disabled: #e3e1dc;

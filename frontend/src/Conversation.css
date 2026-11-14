@@ -10,9 +10,16 @@
 .conv-bar {
   position: fixed; inset-inline: 0; inset-block-end: 0; z-index: 20;
   padding: var(--s2) var(--s4) max(var(--s3), env(safe-area-inset-bottom));
-  background: linear-gradient(to top, var(--paper) 70%, color-mix(in srgb, var(--paper) 0%, transparent));
+  padding-block-start: var(--s5);
+  background: linear-gradient(to top, var(--paper) 72%, var(--paper-clear));
 }
 .conv-bar > * { max-width: var(--column); margin-inline: auto; }
+/* The dictation line floats just above the bar, so showing or hiding it never moves the field. */
+.conv-bar > .voice-status {
+  position: absolute; inset-inline: 0; inset-block-end: 100%; width: fit-content; max-width: calc(100% - 2 * var(--s4)); margin-block: 0 var(--s2);
+  padding: var(--s1) var(--s3); border: 1px solid var(--line); border-radius: 999px; background: var(--surface); text-align: center; min-height: 0;
+}
+.conv-bar > .voice-status:empty { display: none; }
 .conv-dock { display: flex; align-items: center; gap: var(--s3); margin-block-end: var(--s2); }
 
 /* Messages: the chef's on the right in a bubble, the agent's as plain text on the left. */
