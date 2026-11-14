@@ -1051,6 +1051,22 @@ def _decision(request_id: str, reasons: list[Reason], alternatives: list[Alterna
                     confidence=confidence, rules_version=RULES_VERSION, decided_at=now)
 
 
+def _selection_preferences(buyer_id: str) -> tuple[set[str], set[str]]:
+    """Return (profile/standing products, confirmed-order products) for near-tie selection."""
+    remembered = {str(memory.value.get("product_id"))
+                  for memory in profile._memories(buyer_id)
+                  if getattr(memory.kind, "value", memory.kind) == "usual_product"
+                  and memory.value.get("product_id") is not None}
+    standing = {str(line.get("product_id"))
+                for order in profile.standing_orders(buyer_id)
+                for line in order.get("lines") or [] if line.get("product_id") is not None}
+    usual = {str(pid) for pid in profile.usual(buyer_id)}
+    # profile.usual contains remembered products and products seen in repeated confirmed orders. Keep the latter in
+    # the history tier so explicit profile/standing memories retain precedence.
+    preferred = remembered | standing
+    return preferred, usual - preferred
+
+
 def _name(p: dict) -> str:
     return p.get("name_en") or p.get("name_fi") or p["id"]
 
@@ -1197,7 +1213,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                               all_diets)
     risk_details = diet.risk_details([it["query"] for it in items],
                                      all_diets)
-    usual = profile.usual(buyer_id)
+    preferred, past_orders = _selection_preferences(buyer_id)
     progress.phase("searching")
     done = [0]
 
@@ -1333,9 +1349,11 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                 if it.get("origin"):
                     return origin != it["origin"]
                 return not (fi_pref and cheapest is not None and origin == "fi" and total <= cheapest * 1.1)
-            # Usual products (profile + past confirmed orders) break near-ties only: after safety, confidence, limits
-            # and concerns, so they never beat a more confident line or the threshold.
-            scored = [((*k[:-2], ln["product"]["id"] not in usual, other_origin(ln, k[-2]), *k[-2:]), ln, a)
+            # Profile/standing products, then confirmed-order products, break near-ties before price; a clearly
+            # stronger Gemini match still wins, and the existing safety/quantity gates remain first.
+            scored = [((*k[:-2], (0 if ln["product"]["id"] in preferred else
+                                  1 if ln["product"]["id"] in past_orders else 2),
+                        other_origin(ln, k[-2]), *k[-2:]), ln, a)
                       for k, ln, a in scored]
             scored.sort(key=lambda s: s[0])
             (not_viable, *_), best, best_asks = scored[0]
@@ -1366,7 +1384,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             chosen.append(best)
             late_beaten = next((ln for k, ln, a in scored[1:] if not k[0] and k[4] and not scored[0][0][4]
                                 and (ln["confidence"] or 0) > (best["confidence"] or 0)), None)
-            best["usual"] = best["product"]["id"] in usual
+            best["usual"] = best["product"]["id"] in preferred or best["product"]["id"] in past_orders
             reasons += _label_reasons(it, best)
             if best["usual"] and best["confidence"] is not None and best["confidence"] < threshold:
                 it["product_assumed"] = True
