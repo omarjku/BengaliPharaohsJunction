@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
@@ -143,9 +144,23 @@ def _append_audit(entry: AuditEntry, front_door: dict | None = None) -> None:
     _write_line({**json.loads(entry.model_dump_json()), "front_door": front_door or _annotation(entry.actor)})
 
 
+SECURITY_EVENTS_PER_MIN = 60  # global cap: distributed junk-key probing can't grow the audit file without bound
+_sec = {"window": 0.0, "count": 0, "suppressed": 0}
+
+
 def security_event(event: str, route: str, ip: str | None, buyer_id: str | None = None, **detail) -> None:
     """A refused attempt (wrong / missing key, a key used outside its role, a client-sent mandate), audited as its
-    own kind of line. Never holds a key or secret; buyer_id is the buyer a recognised key belongs to, if any."""
+    own kind of line. Never holds a key or secret; buyer_id is the buyer a recognised key belongs to, if any.
+    Over SECURITY_EVENTS_PER_MIN, events are only counted; the next line written says how many were suppressed."""
+    minute = time.monotonic() // 60
+    if minute != _sec["window"]:
+        _sec.update(window=minute, count=0)
+    if _sec["count"] >= SECURITY_EVENTS_PER_MIN:
+        _sec["suppressed"] += 1
+        return
+    _sec["count"] += 1
+    if _sec["suppressed"]:
+        detail["suppressed_before"], _sec["suppressed"] = _sec["suppressed"], 0
     _write_line({"kind": "security_event", "id": str(uuid4()), "timestamp": datetime.now(timezone.utc).isoformat(),
                  "actor": "front_door_security", "event": event, "route": route, "ip": ip, "buyer_id": buyer_id,
                  **detail})
@@ -236,6 +251,9 @@ async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | N
         async with _order_lock:
             if _spent_7d(buyer_id, now) != spent:
                 continue  # another order of this buyer was confirmed meanwhile: decide again on the new budget
+            if mandate is not None and mandates.version(current := mandates.get(buyer_id)) != mandates.version(mandate):
+                mandate = current  # the rules were saved meanwhile (Codex audit #7): decide again under the new ones
+                continue
             if res.status != "refused":
                 _store()[oid] = {
                     "id": oid, "buyer_id": buyer_id, "status": res.status, "requested_date": requested_date.isoformat(),
@@ -309,6 +327,9 @@ async def approve(order_id: str, who: Principal, seen_decided_at: datetime | Non
                       approved_prices={li["product_id"]: li["unit_price_cents"] for li in o["lines"]}, now=now)
     async with _order_lock:
         o = _pending(order_id, who.buyer_id)  # 409 if someone else approved / rejected it meanwhile
+        if mandates.version(mandates.get(o["buyer_id"])) != mandates.version(mandate):  # Codex audit #7
+            raise HTTPException(409, detail="The buyer's rules changed while the order was being re-checked; "
+                                            "review it and approve again.")
         if o["updated_at"] != seen or _spent_7d(o["buyer_id"], now, skip=order_id) != spent:
             raise HTTPException(409, detail="The order or the buyer's spend changed while it was being re-checked; "
                                             "review it and approve again.")

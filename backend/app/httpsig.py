@@ -97,7 +97,10 @@ async def verify(request: Request, buyer_id: str, now: float | None = None) -> N
         raise _fail(request, buyer_id, "Signature must be <label>=:<base64>: for the same label")
     raw_path = request.scope.get("raw_path", b"").decode("latin-1").split("?")[0] or request.url.path
     values = {"@method": request.method.upper(), "@path": raw_path or "/", "content-digest": digest}
-    signature = base64.b64decode(sm.group(1))
+    try:
+        signature = base64.b64decode(sm.group(1), validate=True)
+    except (binascii.Error, ValueError):  # Codex audit: "sig1=:A:" was a 500
+        raise _fail(request, buyer_id, "Signature is not valid base64") from None
     try:
         keys[kid].verify(signature, signature_base(components, values, params))
     except InvalidSignature:

@@ -246,3 +246,32 @@ def test_stock_dropping_below_the_quantity_refuses_with_a_split(shop):
     assert split["order_lines"][0] == {"product_id": "463335", "quantity": 400.0}
     assert sum(x["quantity"] for x in split["order_lines"]) >= 1000
     assert orders._store()[held["order_id"]]["status"] == "refused"
+
+
+# --- Codex whole-backend audit (#7): rules saved while an order / approval is being re-checked
+def test_rules_saved_mid_check_are_applied_before_commit(shop, monkeypatch):
+    store_mandate(MANDATE)
+    fast, swapped = shop.get_quotes, []
+
+    async def rules_change_meanwhile(*a, **k):
+        if not swapped:  # the approver blocklists the product while the first quote is in flight
+            swapped.append(1)
+            store_mandate(dict(MANDATE, id="m2", blocklist=["463335"]))
+        return await fast(*a, **k)
+    monkeypatch.setattr(valio, "get_quotes", rules_change_meanwhile)
+    body_ = c.post("/api/orders", headers=AG, json=body(10)).json()
+    assert body_["status"] == "refused" and body_["mandate_version"] == "m2"  # re-decided under the new rules
+    assert "BLOCKLISTED" in [r["code"] for r in body_["decision"]["reasons"]] and orders._store() == {}
+
+
+def test_rules_saved_mid_approval_make_it_a_409(shop, monkeypatch):
+    oid = post(1000).json()["order_id"]
+    fast = shop.get_quotes
+
+    async def rules_change_meanwhile(*a, **k):
+        store_mandate(dict(MANDATE, id="m2", blocklist=["463335"]))
+        return await fast(*a, **k)
+    monkeypatch.setattr(valio, "get_quotes", rules_change_meanwhile)
+    r = c.post(f"/api/orders/{oid}/approve", headers=AP)
+    assert r.status_code == 409 and "rules changed" in r.json()["detail"]
+    assert orders._store()[oid]["status"] == "pending_approval"
