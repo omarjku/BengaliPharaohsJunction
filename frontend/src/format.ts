@@ -42,6 +42,12 @@ export function nextMonday(from = new Date()): string {
   return day.toISOString().slice(0, 10)
 }
 
+// Floored like the backend (agent.py), so 0.799 never shows as 0.80 and seems to meet a 0.80 threshold.
+export const formatConfidence = (c: number) => (Math.floor(c * 100) / 100).toFixed(2)
+
+// Valio reports "plenty" as a huge sentinel (9,999,999,999); show a number only when it is a real count.
+export const stockText = (n: number) => (n >= 999_999_999 ? 'In stock' : `${n.toLocaleString('en-US')} available`)
+
 export const errorText = (e: unknown) => (e instanceof Error ? e.message : 'Something went wrong.')
 
 // Chef-facing wording for backend codes. Unknown values fall back to the raw code, never a blank page.

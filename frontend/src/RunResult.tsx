@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { decideOrder, getKeys, MOCK, placeOrder } from './api'
-import { errorText, flagLabel, formatCents, formatDateTime, formatDay, formatEuro, outcomeView, resultView } from './format'
+import { decideOrder, getKeys, getOrder, MOCK, placeOrder } from './api'
+import {
+  errorText, flagLabel, formatCents, formatConfidence, formatDateTime, formatDay, formatEuro, outcomeView, resultView, stockText,
+} from './format'
 import type { AgentRun, AlternativeOrder, Line, OrderResponse, Substitute } from './types'
 
 type Props = {
@@ -112,8 +114,8 @@ function LineItem({ line }: { line: Line }) {
         )}
         {q?.quantity_known && q.available_amount !== null && (
           <>
-            <dt>In stock</dt>
-            <dd>{q.available_amount.toLocaleString('en-US')}</dd>
+            <dt>Stock</dt>
+            <dd>{stockText(q.available_amount)}</dd>
           </>
         )}
         {line.facts?.delivery_reliability != null && (
@@ -156,7 +158,7 @@ function Confidence({ value, reason }: { value: number | null; reason: string | 
   const low = value < 0.8
   const label = (
     <>
-      Gemini confidence {value.toFixed(2)}
+      Gemini confidence {formatConfidence(value)}
       {low && <> · Gemini isn’t sure this is what you asked for</>}
     </>
   )
@@ -194,7 +196,7 @@ function Substitutes({ subs, nameOf }: { subs: Substitute[]; nameOf: (id: string
                     {' · '}
                     {s.reliability !== null ? `on time ${percent(s.reliability)}` : 'no delivery record'}
                     {' · '}
-                    {s.available !== null ? `${s.available.toLocaleString('en-US')} available` : 'stock unknown'}
+                    {s.available !== null ? stockText(s.available) : 'stock unknown'}
                     {s.origin && <> · {originLabel(s.origin)}</>}
                   </p>
                 </li>
@@ -236,6 +238,7 @@ function DecisionCard({ run, requestedDate, onAction, onBusy, onAnnounce }: Prop
   const [busy, setBusy] = useState<'approve' | 'reject' | 'place' | null>(null)
   const [result, setResult] = useState<OrderResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [signOff, setSignOff] = useState<string | null>(null) // 'Approved by Chef Aino' after a human decided
   const heading = useRef<HTMLHeadingElement>(null)
 
   // The front door's verdict wins over the agent's own: it re-checks with fresh quotes.
@@ -263,6 +266,11 @@ function DecisionCard({ run, requestedDate, onAction, onBusy, onAnnounce }: Prop
             })
           : await decideOrder(order!.order_id!, action),
       )
+      if (action !== 'place') {
+        const verb = action === 'approve' ? 'Approved' : 'Rejected'
+        const who = await getOrder(order!.order_id!).then((o) => o.signed_off_by, () => null) // name is a nicety
+        setSignOff(who ? `${verb} by ${who}` : verb)
+      }
       onAction()
     } catch (err) {
       setError(errorText(err))
@@ -284,17 +292,18 @@ function DecisionCard({ run, requestedDate, onAction, onBusy, onAnnounce }: Prop
       <h2 ref={heading} tabIndex={-1}>
         {title}
       </h2>
-      {run.decision.confidence != null && <p className="muted">Gemini confidence {run.decision.confidence.toFixed(2)}</p>}
+      {run.decision.confidence != null && <p className="muted">Gemini confidence {formatConfidence(run.decision.confidence)}</p>}
       {order?.order_id && (tone === 'good' || awaitingApproval) && (
         <p>
           Order <code>{order.order_id}</code>
           {order.total_cents > 0 && <> · {formatCents(order.total_cents)} <span className="muted">(net of VAT)</span></>}
         </p>
       )}
+      {signOff && <p>{signOff}</p>}
       {decision.reasons.length > 0 && (
         <>
-          <h3>Why</h3>
-          <ul>
+          <h3>{signOff ? 'Original reason' : 'Why'}</h3>
+          <ul className={signOff ? 'muted' : undefined}>
             {decision.reasons.map((r, i) => (
               <li key={i}>
                 {r.message}
