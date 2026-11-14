@@ -524,3 +524,18 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
 .photo-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
 .photo-error { color: var(--bad); }
 .photo-unreadable { color: var(--warn); }
+
+/* Dark mode: follows the phone or computer setting. Same tokens, darker values. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --ink: #ecedef; --ink-2: #b4bac2; --ink-3: #9aa1aa;
+    --paper: #121416; --paper-clear: rgb(18 20 22 / 0); --surface: #1b1e22; --wash: #24282d; --disabled: #2c3036;
+    --line: #2d3237; --field-line: #6b727b;
+    --accent: #4cc3e3; --accent-press: #8fd9ee;
+    --good: #5fcf80; --warn: #f0b44c; --warn-wash: #2e2410; --bad: #ff8a80;
+  }
+  /* Filled controls keep white text, so they use the deep teal, not the light text teal. */
+  .composer .composer-voice, .mic.on { background: var(--bubble-mine); border-color: var(--bubble-mine); }
+  .btn.done { color: var(--lime-ink); }
+}
