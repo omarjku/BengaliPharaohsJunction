@@ -294,7 +294,8 @@ def test_requested_date_in_the_past_is_422(shop):
 
 
 def test_line_total_must_be_at_least_a_cent(shop):
-    shop.products["463335"]["lot_size"] = 0
+    shop.products["463335"].update(lot_size=0, sales_unit="KG")  # sold by weight: fractions allowed
+    shop.quotes["463335"] = quote("463335", unit="KG")
     res = run([("463335", 0.003)])  # 0.42 cents rounds to 0
     assert res.status == "refused" and codes(res) == ["QTY_INVALID"]
     assert res.decision.reasons[0].facts["line_total_cents"] == 0
