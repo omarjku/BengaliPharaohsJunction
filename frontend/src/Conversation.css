@@ -39,7 +39,28 @@
 }
 .conv-fold-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conv-start { display: grid; gap: var(--s4); padding-block-start: var(--s5); }
-.conv-suggest { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.conv-suggest { display: flex; flex-direction: column; gap: var(--s2); }
+.conv-start .try { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+.suggest {
+  display: flex; align-items: center; gap: var(--s3); width: 100%; min-height: 48px; padding: var(--s3);
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink);
+  font: var(--t-body); text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: transform 150ms ease, background-color 150ms ease, border-color 150ms ease;
+  animation: suggest-in 200ms ease-out both;
+}
+.suggest-ico { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; background: var(--wash); color: var(--accent); }
+.suggest-text { flex: 1; min-width: 0; }
+.suggest-go { flex: none; color: var(--ink-3); transition: transform 150ms ease, color 150ms ease; }
+.suggest:hover { background: var(--wash); border-color: var(--accent); }
+.suggest:hover .suggest-go { color: var(--accent); transform: translateX(3px); }
+.suggest:active { transform: scale(0.98); }
+.suggest:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@keyframes suggest-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .suggest { animation: none; transition: none; }
+  .suggest-go { transition: none; }
+  .suggest:hover .suggest-go, .suggest:active { transform: none; }
+}
 
 /* Inside the conversation the bar owns the bottom: the cards' action bars stay in the card. */
 .conv .decide.floating { position: static; display: flex; padding: 0; background: none; border: 0; }
