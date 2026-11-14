@@ -1,5 +1,5 @@
 import type {
-  AgentRun, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
+  AdminFilter, AdminRow, AgentRun, AskInput, AskResponse, AuditEntry, CompileResult, Health, Mandate, MenuInput, MenuRun, OrderInput, OrderResponse, RunInput, SaveResult,
 } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
@@ -35,6 +35,26 @@ export const setKeys = (next: ApiKeys) => {
   }
 }
 
+// Valio staff's own key (read-only across buyers), kept apart from the kitchen's keys.
+const ADMIN_STORAGE = 'valio-aimo-admin-key'
+let adminKey = (() => {
+  try {
+    return localStorage.getItem(ADMIN_STORAGE) ?? ''
+  } catch {
+    return ''
+  }
+})()
+export const getAdminKey = () => adminKey
+export const setAdminKey = (key: string) => {
+  adminKey = key.trim()
+  try {
+    if (adminKey) localStorage.setItem(ADMIN_STORAGE, adminKey)
+    else localStorage.removeItem(ADMIN_STORAGE)
+  } catch {
+    // storage unavailable: the key lasts for this page only
+  }
+}
+
 // Mock mode (fixtures, no backend): VITE_MOCK=1 at build time, or ?mock=1 on the dev server only.
 // In a production build without VITE_MOCK this folds to `false`, so the dynamic import below is dead code and the
 // fixtures are not bundled.
@@ -42,7 +62,7 @@ export const MOCK =
   import.meta.env.VITE_MOCK === '1' ||
   (import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === '1')
 
-type AuthRole = 'agent' | 'approver'
+type AuthRole = 'agent' | 'approver' | 'admin'
 
 // An error that keeps its HTTP status, for the few places that act on it (412: someone saved first).
 export class ApiError extends Error {
@@ -88,6 +108,7 @@ function failureFrom(status: number, detail: string, authRole?: AuthRole): ApiEr
   if (status === 401 || status === 403) {
     if (authRole === 'agent') return new ApiError(status, `Enter a valid agent key in Keys. ${detail}`)
     if (authRole === 'approver') return new ApiError(status, `Approver key needed: enter it in Keys. ${detail}`)
+    if (authRole === 'admin') return new ApiError(status, `Enter a valid Valio admin key. ${detail}`)
   }
   if (status === 503) return new ApiError(503, detail)
   return new ApiError(status, `Request failed (${status}): ${detail}`)
@@ -251,3 +272,15 @@ export const getAudit = () =>
   MOCK
     ? mock().then((m) => m.audit())
     : api<AuditEntry[]>('/api/audit', { headers: keyHeader('X-Approver-Key', getKeys().approverKey) }, 'approver')
+
+// Valio's view: every buyer's trail (read-only, X-Valio-Admin-Key), and the public signature check.
+export const getAdminAudit = (f: AdminFilter = {}) => {
+  const q = new URLSearchParams({ limit: '500', ...Object.fromEntries(Object.entries(f).filter(([, v]) => v)) })
+  return MOCK
+    ? mock().then((m) => m.adminAudit(f))
+    : api<AdminRow[]>(`/api/admin/audit?${q}`, { headers: keyHeader('X-Valio-Admin-Key', adminKey) }, 'admin')
+}
+export const verifySignature = (signed_statement: Record<string, unknown>, signature: Record<string, unknown>) =>
+  MOCK
+    ? Promise.resolve({ valid: true })
+    : api<{ valid: boolean; kid: string; meaning: string }>('/api/verify', post({ signed_statement, signature }))

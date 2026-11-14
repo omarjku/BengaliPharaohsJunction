@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from trade_contracts import (
@@ -60,11 +60,45 @@ def decide(
     Any exception or malformed input returns ASK_HUMAN with ENGINE_ERROR; never AUTO (D18).
     `quotes` and `facts` hold the ordered products AND the alternative candidates.
     """
-    cfg = config or load_config()
+    safe_now = _safe_now(now)  # before the try: the fallback itself needs a valid timestamp
+    if not isinstance(now, datetime):  # no usable clock value: never evaluate against a guess
+        return _fail_closed(request, safe_now, TypeError("now is not a datetime"))
     try:
-        return _decide(request, mandate, lines, quotes, facts, now, confidence, cfg, recent_spend_cents)
+        cfg = config or load_config()
+        return _decide(
+            request, mandate, lines, quotes, facts, safe_now, confidence, cfg, recent_spend_cents
+        )
     except Exception as exc:  # noqa: BLE001 - fail closed on anything
-        return _fail_closed(request, now, exc)
+        return _fail_closed(request, safe_now, exc)
+
+
+_SENTINEL_NOW = datetime(1970, 1, 1, tzinfo=UTC)  # only used when `now` is not a datetime at all
+
+
+def _safe_now(now: object) -> datetime:
+    """A timezone-aware datetime from whatever was passed: naive means Helsinki; junk means a
+    fixed sentinel (no hidden clock). Never raises."""
+    if not isinstance(now, datetime):
+        return _SENTINEL_NOW
+    if now.tzinfo is not None:
+        return now
+    try:
+        return now.replace(tzinfo=ZoneInfo("Europe/Helsinki"))
+    except Exception:  # noqa: BLE001 - tzdata missing
+        return now.replace(tzinfo=UTC)
+
+
+def _index(items: Sequence) -> tuple[dict, set[str]]:
+    """By product_id. Identical duplicates collapse; DIFFERENT duplicates are reported as
+    conflicts (the later copy stays in the dict, but ordered products among them ask)."""
+    out: dict = {}
+    conflicts: set[str] = set()
+    for item in items:
+        prior = out.get(item.product_id)
+        if prior is not None and prior != item:
+            conflicts.add(item.product_id)
+        out[item.product_id] = item
+    return out, conflicts
 
 
 def _decide(
@@ -90,6 +124,8 @@ def _decide(
        with rules_version=RULES_VERSION, confidence passed through, primary_reason auto-filled
     """
     now_tz = now if now.tzinfo else now.replace(tzinfo=ZoneInfo(config.timezone))
+    quotes_by_id, quote_conflicts = _index(quotes)
+    facts_by_id, facts_conflicts = _index(facts)
     defaulted = mandate is not None and not mandate.hard_rules
     merged = merge_lines(lines)
     ctx = RuleContext(
@@ -97,11 +133,12 @@ def _decide(
         mandate=mandate,
         mandate_defaulted=defaulted,
         lines=merged,
-        quotes={q.product_id: q for q in quotes},
-        facts={f.product_id: f for f in facts},
+        quotes=quotes_by_id,
+        facts=facts_by_id,
         now=now_tz,
         config=config,
-        recent_spend_cents=recent_spend_cents,
+        recent_spend_cents=max(0, recent_spend_cents),  # a negative figure must not widen budgets
+        conflicts=frozenset(quote_conflicts | facts_conflicts),
     )
 
     reasons: list[Reason] = []
@@ -154,7 +191,9 @@ def _decide(
 
 
 def _fail_closed(request: object, now: datetime, exc: Exception) -> Decision:
-    request_id = getattr(request, "id", None) or "unknown"
+    request_id = getattr(request, "id", None)
+    if not isinstance(request_id, str) or not request_id:
+        request_id = "unknown"
     reason = make_reason(
         ReasonCode.ENGINE_ERROR,
         Severity.ASK_HUMAN,

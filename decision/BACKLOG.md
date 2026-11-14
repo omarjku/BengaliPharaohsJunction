@@ -9,3 +9,9 @@
 **Contract gaps found while building the skeleton:**
 - `ProductFacts` has no origin field, so the "Local" alternative label cannot work yet (`alternatives.is_local` reads `origin_country` if added).
 - `Quote` has no explicit `deliverable` flag; v0 reads `availability == unavailable` with unknown quantity as UNDELIVERABLE and known quantity 0 as STOCK_NONE.
+
+## T06.1 deferred (not done in the 15-minute pass)
+- Item 7: merge the same product across unit spellings by product id (different unit kinds ask UNIT_MISMATCH).
+- Item 8: alternatives must be in the same category as the ordered product (unknown category offers none).
+- Item 9: allergen names vs the catalogue GS1 codes (AP peanuts, AM milk, AW gluten, ...): alias table in decision/, kept in sync with backend/app/catalogue.py.
+- Contract gaps still open for T02.2 (origin, deliverable flag, min-order code, enum exports, Order shape, AuditEntry action).

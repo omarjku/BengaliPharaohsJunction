@@ -144,7 +144,7 @@ def agent_run(text="20 L lactose-free milk for Monday"):
 
 @pytest.mark.parametrize("mode", MODES)
 def test_valio_failure_during_agent_run_asks_and_orders_nothing(lapland, monkeypatch, mode):
-    async def gemini(system, prompt, schema):
+    async def gemini(system, prompt, schema, *_):
         if schema is agent._PARSE_SCHEMA:
             return {"summary": "milk", "items": [{"query": "milk", "amount": 20, "unit": "L",
                                                   "dietary": ["lactose_free"]}]}

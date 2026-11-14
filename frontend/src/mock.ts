@@ -7,7 +7,7 @@ import { ApiError } from './api'
 //   contains "error"                     -> a failed request (to see the error state)
 //   anything else                        -> AUTO, order confirmed (small butter order)
 import type {
-  AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
+  AdminFilter, AdminRow, SecurityEvent, AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
   AskInput, AskResponse, CompileResult, Mandate, MenuInput, MenuRun, Product, RuleChange, SaveResult, Quote, QuantityResolution, Reason, RunInput, Substitute,
 } from './types'
 
@@ -722,5 +722,23 @@ export const mockApi = {
   async audit(): Promise<AuditEntry[]> {
     await wait()
     return audit
+  },
+
+  // Valio's view: the same trail with the front door's note (and a stand-in signature), plus two refused attempts.
+  async adminAudit(f: AdminFilter): Promise<AdminRow[]> {
+    await wait()
+    const at = (min: number) => new Date(Date.now() - min * 60_000).toISOString()
+    const security: SecurityEvent[] = [
+      { kind: 'security_event', id: 'sec-1', timestamp: at(42), event: 'cross_buyer_attempt', route: 'approve order', buyer_id: null, caller_buyer_id: 'helsinki-bistro' },
+      { kind: 'security_event', id: 'sec-2', timestamp: at(15), event: 'invalid_key', route: 'POST /api/agent/ask', buyer_id: null, header: 'X-Agent-Key' },
+    ]
+    const rows: AdminRow[] = audit.map((e) => {
+      const status = e.actor === 'valio_front_door' ? (e.decision.outcome === 'AUTO' ? 'confirmed' : e.decision.outcome === 'DECLINE' ? 'refused' : 'pending_approval') : null
+      return { ...e, front_door: status ? { action: 'order', status, signed_statement: { order_id: e.input.request.id }, signature: { alg: 'EdDSA' } } : { action: 'decide' } }
+    })
+    return [...security, ...rows]
+      .filter((r) => (r.kind ? !f.outcome && !f.status : (!f.outcome || r.decision.outcome === f.outcome) && (!f.status || r.front_door?.status === f.status)))
+      .filter((r) => !f.buyer_id || (r.kind ? (r.buyer_id ?? r.caller_buyer_id) : r.input.request.buyer_id) === f.buyer_id)
+      .sort((x, y) => x.timestamp.localeCompare(y.timestamp))
   },
 }

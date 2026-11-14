@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { ApiError, askAgentStream, DROPPED, getHealth, getKeys, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
+import { ApiError, askAgentStream, DROPPED, getAdminKey, getHealth, getKeys, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
-import { errorText, nextMonday } from './format'
+import { buyerLabel, errorText, nextMonday } from './format'
 import { groupHistory } from './history'
 import { COPIES, CopyContext, initialLang, rememberLang, useCopy, type Lang } from './i18n'
 import { MenuResult } from './Menu'
@@ -9,14 +9,13 @@ import { Rules } from './Rules'
 import { RunResult } from './RunResult'
 import type { AskResponse, AuditEntry, Reason } from './types'
 import { UrgentOptions } from './Urgent'
+import { ValioView } from './Valio'
 import { languageOf, useReadBack, useVoice, voiceSupported } from './useVoice'
 import { usePhaseLine } from './usePhaseLine'
 import { MicButton, VoiceStatus } from './Voice'
 
-type View = 'order' | 'rules' | 'history'
+type View = 'order' | 'rules' | 'history' | 'valio'
 
-// "lapland-kitchen" -> "Lapland kitchen": the buyer id is all the API tells us about the buyer.
-const buyerLabel = (id: string) => id.replace(/[-_.]+/g, ' ').replace(/^./, (c) => c.toUpperCase())
 const partOfDay = () => {
   const h = Number(new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hourCycle: 'h23', timeZone: 'Europe/Helsinki' }).format(new Date()))
   return h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening'
@@ -53,6 +52,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const [view, setView] = useState<View>('order')
   const [savedKeys, setSavedKeys] = useState(getKeys)
   const keysDialog = useRef<HTMLDialogElement>(null)
+  const adminDialog = useRef<HTMLDialogElement>(null)
+  const [adminKey, setAdminKeyState] = useState(getAdminKey) // Valio staff only: the Valio view appears once it's set
   const field = useRef<HTMLTextAreaElement>(null)
   const [entries, setEntries] = useState<AuditEntry[] | null>(null) // the history the approver key can read
   const [waiting, setWaiting] = useState<number | null>(null) // orders still pending your OK (checked, not guessed)
@@ -121,6 +122,22 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
       cancelled = true
     }
   }, [groups, entries])
+
+  // The Valio view: a small link asks for the admin key; once it's set, "Valio" sits in the nav.
+  function openAdmin() {
+    keysDialog.current?.close()
+    adminDialog.current?.showModal()
+  }
+  function adminSaved() {
+    setAdminKeyState(getAdminKey())
+    adminDialog.current?.close()
+    setView('valio')
+  }
+  function forgetAdmin() {
+    setAdminKey('')
+    setAdminKeyState('')
+    setView('order')
+  }
 
   function keysSaved() {
     setSavedKeys(getKeys())
@@ -227,7 +244,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         <span className="brand">
           <DoorGlyph /> Front Door
         </span>
-        <span className="brand-for">{buyer ? buyerLabel(buyer) : ''}</span>
+        <span className="brand-for">{view === 'valio' ? 'Valio Aimo' : buyer ? buyerLabel(buyer) : ''}</span>
         <nav aria-label={u.nav.main}>
           {!needsSetup &&
             (['order', 'history', 'rules'] as const).map((v) => (
@@ -240,6 +257,11 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
               {u.nav.keys}
             </button>
           )}
+          {adminKey && (
+            <button type="button" className="link" aria-current={view === 'valio' ? 'page' : undefined} onClick={() => setView('valio')}>
+              {u.valio.nav}
+            </button>
+          )}
           <button type="button" className="link lang" onClick={onSwitchLang} aria-label={u.lang.label} title={u.lang.switchTo}>
             {u.lang.short}
           </button>
@@ -248,6 +270,10 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
 
       <dialog ref={keysDialog} className="sheet" aria-labelledby="keys-dialog-title">
         <KeysForm titleId="keys-dialog-title" title={u.keys.title} onSaved={keysSaved} onCancel={() => keysDialog.current?.close()} />
+        {!adminKey && <ValioLink onOpen={openAdmin} />}
+      </dialog>
+      <dialog ref={adminDialog} className="sheet" aria-labelledby="admin-dialog-title">
+        <AdminKeyForm onSaved={adminSaved} onCancel={() => adminDialog.current?.close()} />
       </dialog>
 
       <p className="sr-only" aria-live="polite">
@@ -262,8 +288,18 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
           </div>
         )}
 
+        {adminKey && (
+          <section hidden={view !== 'valio'} aria-label={u.valio.title}>
+            {view === 'valio' && <ValioView refreshKey={auditKey} onForget={forgetAdmin} />}
+          </section>
+        )}
         {needsSetup ? (
-          <KeysForm title={u.keys.firstTitle} intro={u.keys.firstIntro} submitLabel={u.keys.start} onSaved={keysSaved} />
+          view !== 'valio' && (
+            <>
+              <KeysForm title={u.keys.firstTitle} intro={u.keys.firstIntro} submitLabel={u.keys.start} onSaved={keysSaved} />
+              {!adminKey && <ValioLink onOpen={openAdmin} />}
+            </>
+          )
         ) : (
           <>
             <section hidden={view !== 'order'} aria-label={u.nav.order}>
@@ -430,6 +466,50 @@ function useCyclingExample(active: boolean, examples: string[]): string {
     return () => clearInterval(t)
   }, [active, examples.length])
   return examples[i % examples.length]
+}
+
+// A small way in for Valio's staff; the chef's nav never shows it unless an admin key is set.
+function ValioLink({ onOpen }: { onOpen: () => void }) {
+  const u = useCopy().UI
+  return (
+    <p className="note valio-link">
+      <button type="button" className="link accent flush-link" onClick={onOpen}>
+        {u.valio.open}
+      </button>
+    </p>
+  )
+}
+
+function AdminKeyForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => void }) {
+  const u = useCopy().UI
+  const [key, setKey] = useState('')
+  return (
+    <form
+      className="setup"
+      onSubmit={(e) => {
+        e.preventDefault()
+        setAdminKey(key)
+        setKey('')
+        onSaved()
+      }}
+    >
+      <div className="field">
+        <h1 className="title" id="admin-dialog-title">
+          {u.valio.keyTitle}
+        </h1>
+        <p className="note">{u.valio.keyIntro}</p>
+      </div>
+      <SecretField id="admin-key" label={u.valio.key} help={u.valio.keyHelp} value={key} onChange={setKey} />
+      <div className="actions">
+        <button type="submit" className="btn" disabled={!key.trim()}>
+          {u.valio.open2}
+        </button>
+        <button type="button" className="btn plain" onClick={onCancel}>
+          {u.keys.cancel}
+        </button>
+      </div>
+    </form>
+  )
 }
 
 // The agent's question, with the answer right there: typed in the field, or spoken (the mic opens by itself after a

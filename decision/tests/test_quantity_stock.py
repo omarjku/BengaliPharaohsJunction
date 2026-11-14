@@ -1,7 +1,7 @@
 """Quantity, stock and unit rows (cases 1-8, 12, 13, 15, 30)."""
 
 import pytest
-from builders import make_facts, make_line, make_mandate, make_quote, run
+from builders import codes, make_facts, make_line, make_mandate, make_quote, run
 from helpers_b import ASK, AUTO, DECLINE, candidate, check, order_with, reason
 from trade_contracts import QuantityInfo
 
@@ -69,9 +69,12 @@ def test_case_08_known_999999_small_request():
     check(run(lines=[make_line(quantity=10)], quotes=[q]), ASK, "QTY_UNKNOWN")
 
 
-def test_case_08_threshold_not_just_999999():
-    q = make_quote(quantity=QuantityInfo(known=True, value=100000))
-    check(run(quotes=[q]), ASK, "QTY_UNKNOWN")
+def test_case_08_only_the_exact_placeholder_999999_is_unknown():
+    # T06.1 (real Valio data): Eila reports 9,999,999,999 as plenty; only 999999 means unknown.
+    placeholder = make_quote(quantity=QuantityInfo(known=True, value=999999))
+    check(run(quotes=[placeholder]), ASK, "QTY_UNKNOWN")
+    plenty = make_quote(quantity=QuantityInfo(known=True, value=100000))
+    assert "QTY_UNKNOWN" not in codes(run(quotes=[plenty]))
 
 
 def test_case_12_unit_mismatch_l_vs_kg():
