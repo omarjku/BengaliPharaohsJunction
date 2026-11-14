@@ -102,7 +102,7 @@ async def ask(text: str, requested: date | None, buyer_id: str, follow_up: dict 
     """One input box, plus conversational follow-ups: with `follow_up` {to, answer} the chef's answer continues the
     request that asked (conversation.py). Every response gets `speak` and, when it asks something an answer can
     continue, `conversation_id`."""
-    agent.start_budget(agent.DECISIONS_PER_MENU)  # before the preflight calls (Codex #17); run/menu reuse it
+    agent.start_budget()  # order-sized, before the preflight calls (Codex #17); menu.propose raises it to menu size
     if follow_up:
         entry = conversation.take(follow_up["to"], buyer_id)
         out, text, requested = await _answer(entry, follow_up["answer"], buyer_id)
