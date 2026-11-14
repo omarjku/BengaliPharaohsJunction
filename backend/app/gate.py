@@ -39,6 +39,16 @@ NUMERIC_RULES = (RuleKind.MAX_UNIT_PRICE_CENTS, RuleKind.MIN_DELIVERY_RELIABILIT
 DIETARY_CLAIMS = {"FREE_FROM_LACTOSE", "FREE_FROM_GLUTEN", "VEGAN", "VEGETARIAN", "FREE_FROM_MILK"}
 MAX_ALTERNATIVES = 3
 TIERS = ("best", "better", "good")
+OTHER_KIND = "alternative"  # below "good": a different kind of product (horseradish for onion), offered only as a hint
+_TIER_ORDER = {**{t: i for i, t in enumerate(TIERS)}, OTHER_KIND: len(TIERS)}
+# Words that say nothing about what a product IS (sizes, packaging, processing, marketing); the rest of a name, in
+# English and Finnish, is what "same kind" compares. Brands are dropped per product.
+_GENERIC_WORDS = {
+    "pcs", "kpl", "pack", "bag", "box", "bottle", "can", "tin", "jar", "case", "tray", "carton", "single", "packed",
+    "frozen", "raw", "fresh", "fully", "baked", "ready", "small", "large", "big", "mini", "whole", "half", "sliced",
+    "organic", "free", "gluten", "lactose", "low", "fat", "light", "sugar", "salt", "salted", "unsalted", "finnish",
+    "kotimainen", "luomu", "pakaste", "pakasteena", "and", "with", "for", "the", "uht", "pro", "valio", "pcd", "aimo",
+    "gluteeniton", "laktoositon", "rasvaton", "kevyt", "kpl", "litre", "litra", "kilo", "gram", "grams"}
 # Sales units counted by weight or volume may be fractional; every other Valio unit (ST, KI, PAK, BAG, …) is a piece.
 MEASURE_UNITS = {"KG", "KGM", "G", "GRM", "L", "LTR", "DL", "CL", "ML"}
 # When allergen data doesn't settle an excluded allergen, the product NAME (en + fi) is checked for these words.
@@ -341,14 +351,17 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
         if [r for r in rs if r.severity is not INFO]:
             bad.append(RejectedOption(product_id=c, reasons=_sorted(rs)))
         else:
-            ok.setdefault(replaces, []).append((bool(_differs(old, cat)), _score(q, cat), c, q))
+            ok.setdefault(replaces, []).append((not same_kind(old, cat), bool(_differs(old, cat)), _score(q, cat), c, q))
     alts, subs = [], []
     for replaces, ranked in ok.items():
         old = catalogue.get(replaces)
-        for i, (_, _, c, q) in enumerate(sorted(ranked, key=lambda x: (x[0], x[1], x[2]))[:len(TIERS)]):
+        for i, (other, _, _, c, q) in enumerate(sorted(ranked, key=lambda x: (x[0], x[1], x[2], x[3]))[:len(TIERS)]):
             cat = catalogue.get(c)
             differs = _differs(old, cat)
-            tier = "good" if differs else TIERS[i]  # full matches first; a product that differs is never "best"
+            if other:  # a different kind of product: say so first, never "good" or better, never a split fill
+                differs = [f"a different kind of product (not {old.get('name_en') or old.get('name_fi') or replaces}): "
+                           "check it suits the dish"] + differs
+            tier = OTHER_KIND if other else "good" if differs else TIERS[i]  # full matches first
             name = cat.get("name_en") or cat.get("name_fi") or c
             amount = "unknown amount" if not q["quantity_known"] else f"{_qty(q['available_amount'])} {q['sales_unit']} available"
             why = _why_safe(cat, old, excluded, need) + (f" Differs: {'; '.join(differs)}." if differs else "")
@@ -360,8 +373,26 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
             alts.append((tier, Alternative(product_id=c, summary=(
                 f"{tier.upper()} instead of {replaces}: {name}. Safe: {why} Orderable for {requested} (cut-off "
                 f"{q['order_cutoff']}), {eur(eur_to_cents(q['price']))} per {q['sales_unit']} net, {amount}."))))
-    alts.sort(key=lambda x: TIERS.index(x[0]))  # the contract allows 3: best first across refused lines
+    alts.sort(key=lambda x: _TIER_ORDER[x[0]])  # the contract allows 3: best first across refused lines
     return [a for _, a in alts[:MAX_ALTERNATIVES]], bad, subs, quotes
+
+
+def _kind_words(cat: dict) -> set[str]:
+    text = " ".join(filter(None, (cat.get("name_en"), cat.get("name_fi")))).lower()
+    brand = set(re.findall(r"[a-zäöå]{3,}", (cat.get("brand") or "").lower()))
+    words = {w[:-1] if len(w) > 4 and w.endswith("s") else w for w in re.findall(r"[a-zäöå]{3,}", text)}
+    return words - _GENERIC_WORDS - brand
+
+
+def same_kind(old: dict, cat: dict) -> bool:
+    """Is the candidate the same KIND of product (blackbox test #9: horseradish for onion, Nutella for peanut butter,
+    a rice pasty for bread rolls)? Valio's own substitute list says yes; otherwise the names must share a product
+    word (cube / cubes, English or Finnish). No shared word = a different product: never guessed to be the same.
+    ponytail: a shared word is a coarse test ("rice cakes" vs "basmati rice" pass); the agent's Gemini acceptability
+    judgement on substitutes catches those. A head-noun rule was stricter but split "milk drink" from "milk"."""
+    if cat.get("id") in (old.get("substitutes") or []):
+        return True
+    return bool(_kind_words(old) & _kind_words(cat))
 
 
 def _differs(old: dict, cat: dict) -> list[str]:
