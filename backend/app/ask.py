@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 from trade_contracts import ReasonCode as C
 
-from . import agent, catalogue, conversation, gate, kitchen, menu, progress, urgent
+from . import agent, catalogue, conversation, gate, kitchen, menu, progress, understand, urgent
 
 TZ = ZoneInfo("Europe/Helsinki")
 log = logging.getLogger(__name__)
@@ -182,10 +182,19 @@ async def ask(text: str, requested: date | None, buyer_id: str, follow_up: dict 
         out, text, requested = await _answer(entry, follow_up["answer"], buyer_id)
     else:
         out = await _flow(text, requested, buyer_id)
-    return _finish(out, text, requested, buyer_id)
+    result = _finish(out, text, requested, buyer_id)
+    conversation.record_turn(buyer_id, "user", follow_up["answer"] if follow_up else text)
+    conversation.record_turn(buyer_id, "assistant", result.get("reply") or result.get("speak", ""), card=result)
+    return result
 
 
 def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict:
+    v2 = out.pop("_v2", None)
+    timings = out.pop("_v2_timings", None)
+    cards = v2.get("cards", []) if v2 else None
+    if v2:
+        first = dict(cards[0]) if cards else {}
+        out = first
     kind, state = out.pop("_kind", None), out.pop("_state", {})
     reasons = (out.get("decision") or {}).get("reasons", [])
     if kind is None and out.get("request"):  # questions raised inside the order pipeline
@@ -232,9 +241,19 @@ def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict
         out["next_steps"] = _next_steps(out, text, when, buyer_id)
         if not out.get("question") and out["next_steps"]:  # a multi-line order: the first held line's question leads
             out["question"], out["conversation_id"] = out["next_steps"][0]["question"], out["next_steps"][0]["conversation_id"]
-    out["speak"] = conversation.speak(out, conversation.language(text))
+    out["speak"] = out.get("reply") or conversation.speak(out, conversation.language(text))
     if out.get("covers_source") == "kitchen":
         out["speak"] = " ".join(filter(None, [out["speak"], out.get("covers_assumption"), out.get("kitchen_note")]))
+    if v2:
+        first_card = {k: v for k, v in out.items() if k not in {"cards", "understood", "reply", "choices"}}
+        cards[0] = first_card
+        out["cards"] = cards
+        out["understood"] = v2["understood"]
+        if v2.get("reply"):
+            out["reply"] = v2["reply"]
+        out["choices"] = v2.get("choices") or out.get("choices") or []
+    if timings:
+        out["timings_ms"] = timings
     return out
 
 
@@ -380,28 +399,298 @@ async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, d
     return await _flow(merged, requested, buyer_id, parsed=(request, True)), merged, requested
 
 
+def _legacy_intent(intent: str) -> str:
+    return {"order_items": "order", "urgent": "order", "plan_meal": "menu", "plan_period": "menu",
+            "ask_about_cart": "cart", "change_cart": "order"}.get(intent, intent)
+
+
+def _action_date(action: dict, requested: date | None, today: date) -> tuple[date | None, str | None]:
+    value = (action.get("slots") or {}).get("date")
+    stated = None
+    if isinstance(value, str):
+        try:
+            stated = date.fromisoformat(value)
+        except ValueError:
+            stated = None
+    if requested and stated and requested != stated:
+        return None, "conflict"
+    if requested:
+        return requested, "request"
+    if stated:
+        return stated, "text"
+    if action.get("intent") == "urgent":
+        return today, "text"
+    return None, None
+
+
+def _parsed_action(action: dict, source: str, text: str) -> tuple[dict, bool]:
+    slots = action.get("slots") or {}
+    tags = [tag for tag in slots.get("diets") or [] if tag in agent.DIETARY]
+    items = [agent._item(item["name"], item.get("amount"), item.get("unit"), tags, source=item["name"])
+             for item in slots.get("items") or [] if item.get("name")]
+    return {"summary": text, "items": items}, source == "gemini"
+
+
+def _menu_text(action: dict, text: str) -> str:
+    dishes = [str(d).strip() for d in (action.get("slots") or {}).get("dishes") or [] if str(d).strip()]
+    return f"{text}\nFinal dishes: {', '.join(dishes)}" if dishes else text
+
+
+def _simple_card(intent: str, reply: str | None = None, question: str | None = None, choices: list[dict] | None = None,
+                 requested_date: date | None = None) -> dict:
+    return {"intent": _legacy_intent(intent), "question": question, "requested_date": requested_date and requested_date.isoformat(),
+            "reply": reply, "choices": choices or []}
+
+
+def _error_card(action: dict) -> dict:
+    return _simple_card(action.get("intent", "order_items"),
+                        "I couldn't finish that request, but the other requests are still intact.")
+
+
+def _cart_reply(text: str, card: dict | None) -> str:
+    if not card:
+        return "There is nothing in the cart yet."
+    lines = [line for line in card.get("lines") or [] if isinstance(line, dict)]
+    low = text.lower()
+    target = next((line for line in lines if line.get("name", "").lower() in low), lines[0] if lines else None)
+    if re.search(r"\bwhy\b|\blocked at\b|\blook at\b", low):
+        if target and target.get("why"):
+            return f"I looked at {target['name']} because {target['why']}."
+        return f"I looked at {target['name']} as part of the last cart check." if target else "I checked the last cart."
+    if re.search(r"\bnot available\b|\bavailable\b|\bavailability\b", low):
+        if target and target.get("available") is False:
+            return f"Yes, {target['name']} is still marked not available."
+        if target and target.get("available") is True:
+            return f"{target['name']} is still marked available."
+        return "The last cart does not include a current availability result."
+    names = ", ".join(line["name"] for line in lines[:5] if line.get("name"))
+    return f"The last cart included {names}." if names else "The last cart has no item lines."
+
+
+def _kitchen_reply(text: str, context: dict) -> str:
+    covers = ((context or {}).get("covers") or {}).get("avg_per_weekday") or {}
+    leftovers = (context or {}).get("leftovers_recent") or []
+    low = text.lower()
+    if "leftover" in low or "left" in low:
+        names = ", ".join(dict.fromkeys(str(item.get("item")) for item in leftovers if item.get("item")))
+        return f"Recent leftovers are {names}." if names else "There are no recent leftovers recorded."
+    if "usual" in low:
+        names = ", ".join(str(item.get("name")) for item in (context or {}).get("usual_products") or [] if item.get("name"))
+        return f"Usual products include {names}." if names else "There are no usual products recorded yet."
+    if "friday" in low or "perjantai" in low:
+        value = covers.get("fri")
+        return f"We usually feed about {value:g} people on Fridays." if isinstance(value, (int, float)) else \
+            "There is no Friday cover history recorded."
+    last = ((context or {}).get("covers") or {}).get("last_7_days")
+    return f"The kitchen recorded {last:g} covers in the last seven days." if isinstance(last, (int, float)) else \
+        "There is no kitchen cover history recorded yet."
+
+
+def _merge_changed_card(old: dict | None, fresh: dict, names: set[str], removed: set[str]) -> dict:
+    if not isinstance(old, dict):
+        return fresh
+    old_lines = [line for line in old.get("lines") or [] if isinstance(line, dict)]
+    kept = [line for line in old_lines if str(line.get("name") or "").lower() not in names | removed]
+    lines = list(fresh.get("lines") or []) + kept
+    out = dict(fresh)
+    if lines:
+        out["lines"] = lines
+    if old.get("cart_total_cents") is not None and fresh.get("cart_total_cents") is not None:
+        out["cart_total_cents"] = fresh["cart_total_cents"] + sum(line.get("price_cents") or 0 for line in kept)
+    return out
+
+
+async def _execute_action(action: dict, text: str, requested: date | None, buyer_id: str, today: date,
+                          source: str, steer: float | None, last_card: dict | None,
+                          meant: float | None = None) -> dict:
+    intent = action["intent"]
+    slots = action.get("slots") or {}
+    if intent == "greeting":
+        return _simple_card(intent, action.get("reply") or "Hello! What do you need for the kitchen?")
+    if intent == "out_of_scope":
+        topic = action.get("topic") or "that"
+        reply = (f"I order food and kitchen supplies from Valio, so I can't help with {topic}. What do you need for the kitchen?"
+                 if topic != "that" else "I can only help with ordering from Valio. What do you need?")
+        return _simple_card(intent, reply, question=reply)
+    if intent == "unrealistic":
+        choices = action.get("choices") or [{"label": "500 guests", "amount": 500, "unit": "guests"},
+                                            {"label": "Tell me another number", "amount": None, "unit": "guests"}]
+        return _simple_card(intent, action.get("reply") or "That scale is beyond one kitchen; shall I plan for 500?",
+                            choices=choices)
+    if intent == "ask_about_cart":
+        return _simple_card(intent, _cart_reply(text, last_card),
+                            requested_date=date.fromisoformat(last_card["requested_date"])
+                            if last_card and last_card.get("requested_date") else None)
+    if intent == "ask_kitchen":
+        return _simple_card(intent, _kitchen_reply(text, kitchen_context(buyer_id)))
+    if intent == "tell_kitchen":
+        logged = await kitchen.log_from_text(buyer_id, text)
+        entries = logged.get("entries") if isinstance(logged, dict) else []
+        if entries:
+            first = entries[0]
+            detail = f"{first.get('covers')} covers" if first.get("covers") is not None else first.get("note") or "that"
+            return _simple_card(intent, f"Noted: {detail}.")
+        return _simple_card(intent, "Noted: I couldn't extract a kitchen fact from that yet.")
+    if intent == "change_cart":
+        if not last_card:
+            return _simple_card(intent, "There is nothing in the cart to change.")
+        changed = {str(item.get("name") or "").lower() for item in slots.get("items") or [] if item.get("name")}
+        removed = changed if re.search(r"\b(remove|delete|poista)\b", text, re.I) else set()
+        if not changed and (slots.get("date") or requested):
+            return dict(last_card, intent="order", requested_date=(slots.get("date") or
+                       requested.isoformat() if requested else last_card.get("requested_date")))
+        when, reason = _action_date({"intent": "order_items", "slots": slots}, requested, today)
+        if reason == "conflict":
+            stated = date.fromisoformat(slots["date"])
+            return _ask("order", None, requested, "request", f"Which delivery day: {stated:%A %d %B} (as written) or "
+                        f"{requested:%A %d %B} (as selected)?", C.LOW_CONFIDENCE, "Pick one delivery date.")
+        if when is None:
+            when = date.fromisoformat(last_card["requested_date"]) if last_card.get("requested_date") else today
+        if removed:
+            return _merge_changed_card(last_card, {"intent": "order", "requested_date": when.isoformat(),
+                                                   "lines": [], "cart_total_cents": 0}, set(), removed)
+        parsed, parsed_by_gemini = _parsed_action({"slots": slots}, source, text)
+        fresh = await agent.run(text, when, buyer_id, pre={"parsed": (parsed, parsed_by_gemini), "steer": steer,
+                                                           "steer_checked": steer is not None, "meant": meant,
+                                                           "meant_checked": meant is not None})
+        return _merge_changed_card(last_card, fresh | {"intent": "order", "requested_date": when.isoformat()}, changed, set())
+
+    when, date_source = _action_date(action, requested, today)
+    if date_source == "conflict":
+        stated = date.fromisoformat(slots["date"])
+        return _ask(_legacy_intent(intent), slots.get("guests"), requested, "request",
+                    f"Which delivery day: {stated:%A %d %B} (as written) or {requested:%A %d %B} (as selected)?",
+                    C.LOW_CONFIDENCE, "Pick one delivery date.")
+    if intent in ("order_items", "urgent") and when is None:
+        return _ask("order", None, None, None, "For which delivery day?", C.DATA_MISSING,
+                    "Say the day, e.g. 'for Monday' or 'tomorrow'.", kind="date")
+    if when is not None and when < today:
+        return _ask(_legacy_intent(intent), slots.get("guests"), when, date_source,
+                    f"{when:%A %d %B %Y} is in the past. Which delivery day?",
+                    C.DATA_MISSING, "Pick a date from today on.")
+    if when is not None and (when - today).days > 60:
+        return _ask(_legacy_intent(intent), slots.get("guests"), when, date_source,
+                    f"{when:%A %d %B %Y} is outside the 60-day ordering window. Which delivery day?",
+                    C.DATA_MISSING, "Pick a date from today to 60 days ahead.")
+    if intent == "plan_period":
+        plan = _context_plan(kitchen_context(buyer_id), text, today, when)
+        if plan:
+            slots = dict(slots, guests=plan["covers"], date=(plan["when"] if isinstance(plan["when"], str)
+                                                             else plan["when"].isoformat()))
+            when, date_source = plan["when"], "text"
+        elif slots.get("guests") is None:
+            return _ask("menu", None, when, date_source, "For how many guests?", C.QTY_AMBIGUOUS,
+                        "Add the number of guests, e.g. 'for 80 guests'.", kind="guests")
+    if intent == "plan_meal" or intent == "plan_period":
+        covers = slots.get("guests")
+        if covers is None:
+            return _ask("menu", None, when, date_source, "For how many guests?", C.QTY_AMBIGUOUS,
+                        "Add the number of guests, e.g. 'for 80 guests'.", kind="guests")
+        menu_text = _menu_text(action, text)
+        dishes = asyncio.create_task(menu.parse_menu(menu_text, buyer_id))
+        try:
+            body = await menu.propose(menu_text, covers, when, buyer_id, dishes, steer_score=steer)
+        finally:
+            if not dishes.done():
+                dishes.cancel()
+        body.update(intent="menu", covers=covers, requested_date=when.isoformat(), date_source=date_source, question=None)
+        if intent == "plan_period":
+            context_plan = _context_plan(kitchen_context(buyer_id), text, today, when)
+            if context_plan:
+                body.update(covers_source="kitchen", covers_assumption=context_plan["assumption"],
+                            kitchen_leftovers=context_plan["leftovers"], kitchen_note=_leftovers_note(context_plan["leftovers"]))
+        return body
+    parsed, parsed_by_gemini = _parsed_action(action, source, text)
+    body = await agent.run(text, when, buyer_id, pre={"parsed": (parsed, parsed_by_gemini), "steer": steer,
+                                                       "steer_checked": steer is not None, "meant": meant,
+                                                       "meant_checked": meant is not None})
+    try:
+        urgent_options = urgent.urgent_options(text, buyer_id, when, datetime.now(TZ), body.get("lines", []))
+    except (KeyError, TypeError):
+        urgent_options = None
+    body.update(intent="order", requested_date=when.isoformat(), date_source=date_source, question=None,
+                urgent_options=urgent_options)
+    return body
+
+
+async def _safe_action(action: dict, text: str, requested: date | None, buyer_id: str, today: date,
+                       source: str, steer: float | None, last_card: dict | None,
+                       meant: float | None = None) -> dict:
+    try:
+        return await _execute_action(action, text, requested, buyer_id, today, source, steer, last_card, meant)
+    except Exception:  # one malformed action must not cancel sibling actions
+        log.exception("ask action failed")
+        return _error_card(action)
+
+
+def _public_card(card: dict) -> dict:
+    return {key: value for key, value in card.items() if key not in {"_kind", "_state"}}
+
+
 async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | None = None,
                 parsed: tuple[dict, bool] | None = None) -> dict:
     today = datetime.now(TZ).date()
-    stated = date_from_text(text, today)  # deterministic, so the date guard can start with everything else
-    guess = requested or stated or (today if urgent.URGENT.search(text) else None)
-    # One parallel batch: intent check, order parse, steering and date guards (room3-speed; the parse is wasted only
-    # when it turns out to be a menu, the guards only when the request stops at a question).
     t0 = time.monotonic()
     progress.phase("understanding")
-    given_covers, given_parse = covers, parsed
-    # Menu markers always route to the menu path (classify), so its parse starts now and the order parse is skipped
-    # (room3-menu-speed: the unused order parse used to block the menu parse for ~8 s).
-    context_request = given_parse is None and given_covers is None and _is_context_request(text)
-    menu_first = given_parse is None and bool(given_covers is not None or _COVERS.search(text) or _MENU_WORD.search(text)
-                                              or context_request)
-    dishes = asyncio.create_task(menu.parse_menu(text, buyer_id)) if menu_first else None
-    try:
-        return await _route(text, requested, buyer_id, today, stated, guess, t0, given_covers, given_parse, dishes,
-                            context_request)
-    finally:
-        if dishes is not None and not dishes.done():
-            dishes.cancel()  # the request stopped at a question
+    steer = await agent.steering(text)
+    if agent._INSTRUCTION.search(text) or agent._BILLING.search(text) or (steer is not None and steer >= agent.INJECTION_MAX):
+        return {"_v2": {"cards": [_ask("order", None, requested, "request" if requested else None,
+                                         "This request seems to try to steer the agent (instructions, approvals, billing "
+                                         "or authority claims). Nothing was ordered.", C.LOW_CONFIDENCE,
+                                         "Send just the products, amounts and date; rules change only through the Rules screen.")],
+                        "understood": {"intent": "order_items", "slots": {}, "source": "fallback", "interpretation": None},
+                        "reply": None, "choices": []}}
+    if parsed is not None or covers is not None:
+        action = {"intent": "plan_meal" if covers is not None else "order_items",
+                  "slots": {"items": [], "dishes": [], "guests": covers, "date": requested and requested.isoformat(),
+                            "diets": [], "exclusions": [], "language": conversation.language(text)},
+                  "question": None, "choices": [], "reply": None, "topic": None, "interpretation": None}
+        if parsed is not None:
+            action["slots"]["items"] = [{"name": item["query"], "amount": item.get("amount"), "unit": item.get("unit")}
+                                         for item in parsed[0].get("items") or []]
+        source = "fallback"
+        actions = [action]
+    else:
+        reading = await understand.understand(text, buyer_id, conversation.turns(buyer_id),
+                                               conversation.last_card(buyer_id), today)
+        actions, source = reading.get("actions") or [], reading.get("source", "fallback")
+    if len(actions) > 5:
+        actions = actions[:5]
+    if not actions:
+        actions = [understand._fallback_action(text, today, conversation.last_card(buyer_id))]
+        source = "fallback"
+    if source == "fallback":
+        fallback_date = date_from_text(text, today)
+        if fallback_date and actions and (actions[0].get("slots") or {}).get("date") is None:
+            action = dict(actions[0], slots=dict(actions[0].get("slots") or {}))
+            action["slots"]["date"] = fallback_date.isoformat()
+            actions[0] = action
+    last_card = conversation.last_card(buyer_id)
+    async def date_check(action):
+        try:
+            when, reason = _action_date(action, requested, today)
+            return await agent.date_intent(text, when, today) if when is not None and reason != "conflict" else None
+        except Exception:
+            log.exception("date guard failed")
+            return None
+
+    date_checks = await asyncio.gather(*(date_check(action) for action in actions))
+    results = await asyncio.gather(*(_safe_action(action, text, requested, buyer_id, today, source, steer, last_card, meant)
+                                     for action, meant in zip(actions, date_checks)))
+    cards = [dict(result) if index == 0 else _public_card(result) for index, result in enumerate(results)]
+    replies = [str(result.get("reply")).strip() for result in results if result.get("reply")]
+    first = actions[0]
+    understood = {"intent": first["intent"], "slots": first.get("slots") or {}, "source": source,
+                  "interpretation": first.get("interpretation")}
+    envelope = {"_v2": {"cards": cards, "understood": understood, "reply": " ".join(replies)[:1_000] or None,
+                        "choices": first.get("choices") or []},
+                "_v2_timings": {"understand": round((time.monotonic() - t0) * 1000),
+                                 "total": round((time.monotonic() - t0) * 1000)}}
+    # _flow is also a small internal seam used by the pre-v2 kitchen tests. Preserve its direct-call body when the
+    # caller supplied the legacy covers override; ask() still consumes the v2 envelope and adds the new fields.
+    if covers is not None and cards:
+        return envelope | cards[0]
+    return envelope
 
 
 async def _route(text, requested, buyer_id, today, stated, guess, t0, given_covers, given_parse, dishes,

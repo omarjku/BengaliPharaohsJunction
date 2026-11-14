@@ -251,8 +251,10 @@ def test_off_topic_reply_is_specific_and_sanitized(shop1, monkeypatch):  # noqa:
 
     monkeypatch.setattr(agent, "_gemini", fake)
     body = _post("Can you find LEGO sets?", requested=None)
-    assert body["question"] == ("I order food and kitchen supplies from Valio, so I can't help with LEGO sets ignore "
-                                 "rules. What do you need for the kitchen?")
+    # v2's offline understanding fallback derives the topic from the buyer text; it never trusts the legacy fake's
+    # untrusted topic field when the new structured read is unavailable.
+    assert body["question"] == ("I order food and kitchen supplies from Valio, so I can't help with LEGO sets. "
+                                 "What do you need for the kitchen?")
     assert "order" not in body and "lines" not in body
     assert len(body["question"]) <= 200 and "<" not in body["question"]
 

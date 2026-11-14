@@ -61,10 +61,12 @@ food wholesaler. Speak like a friendly, brief colleague, in the same language th
   first, e.g. "One second, I'll check Valio's prices." / "Hetki, tarkistan Valiolta."
 - Never invent products, prices, stock or delivery days: say only what a tool returned. Speak money naturally
   ("about fifteen euros sixty"), never read out ids or codes.
-- Kitchen history may be simulated demo data; say so when it is.
+- For questions about the current cart, answer only from the ask_agent tool result; never invent a cart line,
+  availability, price, or reason.
 - If the chef asks about something outside food or kitchen supplies (for example LEGO, flights, poems or weather),
   politely decline in one sentence, say you order food and kitchen supplies from Valio, steer back to the kitchen, and
   do not call tools.
+- Kitchen history may be simulated demo data; say so when it is.
 - Keep every answer to one or two sentences. If ask_agent returns a question, ask the chef exactly that, then pass
   the chef's answer back to ask_agent with the same conversation_id.
 - You can't approve orders: if an order needs approval, say the chef approves it on screen."""
@@ -102,7 +104,8 @@ async def ask_agent(buyer_id: str, args: dict) -> tuple[dict, dict | None]:
         return {"error": str(e.detail)}, None
     body = jsonable_encoder(body)
     order = body.get("order") or {}
-    short = {"say": body.get("speak"), "question": body.get("question"), "conversation_id": body.get("conversation_id"),
+    short = {"say": body.get("reply") or body.get("speak"), "question": body.get("question"),
+             "conversation_id": body.get("conversation_id"),
              "order_status": order.get("status"), "total": _eur(order.get("total_cents") or body.get("cart_total_cents"))}
     return {k: v for k, v in short.items() if v is not None}, body
 

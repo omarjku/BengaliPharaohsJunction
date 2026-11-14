@@ -1,4 +1,5 @@
 """One input for everyone: POST /api/agent/ask routes to the order or menu flow (Gemini faked, shop offline)."""
+import asyncio
 import json
 from datetime import date
 
@@ -23,6 +24,9 @@ def route(monkeypatch, intent, covers=None, items=ITEM, dishes=(PORRIDGE,), rank
             return {"dishes": list(dishes)}
         return None
     monkeypatch.setattr(agent, "_gemini", fake)
+    async def safe_steering(_text):
+        return 0.0
+    monkeypatch.setattr(agent, "steering", safe_steering)
     fake_match(monkeypatch, list(ranked))
 
 
