@@ -60,17 +60,20 @@ CASES = [
 async def run() -> list[dict]:
     catalogue.load()
     out = []
-    for req, pid, kind, correct, why in CASES:
+    for req, pid, kind, correct, why in CASES:  # noqa: B007
         p = catalogue.get(pid)
         # Exactly what production asks: for a line it may order, "meets" + "qty" with our resolver's explanation in
         # the input, thresholded on the weaker answer; for a substitute, "sub".
-        [item] = agent.fallback_parse(req)[:1] or [{"amount": None, "unit": None}]
+        # The judge reads agent.canonical(item), built from the parsed request, never the raw words (QA HP-01).
+        request, _ = await agent.parse(req)  # the real parser (Gemini; fallback if down), as production
+        item = request["items"][0]
+        text = agent.canonical(item)
         qty = quantity.resolve(p, item["amount"], item["unit"]) if item["amount"] and item["unit"] else None
         if kind == "meets" and qty and qty["quantity"] is not None:
-            conf, reason, _ = await agent.judge_line(req, p, qty["explanation"])
+            conf, reason, _ = await agent.judge_line(text, p, qty["explanation"])
         else:
-            conf, reason, _ = await agent._judge_one(req, p, [kind])
-        out.append({"request": req, "product_id": pid, "product": agent._name(p), "kind": kind, "correct": correct,
+            conf, reason, _ = await agent._judge_one(text, p, [kind])
+        out.append({"request": req, "judge_input": text, "product_id": pid, "product": agent._name(p), "kind": kind, "correct": correct,
                     "label_why": why, "p_yes": conf, "judge": reason})
     return out
 
