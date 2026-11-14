@@ -3,6 +3,7 @@ import { ApiError, compileRules, getKeys, getMandate, MOCK, saveMandate } from '
 import { errorText } from './format'
 import { useCopy } from './i18n'
 import type { CompileResult, Mandate } from './types'
+import { WeeklyMenus } from './WeeklyMenus'
 
 type Props = { refreshKey: number; onAction: () => void; onAnnounce: (text: string) => void }
 
@@ -329,6 +330,9 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
           )}
         </section>
       )}
+
+      {/* HOOK: weekly menus are maintained alongside the chef's ordering rules. */}
+      <WeeklyMenus />
     </>
   )
 }
