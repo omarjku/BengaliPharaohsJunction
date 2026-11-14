@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from app import catalogue, orders, valio
+from app import catalogue, config, orders, valio
 
 NOW = datetime.now(timezone.utc)
 REQ = date.today() + timedelta(days=2)
@@ -55,9 +55,11 @@ class Shop:
             "104": quote("104", amount=0.0), "105": quote("105", model=None), "106": quote("106"),
         }
         self.calls = []
+        self.fresh = []
 
-    async def get_quotes(self, ids, requested_date, customer="123"):
+    async def get_quotes(self, ids, requested_date, customer="123", fresh=False):
         self.calls.append(list(ids))
+        self.fresh.append(fresh)
         return [self.quotes.get(i) or quote(i, model=None, error=True) for i in ids]
 
 
@@ -70,4 +72,6 @@ def shop(monkeypatch, tmp_path):
     monkeypatch.setattr(orders, "AUDIT_FILE", tmp_path / "audit.jsonl")
     monkeypatch.setattr(orders, "ORDERS_FILE", tmp_path / "orders.json")
     monkeypatch.setattr(orders, "_orders", None)
+    monkeypatch.setattr(config, "AGENT_KEYS", "agent-chef=chef,agent-other=other")
+    monkeypatch.setattr(config, "APPROVER_KEYS", "appr-chef=chef:Chef Aino,appr-other=other:Olli")
     return s

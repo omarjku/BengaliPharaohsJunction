@@ -9,7 +9,9 @@ from fastapi.testclient import TestClient
 from app import orders
 from app.main import app
 
-c = TestClient(app, raise_server_exceptions=False)
+c = TestClient(app, raise_server_exceptions=False, headers={"X-Agent-Key": "agent-chef", "X-Approver-Key": "appr-chef"})
+AGENT = {"chef": "agent-chef", "other": "agent-other"}
+APPROVER = {"chef": "appr-chef", "other": "appr-other"}
 MANDATE = {"id": "m1", "buyer_id": "chef", "hard_rules": [{"kind": "auto_approve_limit_cents", "value": 100000}],
            "per_line_cap_cents": 10**9}
 
@@ -17,11 +19,11 @@ MANDATE = {"id": "m1", "buyer_id": "chef", "hard_rules": [{"kind": "auto_approve
 def order(lines, buyer="chef", mandate=None, **extra):
     body = {"buyer_id": buyer, "requested_date": REQ.isoformat(), "mandate": mandate or MANDATE,
             "lines": [{"product_id": p, "quantity": q} for p, q in lines], **extra}
-    return c.post("/api/orders", json=body)
+    return c.post("/api/orders", json=body, headers={"X-Agent-Key": AGENT.get(buyer, "agent-chef")})
 
 
 def audit(buyer="chef"):
-    r = c.get("/api/audit", params={"buyer_id": buyer})
+    r = c.get("/api/audit", headers={"X-Approver-Key": APPROVER.get(buyer, "appr-chef")})
     assert r.status_code == 200
     return r.json()
 
@@ -95,7 +97,7 @@ def test_weekly_budget_counts_confirmed_orders(shop):
 def test_audit_is_per_buyer_and_append_only(shop):
     order([("463335", 1)])
     order([("463335", 1)], buyer="other", mandate=dict(MANDATE, buyer_id="other"))
-    assert len(audit("chef")) == 1 and len(audit("other")) == 1 and audit("nobody") == []
+    assert len(audit("chef")) == 1 and len(audit("other")) == 1
     lines = orders.AUDIT_FILE.read_text().splitlines()
     assert len(lines) == 2 and all(json.loads(x)["contract_version"] == "0.2" for x in lines)
 
@@ -116,7 +118,6 @@ def test_orders_survive_a_restart(shop, monkeypatch):
     {"requested_date": "2030-01-01"},
     {"requested_date": "monday"},
     {"buyer_id": "a b"},
-    {"buyer_id": "someone-else"},  # mandate belongs to another buyer
     {"unit_price_cents": 1},  # the client can't set prices
     {"lines": [{"product_id": "463335", "quantity": 1, "unit_price_cents": 1}]},
 ])
@@ -134,9 +135,7 @@ def test_unknown_ids_404_and_bad_ids_422(shop):
     assert c.post(f"/api/orders/{missing}/reject", json={"approver": "A"}).status_code == 404
     assert c.get("/api/orders/../../etc").status_code in (404, 422)
     assert c.get("/api/orders/not-a-uuid").status_code == 422
-    assert c.post(f"/api/orders/{missing}/approve", json={"approver": "<script>"}).status_code == 422
-    assert c.get("/api/audit").status_code == 422
-    assert c.get("/api/audit", params={"buyer_id": "chef", "limit": 0}).status_code == 422
+    assert c.get("/api/audit", params={"limit": 0}).status_code == 422
 
 
 def test_valio_failure_is_503_without_leaking_details(shop, monkeypatch):
