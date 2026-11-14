@@ -5,6 +5,7 @@ import { errorText } from './format'
 import { useCopy } from './i18n'
 import { RunResult } from './RunResult'
 import type { Line, MenuRun, OrderResponse } from './types'
+import './Menu.css'
 
 type Props = {
   plan: MenuRun
@@ -133,10 +134,43 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
           </section>
 
           {after}
-          <section className="instead" aria-labelledby="menu-cart">
-            <h2 className="title" id="menu-cart">
-              {t.theCart}
-            </h2>
+          <section className="instead mt-step" aria-labelledby="menu-step1">
+            <StepHead n={1} id="menu-step1" title={t.step1} sub={t.step1Sub(covers != null ? c.count(covers) : null, c.day(planFor.date))} />
+            <ul className="mt-dishes">
+              {plan.menu.dishes.map((d) => (
+                <li key={d.name}>{d.name}</li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="instead mt-step" aria-labelledby="menu-dishes">
+            <StepHead n={2} id="menu-dishes" title={t.step2} sub={t.step2Sub} />
+            <div className="mt-dish-grid">
+              {plan.menu.dishes.map((d) => (
+                <article key={d.name} className="mt-dish">
+                  <header className="mt-dish-head">
+                    <h3>{d.name}</h3>
+                    {covers != null && <span className="mt-covers num">{t.forGuests(c.count(covers))}</span>}
+                  </header>
+                  <ul>
+                    {d.ingredients.map((i, k) => (
+                      <li key={k} className="mt-ing">
+                        <span className="mt-ing-name">{i.name}</span>
+                        <span className="mt-ing-total num">
+                          {i.per_cover != null && covers != null ? amount(round(i.per_cover * covers), i.unit) : t.amountUnclear}
+                        </span>
+                        <span className="mt-ing-per quiet small num">{i.per_cover != null ? t.perCover(amount(i.per_cover, i.unit)) : ''}</span>
+                        {i.assumption && <span className="mt-ing-why quiet small">{i.assumption}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="instead mt-step" aria-labelledby="menu-cart">
+            <StepHead n={3} id="menu-cart" title={t.theCart} sub={t.step3Sub(c.money(total))} />
             {plan.ingredients.map((ing, i) => {
               const lines = plan.lines.filter((l) => l.item === i)
               const chosen = swap[i] ? [swap[i]] : lines.filter((l) => l.chosen)
@@ -214,36 +248,28 @@ export function MenuResult({ plan, covers, requestedDate, onAction, onBusy, onAn
             )}
           </section>
 
-          <section className="instead" aria-labelledby="menu-dishes">
-            <h2 className="title" id="menu-dishes">
-              {t.amounts}
-            </h2>
-            <div className="more flush">
-              {plan.menu.dishes.map((d) => (
-                <details key={d.name}>
-                  <summary>
-                    {d.name}
-                    <span className="quiet small summary-count">
-                      {t.ingredients(d.ingredients.length)}
-                    </span>
-                  </summary>
-                  <ul className="more-body">
-                    {d.ingredients.map((i, k) => (
-                      <li key={k} className="option">
-                        <div>
-                          <p>{i.name}</p>
-                          {i.assumption && <p className="quiet small">{i.assumption}</p>}
-                        </div>
-                        <p className="option-side quiet">{i.per_cover != null ? t.perCover(amount(i.per_cover, i.unit)) : t.amountUnclear}</p>
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              ))}
-            </div>
-          </section>
         </>
       )}
     </>
   )
 }
+
+// A numbered step header (the menu really is a sequence: the menu, its portions, the cart).
+function StepHead({ n, id, title, sub }: { n: number; id: string; title: string; sub: string }) {
+  return (
+    <div className="mt-step-head">
+      <span className="mt-step-n num" aria-hidden="true">
+        {n}
+      </span>
+      <div>
+        <h2 className="title" id={id}>
+          {title}
+        </h2>
+        <p className="quiet small">{sub}</p>
+      </div>
+    </div>
+  )
+}
+
+// Totals for display: per cover x guests, to 2 decimals at most (1.85 kg, not 1.8500000001).
+const round = (n: number) => Math.round(n * 100) / 100
