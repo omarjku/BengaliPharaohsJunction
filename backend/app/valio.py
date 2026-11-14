@@ -86,18 +86,20 @@ def _merge(avail: dict, price: dict | None, now: datetime) -> dict:
     }
 
 
-async def get_quotes(product_ids: list[str], requested_date: str, customer: str = "123") -> list[dict]:
-    """Quotes for the given products and delivery date (YYYY-MM-DD), in request order. Cached for CACHE_TTL_S."""
+async def get_quotes(product_ids: list[str], requested_date: str, customer: str = "123",
+                     fresh: bool = False) -> list[dict]:
+    """Quotes for the given products and delivery date (YYYY-MM-DD), in request order. Cached for CACHE_TTL_S;
+    fresh=True skips the cache read (the front door decides orders on live data) but still refreshes the cache."""
     ids = list(dict.fromkeys(product_ids))  # dedupe, keep order
-    fresh = time.monotonic()
+    now_m = time.monotonic()
     found: dict[str, dict] = {}
-    for i in ids:
-        if (c := _cache.get((i, requested_date))) and fresh - c[0] < CACHE_TTL_S:
+    for i in ([] if fresh else ids):
+        if (c := _cache.get((i, requested_date))) and now_m - c[0] < CACHE_TTL_S:
             found[i] = c[1]
     todo = [i for i in ids if i not in found]
 
     if todo:
-        _prune(fresh)
+        _prune(now_m)
         async with _client() as http:
             for start in range(0, len(todo), MAX_BATCH):
                 batch = todo[start:start + MAX_BATCH]
@@ -112,7 +114,7 @@ async def get_quotes(product_ids: list[str], requested_date: str, customer: str 
                 for item in a_json["products"]:
                     quote = _merge(item, prices.get(item["productId"]), now)
                     quote["currency"] = p_json.get("currency")
-                    _cache[(item["productId"], requested_date)] = (fresh, quote)
+                    _cache[(item["productId"], requested_date)] = (now_m, quote)
                     found[item["productId"]] = quote
 
     return [found[i] for i in ids if i in found]

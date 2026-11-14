@@ -87,14 +87,25 @@ def _slim(p: dict) -> dict:
 
 
 def _fetch(kind: str, dest: Path) -> None:
-    """Stream one Valio download (follows the 307 redirect) to `dest`."""
-    headers = {"X-API-Key": config.VALIO_API_KEY, "User-Agent": USER_AGENT}
-    with httpx.stream("GET", f"{config.VALIO_BASE_URL}/api/{ENDPOINT[kind]}/download", headers=headers,
-                      follow_redirects=True, timeout=120) as r:
-        r.raise_for_status()
-        with open(dest, "wb") as f:
-            for chunk in r.iter_bytes(1 << 20):
-                f.write(chunk)
+    """Stream one Valio download to `dest`. The endpoint answers 307 → file URL; we follow it ourselves so the
+    API key is only ever sent to Valio's own host (a signed storage URL elsewhere must not receive it)."""
+    url = f"{config.VALIO_BASE_URL}/api/{ENDPOINT[kind]}/download"
+    valio_host = httpx.URL(config.VALIO_BASE_URL).host
+    for _ in range(5):  # bounded redirect chain
+        target = httpx.URL(url)
+        headers = {"User-Agent": USER_AGENT}
+        if target.host == valio_host and target.scheme == "https":
+            headers["X-API-Key"] = config.VALIO_API_KEY
+        with httpx.stream("GET", url, headers=headers, follow_redirects=False, timeout=120) as r:
+            if r.is_redirect:
+                url = str(target.join(r.headers["location"]))
+                continue
+            r.raise_for_status()
+            with open(dest, "wb") as f:
+                for chunk in r.iter_bytes(1 << 20):
+                    f.write(chunk)
+            return
+    raise RuntimeError("too many redirects downloading Valio data")
 
 
 def _csv_map(path: Path, col: str) -> dict[str, float]:
