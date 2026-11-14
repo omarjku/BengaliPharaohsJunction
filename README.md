@@ -56,6 +56,7 @@ Set the variables from `.env.example`:
 | `APPROVER_KEYS` | Comma-separated `key=buyer_id[:name]` entries for human approvers. |
 | `VALIO_ADMIN_KEYS` | Comma-separated `key=valio[:name]` entries for Valio staff: read-only `GET /api/admin/audit` across all buyers (`X-Valio-Admin-Key`). |
 | `FRONT_DOOR_SIGNING_KEY` | Base64 of a 32-byte Ed25519 seed; signs every order response (public key at `/.well-known/front-door-keys.json`, check with `POST /api/verify`; see `docs/STANDARDS.md`). Unset = ephemeral key. |
+| `DATA_DIR` | Directory for the front door's state: orders, audit trail, idempotency keys, saved mandates. Default: the repo's `data/`. On Render, mount a persistent disk (e.g. `/var/data`) and set this so state survives redeploys. |
 
 Use long random values for the front-door keys. `AGENT_KEYS` authenticates
 `X-Agent-Key`; `APPROVER_KEYS` authenticates `X-Approver-Key`. If either key
@@ -70,15 +71,27 @@ routes derive the buyer identity from the key, not from a trusted request body.
 | Method and route | What it does | Header |
 | --- | --- | --- |
 | `POST /api/agent/run` | Runs the buyer-agent flow end to end; the mandate is loaded server-side. | `X-Agent-Key` |
-| `POST /api/orders` | Places an order through the front door. | `X-Agent-Key` |
-| `GET /api/orders/{id}` | Reads one buyer's order. | `X-Approver-Key` |
+| `POST /api/agent/menu` | Menu to cart: proposes `order_lines` for a menu and covers; always asks the chef. | `X-Agent-Key` |
+| `POST /api/orders` | Places an order through the front door. Send an `Idempotency-Key`. | `X-Agent-Key` |
+| `GET /api/orders/{id}` | Reads one of the caller's buyer's orders (read-only). | `X-Approver-Key` or `X-Agent-Key` |
 | `POST /api/orders/{id}/approve`<br>`POST /api/orders/{id}/reject` | Human sign-off or refusal. | `X-Approver-Key` |
 | `GET /api/audit` | Reads that buyer's audit trail. | `X-Approver-Key` |
+| `POST /api/mandate/compile` | Plain-language rules → a proposed mandate, the diff and open questions. Nothing is saved. | `X-Approver-Key` |
+| `GET /api/mandate`<br>`PUT /api/mandate` | Reads, or saves after confirmation, the buyer's mandate (audited). | `X-Approver-Key` |
+| `GET /.well-known/front-door-keys.json`<br>`POST /api/verify` | The door's Ed25519 public keys, and a check of a signed order statement. | None |
+| `GET /api/admin/audit` | Every buyer's audit trail, read-only, for Valio staff. | `X-Valio-Admin-Key` |
 | `POST /api/quotes` | Gets price and availability for product IDs. | None |
 | `GET /api/products/{product_id}` | One product's static facts. | None |
 | `GET /api/products/search` | Searches the static catalogue with filters. | None |
 | `POST /api/quantity/resolve` | Converts a buyer amount to sales units. | None |
 | `GET /api/health` | Reports service and catalogue status. | None |
+
+**Retries and limits.** Agents should send an `Idempotency-Key` header (any unique
+string, such as a UUID) on every order POST, and reuse it when they retry. Approve and
+reject accept one too. The same key and body within 24 h returns the original response,
+marked `Idempotent-Replayed: true`, instead of acting twice. Rate limits are 30 requests
+per minute per agent key, 120 requests per minute per human key, and 120 per minute per
+IP. Over the limit, the door answers `429` with `Retry-After`.
 
 The order path returns `confirmed`, `pending_approval`, `refused`, or
 `rejected`. It re-reads price and availability from Valio; clients cannot set
