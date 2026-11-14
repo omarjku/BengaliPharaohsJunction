@@ -1036,7 +1036,8 @@ def _dietary_checks(it: dict, product: dict, risks: dict[str, set[str]], details
     """Return the visible diet evidence; contradictory candidates were filtered before this point."""
     checks = []
     for tag in tags or _diet_tags(it):
-        if it["query"] not in risks.get(tag, set()):
+        risky = it["query"] in risks.get(tag, set())
+        if not risky and not diet.requires_diet_check(product, tag):
             continue
         result = diet.check(product, tag, True, (details.get(tag) or {}).get(it["query"]))
         if result["level"] in diet.LEVELS:

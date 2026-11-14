@@ -60,22 +60,40 @@ def contradicts(product: dict, diet: str) -> bool:
 
 
 def _verified_basis(product: dict, diet: str) -> str | None:
+    targets = _allergen_targets(diet)
+    # A broad diet claim never erases a relevant trace warning from the catalogue.
+    if targets & _allergen_codes(product, "may_contain"):
+        return None
     for claim in _diet_claims(diet):
         if claim in _claims(product):
             return f"labelled {claim.lower().replace('free_from_', '').replace('_', '-')}-free" if claim.startswith("FREE_FROM_") else f"labelled {claim.lower().replace('_', '-')}"
-    targets = _allergen_targets(diet)
-    if targets & _allergen_codes(product, "free_from") and not targets & _allergen_codes(product, "may_contain"):
+    # A partial free-from list (for example, milk only) is not proof for a multi-allergen diet such as vegan.
+    if targets and targets <= _allergen_codes(product, "free_from"):
         return f"allergen data shows no {_allergen_word(diet)}"
     return None
 
 
 _PROCESSED_WORDS = re.compile(r"\b(?:sauces?|stocks?|broths?|sausages?|breads?|pasta|flavou?red|seasoned|marinated|mix|ready|soups?|bakery|baked|cakes?|pastr(?:y|ies)|dressings?|grav(?:y|ies)|cubes?|concentrate|instant|processed|filled|spreads?|nuggets?|burgers?|meals?)\b", re.I)
-_VEGAN_RISK_WORDS = re.compile(r"\b(?:honey|gelatine|gelatin|meat|beef|pork|chicken|turkey|lamb|veal|bacon|ham|sausage|fish|anchov(?:y|ies)|shellfish|cheese|milk|cream|butter|yog(?:h)?urt|egg)\b", re.I)
+_VEGAN_RISK_WORDS = re.compile(r"\b(?:honey|gelatine|gelatin|meat|beef|pork|chicken|turkey|lamb|veal|bacon|ham|sausage|fish|anchov(?:y|ies)|shellfish|cheese|milk|cream|butter|ghee|whey|casein|yog(?:h)?urt|egg|mayonnaise|mayo|lard|suet|collagen|rennet)\b", re.I)
+_VEGAN_CONFLICT_WORDS = re.compile(r"\b(?:honey|gelatine|gelatin|meat|beef|pork|chicken|turkey|lamb|veal|bacon|ham|fish|anchov(?:y|ies)|shellfish|ghee|whey|casein|lard|suet|collagen|rennet)\b", re.I)
 _GLUTEN_RISK_WORDS = re.compile(r"\b(?:flou?r|bread|pasta|noodles?|stock|broth|sauce|gravy|beer|malt|cereal|crumbs?)\b", re.I)
 
 
 def _certain(value) -> bool:
     return value is True or isinstance(value, str) and value.strip().lower() in {"certain", "true", "yes"}
+
+
+def _name_conflicts(product: dict, diet: str) -> bool:
+    name = " ".join(str(product.get(key) or "") for key in ("name_en", "name_fi"))
+    return diet == "vegan" and bool(_VEGAN_CONFLICT_WORDS.search(name))
+
+
+def requires_diet_check(product: dict, diet: str) -> bool:
+    """Whether catalogue evidence itself requires a diet check even when risk classification says no."""
+    targets = _allergen_targets(diet)
+    may_contain = _allergen_codes(product, "may_contain")
+    free_from = _allergen_codes(product, "free_from")
+    return bool(targets & may_contain) or bool(free_from & targets and not targets <= free_from) or _name_conflicts(product, diet)
 
 
 def _safe_by_nature(product: dict, diet: str, model: dict | None) -> str | None:
@@ -99,6 +117,8 @@ def check(product: dict, diet: str, risky: bool, model: dict | None = None) -> d
     """Return a chef-facing evidence level; contradictions are never offers."""
     if contradicts(product, diet):
         return {"level": "contradicts", "basis": f"allergen data contains {_allergen_word(diet)}"}
+    if _name_conflicts(product, diet):
+        return {"level": "unverifiable", "basis": f"product name identifies an animal-derived {diet.replace('_', '-')} risk"}
     if not risky:
         return {"level": "verified", "basis": "not identified as at risk"}
     if basis := _verified_basis(product, diet):
