@@ -59,3 +59,6 @@
   .dc .decide .btn:first-of-type { grid-column: 1 / -1; width: 100%; }
   .dc .decide .hint { grid-column: 1 / -1; }
 }
+
+/* "Remember this choice?" after picking another option. */
+.dc-remember { display: grid; gap: var(--s2); padding: var(--s3) var(--s4); border-radius: var(--radius); background: var(--paper); border: 1px solid var(--line); }

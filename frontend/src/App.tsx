@@ -25,7 +25,7 @@ type View = 'order' | 'rules' | 'history' | 'valio'
 // responses (decision cards and questions) and errors (with "Ask again" when a question expired).
 type Item =
   | { id: number; kind: 'user' | 'agent'; text: string; partial?: boolean }
-  | { id: number; kind: 'res'; res: AskResponse; date: string }
+  | { id: number; kind: 'res'; res: AskResponse; date: string; asked?: string } // asked: the request it answers
   | { id: number; kind: 'error'; text: string; reask: string | null }
 type NewItem = Item extends infer I ? (I extends Item ? Omit<I, 'id'> : never) : never
 
@@ -231,7 +231,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
       setResult(res)
       // The agent's line (the backend's one-sentence `speak`), then the decision card; a question is its own message.
       if (!res.question && res.speak) push({ kind: 'agent', text: res.speak })
-      push({ kind: 'res', res, date: res.requested_date ?? date })
+      push({ kind: 'res', res, date: res.requested_date ?? date, asked: lastRequest.current })
       if (res.question) setAnnounce(c.question(res.question, res.decision?.reasons[0]))
     } catch (err) {
       const expired = !!to && err instanceof ApiError && err.status === 404
@@ -344,7 +344,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         )}
         <div hidden={!open}>
           {isMenu ? (
-            <MenuResult plan={r} covers={r.covers ?? null} requestedDate={it.date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} after={after} />
+            <MenuResult plan={r} covers={r.covers ?? null} requestedDate={it.date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} after={after} menuText={it.asked} />
           ) : (
             <RunResult
               run={r}

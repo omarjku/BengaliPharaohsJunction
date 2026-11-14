@@ -156,10 +156,10 @@ export type AgentRun = {
 }
 
 // POST /api/agent/menu: a proposed cart for a menu (always ASK_HUMAN; nothing is ordered until order_lines are posted).
-export type MenuIngredient = { name: string; per_cover: number | null; unit: string | null; assumption: string | null }
+export type MenuIngredient = { name: string; per_cover: number | null; unit: string | null; assumption: string | null; set_by?: 'chef' | 'agent' | null }
 export type MenuRun = {
   menu: { dishes: { name: string; ingredients: MenuIngredient[] }[] }
-  assumptions: { ingredient: string; dish: string; per_cover: number; unit: string | null; text: string }[]
+  assumptions: { ingredient: string; dish: string; per_cover: number; unit: string | null; text: string; set_by?: 'chef' | 'agent' | 'gemini' }[]
   ingredients: (RequestItem & { dishes: string[] })[]
   lines: Line[]
   cart_total_cents: number
@@ -167,7 +167,10 @@ export type MenuRun = {
   decision: Decision
   audit_id: string
 }
-export type MenuInput = { menu_text: string; covers: number; requested_date: string }
+// overrides: the chef's own portions (the menu screen's editable amounts per portion); they count as the chef's only
+// when the approver key is sent too (planMenu does), otherwise they are marked "agent" and still checked.
+export type PortionOverride = { ingredient: string; per_cover: number; unit: 'L' | 'dl' | 'cl' | 'ml' | 'kg' | 'g' | 'pcs'; dish?: string | null }
+export type MenuInput = { menu_text: string; covers: number; requested_date: string; overrides?: PortionOverride[] }
 
 // Rules (mandate). Money values are net-of-VAT cents; allergen values are GS1 codes ('AP') or plain words ('gluten').
 export type HardRule = { kind: string; value: string | number; scope: string; source_text: string | null }
@@ -315,5 +318,18 @@ export type BuyerProfile = {
   buyer_id: string
   dietary: { tag: string; label: string; because: string }[]
   usual_product_ids: string[]
-  memories: { kind: string; key: string; text: string; used_because: string }[]
+  memories: Memory[]
+}
+
+// One remembered preference (GET /api/profile memories): scope this_order | always; revoke with DELETE (approver key).
+export type Memory = {
+  id: string
+  kind: string // usual_product, business_type, ...
+  key: string
+  text: string
+  scope: string // always | this_order | ...
+  source?: string
+  created_at?: string
+  used_because: string | null
+  product_id?: string | null
 }
