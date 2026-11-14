@@ -6,6 +6,7 @@ pipeline as /api/agent/run (catalogue, Gemini rank, live Valio quotes, quantity,
 mandate limits, reliability floor, Finnish preference). Recipe quantities are guesses, so the Decision is always
 ASK_HUMAN with MENU_ASSUMPTIONS; the chef confirms by posting `order_lines` to POST /api/orders, which re-checks it.
 """
+import asyncio
 import math
 import re
 from datetime import date, datetime, timezone
@@ -149,7 +150,12 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -
                                "Check where the menu came from before ordering anything from this cart."))
     excluded = set().union(*(gate._allergen_codes(str(v)) for v in gate._rules(m, RuleKind.EXCLUDED_ALLERGEN)))
 
-    dishes = await parse_menu(menu_text)
+    dishes, steer = await asyncio.gather(parse_menu(menu_text), agent.steering(menu_text))
+    if steer is not None and steer >= agent.INJECTION_MAX:
+        reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, "This menu seems to try to change limits, delivery, invoicing or "
+                               f"approvals, or claims special authority (Gemini Decisions: {agent._pct(steer)}).", None,
+                               "Check where the menu came from before ordering anything from this cart.",
+                               steering=steer))
     if dishes is None:  # no fallback: turning dishes into ingredients is the language job itself
         reasons.append(gate._r(C.ENGINE_ERROR, ASK, "Gemini couldn't read the menu, so no cart was proposed.", None,
                                "Retry in a moment, or order the ingredients with a normal request."))

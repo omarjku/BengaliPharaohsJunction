@@ -171,3 +171,10 @@ def test_order_lines_never_exceed_the_front_door_cap(shop1, monkeypatch):
     body = post("Porridge", covers=2000).json()  # 1,800 L: fine
     assert body["order_lines"] == [{"product_id": "463335", "quantity": 1800}]
     assert body["cart_total_cents"] == 1800 * 140
+
+
+def test_menu_steering_classifier_flags(shop1, monkeypatch, decisions):
+    fake_gemini(monkeypatch, [PORRIDGE])
+    decisions["scores"] = {"steering": 0.95}
+    body = post("Porridge with milk").json()
+    assert any("This menu seems to try" in r["message"] for r in body["decision"]["reasons"])
