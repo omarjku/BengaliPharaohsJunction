@@ -295,6 +295,8 @@ export const UI = {
     agentHelp: 'Antaa agentin tehdä tilauksia keittiöllesi.',
     approver: 'Hyväksyjän avain',
     approverHelp: 'Vain sinun. Sillä hyväksytään tilaukset ja nähdään historia.',
+    tip: 'Vinkki: asennuslinkki täyttää nämä.',
+    fromLink: 'Avaimet tallennettu tälle laitteelle.',
     show: 'Näytä',
     hide: 'Piilota',
   },
