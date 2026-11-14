@@ -71,7 +71,7 @@ Codex built the Saturday core: the engine v2, Gemini function-calling agent, kit
 - **CI on CRACI.** The provenance job in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on `craci` and records the commit and build evidence.
 - **The door fetches its own evidence.** The deployed API is wired to fetch a CycloneDX SBOM, vulnerability counts, and network destinations for its Render commit from the CRACI API, then expose them at [`/.well-known/front-door-build.json`](https://valio-front-door-api.onrender.com/.well-known/front-door-build.json). The current documented status is `unavailable` while the public deployment refreshes.
 - **What CRACI found.** Build `8958ae5` reported 7 HIGH and 0 CRITICAL findings. **Next deploy:** the fixes upgrade FastAPI to 0.133.0, Starlette to 1.3.1, and cryptography to 50.0.0; local post-fix audits report 0 HIGH/CRITICAL.
-- **Signed provenance.** The signing-keys document carries the build evidence, and the order statement is Ed25519-verifiable. **Next deploy:** the refreshed public build record will bind the visible signed-order story to the deployed build evidence.
+- **Signed provenance.** **Next deploy:** every order statement now carries its build (commit, CI run, SBOM SHA-256) inside the Ed25519 signature, with a build-bound key id. Use the [verifier recipe in `docs/CRACI.md`](docs/CRACI.md#signed-provenance).
 
 Read the implementation and caveats in [`docs/CRACI.md`](docs/CRACI.md). Do not treat an unavailable response as verified evidence.
 
