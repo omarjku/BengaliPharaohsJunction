@@ -15,41 +15,56 @@ Money is net of VAT. Delivery date: Monday 2026-11-16.
 Path A was run on Sun 15 Nov 2026 against a local backend with the live Valio mock and live Gemini (the same code
 as the deployment). Path C is covered by `backend/tests/test_agent.py`.
 
-## A. "1000 L lactose-free milk for Monday": Gemini picks real milk, the chef signs off
+## A. "1000 L lactose-free milk for Monday": confirmed automatically
+
+Run twice on Sun 15 Nov 2026, with the same result both times: local backend on the integration code, live Valio
+mock, live Gemini.
 
 1. Gemini parses `milk, 1000 L, claims [FREE_FROM_LACTOSE]` and picks the real milks out of the keyword hits.
    Keyword search alone ranks "milk ice cream" first.
 2. Each candidate is quoted live at Valio. Terminal milks have no line total: their cut-off (Thu 12 Nov) has passed
    and their stock is reported as 999999 (= unknown).
-3. The Gemini Decisions API then asks, for each orderable candidate, "does this meet the request, and is the
-   quantity right?":
+3. The Gemini Decisions API asks, for each orderable candidate, "is it the product?" (without amounts) and "is the
+   quantity right?" (with the resolver's explanation). The agent takes the weaker answer:
 
 | product | Decisions P(yes) | line total | |
 |---|---|---|---|
-| **464201 Valio semi-skimmed milk 1 l lactose free UHT** | **0.96** | EUR 1,560.00 | **chosen** |
-| 464073 Valio whole milk 1 l lactose free UHT | 0.93 | EUR 1,640.00 | alternative |
-| 463335 Valio Eila 3 % milk drink 1 l lactose free | 0.76, below the 0.8 threshold | EUR 1,400.00 | behind every confident line |
+| 464201 Valio semi-skimmed milk 1 l lactose free UHT | 0.97 | EUR 1,560.00 | alternative |
+| 464073 Valio whole milk 1 l lactose free UHT | 0.95 | EUR 1,640.00 | alternative |
+| **463335 Valio Eila 3 % milk drink 1 l lactose free** | **0.90** | **EUR 1,400.00** | **chosen** |
 
-The cheapest option is a milk *drink*. Gemini is not sure it is what a chef means by milk, so the agent doesn't
-pick it on price. The chosen line's `why` ends with its facts: "on time 100%, 1.1 kg CO2e/kg, origin FI".
+All three clear the 0.80 threshold, so the cheapest total wins.
 
-4. EUR 1,560 is above the EUR 1,500 auto-approve limit. The front door re-quotes the order and holds it:
-   **`pending_approval`, `ASK_HUMAN`, `SPEND_OVER_LIMIT`**.
-5. Sign-off:
-   - `POST /api/orders/{id}/approve` with the **agent key** → **401**. An agent can never approve its own order.
-   - The same call with the buyer's **`X-Approver-Key`** → **200, `confirmed`**. The door re-runs the gate with fresh
-     quotes first: it confirms if nothing changed, a changed price keeps the order pending, and a passed cut-off
-     refuses it. The approver's name comes from the key, never from the body.
-6. The audit log holds the agent's entry (the chef's words, the rejected options and why), the door's entry, and
-   the human sign-off.
+4. EUR 1,400 is within the EUR 1,500 auto-approve limit, so the door returns **`confirmed`, outcome `AUTO`**.
+5. The audit log holds the agent's entry (the chef's words, the rejected Terminal options and why) and the door's
+   entry.
 
-## B. "1500 L lactose-free milk for Monday": two limits at once
+**History.** An earlier run (Sat 14 Nov) scored the milk drink 0.76. The agent then picked semi-skimmed milk at
+EUR 1,560 and the order was held for the chef. Room 3's labelled evaluation showed that asking about product and
+quantity in one question biased the score (`docs/GEMINI.md`), so the judge now asks them separately.
 
-The same choice: 1,500 ST × EUR 1.56 = **EUR 2,340.00**. It is held for two reasons:
-- `LINE_OVER_CAP`: the line is above the EUR 2,000 per-line cap.
-- `SPEND_OVER_LIMIT`: the order is above the EUR 1,500 auto-approve limit.
+## B. "1500 L lactose-free milk for Monday": held, the chef signs off
 
-(Worked out from the mandate and path A's prices, not run separately.)
+The same choice: 1,500 ST × EUR 1.40 = **EUR 2,100.00**. The front door holds it: **`pending_approval`,
+`ASK_HUMAN`**, with `LINE_OVER_CAP` (above the EUR 2,000 per-line cap) and `SPEND_OVER_LIMIT` (above the EUR 1,500
+auto-approve limit). The other two milks ride along as alternatives.
+
+Sign-off:
+- `POST /api/orders/{id}/approve` with the **agent key** → **401**. An agent can never approve its own order.
+- The same call with the buyer's **`X-Approver-Key`** → **200, `confirmed`**. The door re-runs the gate with fresh
+  quotes first: it confirms if nothing changed, a changed price keeps the order pending, and a passed cut-off
+  refuses it. The approver's name comes from the key, never from the body.
+
+## Gemini's doubt: "10 kg sugar for baking for Monday"
+
+| candidate | Decisions P(yes) | |
+|---|---|---|
+| **Dansukker caster sugar 1 kg** | **0.94** | **chosen** |
+| Dansukker icing sugar 500 g | 0.62 | behind |
+| Segafredo brown sugar 500 × 5 g sachets | **0.44** | behind |
+
+The order is held (`ALLERGEN_DATA_MISSING`: the product has no allergen record, so the peanut-free rule can't be
+verified).
 
 ## Menu to cart (`POST /api/agent/menu`): always asks
 
