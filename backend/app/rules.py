@@ -98,17 +98,20 @@ def diff(current: Mandate | None, proposed: Mandate) -> list[dict]:
         looser = y is None or (x is not None and y < x)
         add("min_delivery_reliability", x, y, "looser" if looser else "tighter",
             f"on-time delivery floor: {'none' if x is None else f'{x:.0%}'} → {'none' if y is None else f'{y:.0%}'}",
-            large=looser and y is None)
+            large=looser)  # any lower floor lets less reliable deliveries through without asking
     x, y = a.get("uncertainty_policy"), b["uncertainty_policy"]
     if x != y:
         looser = y == UncertaintyPolicy.APPROVE.value
         add("uncertainty_policy", x, y, "looser" if looser else "changed",
             f"when unsure: {x or 'ask'} → {y}", large=looser)
-    for field in ("guidance", "expires_at"):
-        x, y = a.get(field), b[field]
-        if x != y:
-            add(field, sorted(x) if isinstance(x, set) else x, sorted(y) if isinstance(y, set) else y, "changed",
-                f"{field.replace('_', ' ')} changed (soft or administrative)")
+    x, y = a.get("expires_at"), b["expires_at"]
+    if x != y:  # a later or removed expiry keeps the rules (and the agent's autonomy) alive longer
+        looser = x is not None and (y is None or y > x)
+        add("expires_at", x, y, "looser" if looser else "tighter",
+            f"rules expire: {x or 'never'} → {y or 'never'}", large=looser)
+    x, y = a.get("guidance"), b["guidance"]
+    if x != y:
+        add("guidance", sorted(x or []), sorted(y), "changed", "guidance changed (soft: ranking only)")
     return out
 
 
@@ -147,8 +150,32 @@ async def compile_rules(text: str, who: Principal) -> dict:
             "used_fallback": res.used_fallback, "injection_flagged": res.injection_flagged}
 
 
+def invalid(m: Mandate) -> list[str]:
+    """Rules the gate can't apply as standing rules. Rejected on save rather than stored and later silently lost
+    (an invalid rule holds orders as MANDATE_INVALID; removing it must not be an invisible loosening)."""
+    bad = []
+    for r in m.hard_rules:
+        if r.scope.value == "this_order":
+            bad.append(f"'{r.kind.value}' is for one order only; standing rules can't be 'this order'.")
+        if r.kind in (RuleKind.AUTO_APPROVE_LIMIT_CENTS, RuleKind.MAX_UNIT_PRICE_CENTS):
+            v = gate._num(r.value)
+            if v is None or v < 1 or v != int(v):
+                bad.append(f"'{r.kind.value}' must be a whole number of cents, got {r.value!r}.")
+        elif r.kind is RuleKind.MIN_DELIVERY_RELIABILITY:
+            v = gate._num(r.value)
+            if v is None or not 0 < v <= 1:
+                bad.append(f"'min_delivery_reliability' must be between 0 and 1 (e.g. 0.9), got {r.value!r}.")
+        elif r.kind is RuleKind.EXCLUDED_ALLERGEN and not gate._allergen_codes(str(r.value)):
+            bad.append(f"Unknown allergen {r.value!r}; use a name like 'peanut' or a GS1 code like 'AP'.")
+        elif r.kind is RuleKind.REQUIRED_CLAIM and not str(r.value).strip():
+            bad.append("A required claim can't be empty.")
+    return bad
+
+
 def save(proposed: Mandate, confirm_large_change: bool, who: Principal) -> dict:
     proposed = with_default_limit(proposed)
+    if problems := invalid(proposed):
+        raise HTTPException(422, detail={"error": "These rules can't be saved as they are.", "problems": problems})
     if proposed.buyer_id != who.buyer_id:
         raise HTTPException(403, detail="This approver key may only set its own buyer's rules")
     if proposed.open_questions:
@@ -162,7 +189,7 @@ def save(proposed: Mandate, confirm_large_change: bool, who: Principal) -> dict:
                                          "confirm_large_change=true if you mean them.", "changes": big})
     now = datetime.now(timezone.utc)
     saved = proposed.model_copy(update={"id": f"{who.buyer_id}-{now:%Y%m%dT%H%M%SZ}-{uuid4().hex[:6]}"})
-    mandates.put(saved)
+    previous = mandates.put(saved)
     summary = "; ".join(c["text"] for c in changes) or "no changes"
     reasons = [gate._r(C.LIMIT_CHANGE_ATTEMPT, gate.INFO, f"{who.name} changed the rules: {c['text']} ({c['change']}).",
                        None, None, field=c["field"], change=c["change"],
@@ -174,5 +201,9 @@ def save(proposed: Mandate, confirm_large_change: bool, who: Principal) -> dict:
                                                    text=f"Rules changed by {who.name} (was {current.id if current else 'none'}): {summary}")),
         decision=Decision(request_id=saved.id, outcome="AUTO", reasons=reasons, rules_version=agent.RULES_VERSION,
                           decided_at=now))
-    orders._append_audit(entry)
+    try:
+        orders._append_audit(entry)
+    except Exception:  # noqa: BLE001 - no rule change without its audit entry
+        mandates.restore(who.buyer_id, previous)
+        raise HTTPException(503, detail="The change couldn't be audited, so it was not saved. Retry shortly.") from None
     return {"mandate": saved.model_dump(mode="json"), "changes": changes, "audit_id": entry.id}
