@@ -15,8 +15,7 @@ concurrency:
 
 jobs:
   backend-tests:
-    # Runner switch: set the repository variable CI_RUNNER=craci (Settings → Variables → Actions) to run every job on CRACI.
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: craci
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -34,7 +33,7 @@ jobs:
         run: python -m pytest -q tests
 
   packages-tests:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: craci
     strategy:
       fail-fast: false
       matrix:
@@ -61,7 +60,7 @@ jobs:
         run: python -m pytest -q ${{ matrix.package }}/tests
 
   frontend:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: craci
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
