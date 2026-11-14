@@ -17,8 +17,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import (agent, ask, auth, catalogue, config, gate, httpsig, kitchen, live, mandates, menu, orders, profile,
-               progress, quantity, ratelimit, rules, signing, valio, vision, voice)
+from . import (agent, ask, auth, catalogue, calendar as kitchen_calendar, config, gate, httpsig, kitchen, live,
+               mandates, menu, orders, profile, progress, quantity, ratelimit, rules, signing, valio, vision, voice)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -451,6 +451,43 @@ async def agent_menu(req: MenuRequest, who: Agent, request: Request,
         chef = True
     return await menu.propose(req.menu_text, req.covers, req.requested_date, who.buyer_id,
                               overrides=[o.model_dump() for o in req.overrides], by_chef=chef, have=req.have)
+
+
+# --- Delivery calendar and buyer-owned weekly menus. Menus edit with the approver key; planning and calendar reads
+# use the same agent key as the front door and never place an order by themselves.
+@app.get("/api/menus/weekly")
+def get_weekly_menus(who: Agent) -> list[dict]:
+    return kitchen_calendar.weekly_menus(who.buyer_id)
+
+
+@app.put("/api/menus/weekly/{weekday}")
+def put_weekly_menu(weekday: str, req: kitchen_calendar.WeeklyMenuInput, who: Approver) -> dict:
+    return kitchen_calendar.save_weekly_menu(who.buyer_id, weekday, req)
+
+
+@app.delete("/api/menus/weekly/{weekday}")
+def delete_weekly_menu(weekday: str, who: Approver) -> dict:
+    return kitchen_calendar.delete_weekly_menu(who.buyer_id, weekday)
+
+
+@app.post("/api/menus/weekly/{weekday}/plan")
+async def plan_weekly_menu(weekday: str, who: Agent, target_date: date = Query(..., alias="date")) -> dict:
+    return await kitchen_calendar.plan_weekly_menu(who.buyer_id, weekday, target_date)
+
+
+@app.get("/api/calendar")
+def get_calendar(who: Agent, start: date = Query(..., alias="from"), end: date = Query(..., alias="to")) -> dict:
+    return kitchen_calendar.calendar_view(who.buyer_id, start, end)
+
+
+@app.post("/api/calendar/recurring/{weekday}/place")
+async def place_recurring(weekday: str, who: Agent, target_date: date = Query(..., alias="date")) -> dict:
+    return await kitchen_calendar.place_recurring(who.buyer_id, weekday, target_date)
+
+
+@app.post("/api/calendar/recurring/{weekday}/skip")
+def skip_recurring(weekday: str, who: Approver, target_date: date = Query(..., alias="date")) -> dict:
+    return kitchen_calendar.skip_recurring(who.buyer_id, weekday, target_date)
 
 
 # --- The chef's rules in plain language (T09 compiler). Human acts: X-Approver-Key only; an agent key can never

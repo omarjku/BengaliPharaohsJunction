@@ -1,0 +1,56 @@
+{
+  "helsinki-bistro": [
+    {
+      "weekday": "fri",
+      "name": "Example: Gluten-free pizza night",
+      "dishes": [
+        {
+          "name": "Margherita pizza",
+          "recipe": "Top a gluten-free base with tomato sauce, mozzarella and basil. Bake at 250 C until the crust is crisp and the cheese is bubbling."
+        },
+        {
+          "name": "Mushroom pizza",
+          "recipe": "Spread tomato sauce over a gluten-free base, add sliced mushrooms and mozzarella, then bake until golden. Finish with parsley."
+        }
+      ],
+      "covers": 60,
+      "active": true
+    }
+  ],
+  "lapland-kitchen": [
+    {
+      "weekday": "fri",
+      "name": "Example: Lapland special: salmon soup and blueberry pie",
+      "dishes": [
+        {
+          "name": "Salmon soup",
+          "recipe": "Simmer potatoes, carrots and leek in fish stock until tender. Add salmon and cream, cook gently until just done, and finish with dill."
+        },
+        {
+          "name": "Blueberry pie",
+          "recipe": "Fill a shortcrust pastry with blueberries tossed with sugar and potato starch. Bake until the berries bubble, then cool before slicing."
+        }
+      ],
+      "covers": 40,
+      "active": true
+    }
+  ],
+  "try-*": [
+    {
+      "weekday": "fri",
+      "name": "Example: Lapland special: salmon soup and blueberry pie",
+      "dishes": [
+        {
+          "name": "Salmon soup",
+          "recipe": "Simmer potatoes, carrots and leek in fish stock until tender. Add salmon and cream, cook gently until just done, and finish with dill."
+        },
+        {
+          "name": "Blueberry pie",
+          "recipe": "Fill a shortcrust pastry with blueberries tossed with sugar and potato starch. Bake until the berries bubble, then cool before slicing."
+        }
+      ],
+      "covers": 40,
+      "active": true
+    }
+  ]
+}
