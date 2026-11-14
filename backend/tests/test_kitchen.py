@@ -124,7 +124,7 @@ def test_reset_removes_chef_log_but_keeps_seed(shop, monkeypatch):
 
 def test_live_kitchen_tools_are_registered_and_context_says_simulated(shop):
     names = [f["name"] for group in live.TOOLS for f in group["functionDeclarations"]]
-    assert {"kitchen_context", "kitchen_log"} <= set(names)
+    assert "kitchen_context" in names and "kitchen_log" not in names
     out = asyncio.run(live.kitchen_context("helsinki-bistro"))
     assert "simulated" in out["summary"]
 

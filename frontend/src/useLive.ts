@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { errorText } from './format'
 import { openInterviewLive, type InterviewPreview, type KitchenLiveEvent } from './kitchenEditApi'
 import { takeLive } from './liveWarm'
+import { shouldSendMicChunk } from './liveAudio'
 import type { AskResponse, LiveEvent, LiveSocket } from './types'
 
 // The voice conversation (WebSocket /api/live), as a hook: the conversation screen shows its words in the thread and
@@ -11,7 +12,7 @@ import type { AskResponse, LiveEvent, LiveSocket } from './types'
 
 export type LiveState = 'connecting' | 'listening' | 'thinking' | 'speaking' | 'error'
 export type LiveHandlers = {
-  onTranscript: (role: 'user' | 'agent', text: string, final: boolean) => void
+  onTranscript: (role: 'user' | 'agent', text: string, final: boolean, turnId?: number, cumulative?: boolean) => void
   onResult: (r: AskResponse) => void
   onInterviewPreview?: (preview: InterviewPreview) => void
   onError: (message: string) => void
@@ -78,6 +79,8 @@ export function useLive(
     let ended = false
     let nextAt = 0
     let thinking = false
+    let playbackLevel = 0
+    let echoMutedUntil = 0
     const playing: AudioBufferSourceNode[] = []
     setState('connecting')
     setTool(null)
@@ -110,12 +113,14 @@ export function useLive(
       const at = Math.max(ctx.currentTime + 0.04, nextAt)
       src.start(at)
       nextAt = at + buf.duration
+      echoMutedUntil = Math.max(echoMutedUntil, nextAt + 0.3)
+      playbackLevel = Math.min(1, Math.sqrt(sum / pcm.length) * 4)
       playing.push(src)
       src.onended = () => {
         playing.splice(playing.indexOf(src), 1)
         settle()
       }
-      levelEl.current?.style.setProperty('--level', Math.min(1, Math.sqrt(sum / pcm.length) * 4).toFixed(2))
+      levelEl.current?.style.setProperty('--level', playbackLevel.toFixed(2))
       setState('speaking')
     }
     const onEvent = (e: KitchenLiveEvent) => {
@@ -128,7 +133,7 @@ export function useLive(
       } else if (e.type === 'audio') play(e.data)
       else if (e.type === 'interrupted') flush()
       else if (e.type === 'transcript') {
-        h.current.onTranscript(e.role, e.text, e.final)
+        h.current.onTranscript(e.role, e.text, e.final, e.turn_id, e.cumulative)
         if (e.role === 'user' && e.final) thinking = true
         if (e.role === 'agent') thinking = false
         settle()
@@ -165,7 +170,8 @@ export function useLive(
         node = new AudioWorkletNode(ctx, 'pcm16')
         node.port.onmessage = ({ data }: MessageEvent<{ pcm: ArrayBuffer; level: number }>) => {
           if (!speakingNow()) levelEl.current?.style.setProperty('--level', mutedRef.current ? '0' : data.level.toFixed(2))
-          if (ready && !mutedRef.current) socketRef.current?.send({ type: 'audio', data: toBase64(data.pcm) })
+          if (ready && shouldSendMicChunk(data.level, playbackLevel, ctx.currentTime < echoMutedUntil, mutedRef.current))
+            socketRef.current?.send({ type: 'audio', data: toBase64(data.pcm) })
         }
         // The worklet must reach the destination to run; through a muted gain, so the chef never hears themself.
         const silent = ctx.createGain()

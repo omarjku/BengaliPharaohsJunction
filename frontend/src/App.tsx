@@ -218,7 +218,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     talk.session,
     {
       // Live words: transcript.ts cleans the tags and keeps one line per speaker (a dot marks a line still forming).
-      onTranscript: (role, said, final) => setThread((t) => mergeTranscript(t, { role, text: said, final }, () => ++nextId.current)),
+      onTranscript: (role, said, final, turn_id, cumulative) =>
+        setThread((t) => mergeTranscript(t, { role, text: said, final, turn_id, cumulative }, () => ++nextId.current)),
       onResult: (r) => {
         setResult(r)
         push({ kind: 'res', res: r, date: r.requested_date ?? date })
