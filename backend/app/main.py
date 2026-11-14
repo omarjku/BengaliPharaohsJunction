@@ -316,6 +316,7 @@ def verify_statement(req: VerifyRequest) -> dict:
 class DemoReset(BaseModel):
     model_config = ConfigDict(extra="forbid")
     restore_mandate: bool = False
+    buyer_id: BuyerId | None = Field(default=None, description="Reset only this buyer (e.g. judge-kitchen); omit for all.")
 
 
 def _demo_status() -> dict:
@@ -335,7 +336,9 @@ async def demo_reset(who: Annotated[auth.Principal, Depends(auth.valio_admin)], 
     deleted); saved mandates stay unless restore_mandate=true. Only when DEMO_RESET_ENABLED=1. Needs X-Valio-Admin-Key."""
     if not config.DEMO_RESET_ENABLED:
         raise HTTPException(404, detail="Demo reset is not enabled on this server")
-    done = await orders.demo_reset(who.name, bool(body and body.restore_mandate))
+    restore = bool(body and body.restore_mandate)
+    done = (await orders.demo_reset_buyer(who.name, body.buyer_id, restore) if body and body.buyer_id
+            else await orders.demo_reset(who.name, restore))
     return {**done, **_demo_status()}
 
 

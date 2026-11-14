@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Get a deployed front door ready for a live demo: python3 scripts/demo_prep.py [BASE_URL] [--env PATH]
-[--no-reset] [--restore-mandate]
+[--buyer BUYER] [--no-reset] [--restore-mandate] [--all]
 
-1. Reset (unless --no-reset): POST /api/admin/demo/reset, so earlier smoke / QA runs don't eat the demo buyer's
-   weekly budget. Nothing is deleted: the server archives the old files under DATA_DIR/archive/.
+1. Reset (unless --no-reset): POST /api/admin/demo/reset for ONE buyer (default lapland-kitchen; e.g. --buyer
+   judge-kitchen for the judge sandbox), so earlier runs don't eat its weekly budget; other buyers are untouched.
+   --all resets every buyer at once. Nothing is deleted: the server archives under DATA_DIR/archive/.
 2. Warm up: health until the catalogue is ready, one product search and one live quote (Valio and caches hot).
 3. Checklist: keys present, signing key id published, demo buyer's confidence threshold and budget left.
 Keys come from the repo-root .env (as in smoke.py) and are never printed. Exits 1 if something critical fails.
@@ -15,15 +16,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import smoke  # noqa: E402  (shares BASE / --env parsing, key lookup, HTTP calls and check output)
 
-DEMO_BUYER = "lapland-kitchen"
+DEMO_BUYER = sys.argv[sys.argv.index("--buyer") + 1] if "--buyer" in sys.argv else "lapland-kitchen"
 
 
 def main() -> int:
     print(f"Demo prep for {smoke.BASE}\n")
-    agent_key = smoke.env_key("AGENT_KEYS", DEMO_BUYER)
-    approver_key = smoke.env_key("APPROVER_KEYS", DEMO_BUYER)
+    agent_key = next((k for k, b in smoke.env_entries("AGENT_KEYS") if b == DEMO_BUYER), "")  # exact buyer, no fallback
+    approver_key = next((k for k, b in smoke.env_entries("APPROVER_KEYS") if b == DEMO_BUYER), "")  # exact buyer, no fallback
     admin_key = smoke.env_key("VALIO_ADMIN_KEYS")
-    smoke.check(f"agent + approver keys for {DEMO_BUYER} in .env (values not shown)", bool(agent_key and approver_key))
+    smoke.check(f"agent + approver keys for {DEMO_BUYER} in .env (values not shown)", bool(agent_key and approver_key),
+                "" if agent_key and approver_key else "none yet: see docs/SUBMISSION.md 'Judge access' for the two entries")
     smoke.check("Valio admin key in .env", bool(admin_key))
     if smoke.smoke_buyer():
         print(f"INFO  smoke tests run as {smoke.SMOKE_BUYER}, so they won't spend {DEMO_BUYER}'s budget")
@@ -31,9 +33,10 @@ def main() -> int:
         print(f"WARN  no {smoke.SMOKE_BUYER} keys: smoke.py would spend {DEMO_BUYER}'s budget")
 
     if "--no-reset" not in sys.argv:
-        status, r = smoke.call("POST", "/api/admin/demo/reset", {"restore_mandate": "--restore-mandate" in sys.argv},
-                               {"X-Valio-Admin-Key": admin_key}, timeout=60)
-        smoke.check("demo reset (old orders / audit archived, not deleted)", status == 200,
+        body = {"restore_mandate": "--restore-mandate" in sys.argv} | ({} if "--all" in sys.argv else {"buyer_id": DEMO_BUYER})
+        status, r = smoke.call("POST", "/api/admin/demo/reset", body, {"X-Valio-Admin-Key": admin_key}, timeout=60)
+        smoke.check(f"demo reset of {'every buyer' if '--all' in sys.argv else DEMO_BUYER} (archived, not deleted)",
+                    status == 200,
                     f"archived to {r.get('archived_to')}" if status == 200 else f"HTTP {status}: "
                     f"{r.get('detail') if isinstance(r, dict) else r} (set DEMO_RESET_ENABLED=1?)")
 
