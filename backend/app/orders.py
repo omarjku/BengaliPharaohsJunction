@@ -208,8 +208,9 @@ async def reject(order_id: str, who: Principal) -> dict:
                                             "decision": o["decision"], "rejected_options": []}, audit_id)
 
 
-def audit_log(buyer_id: str, limit: int) -> list[dict]:
-    """Newest last. Blocking file read: call it off the event loop (the route is a sync def → threadpool).
+def audit_log(buyer_id: str | None, limit: int, outcome: str | None = None) -> list[dict]:
+    """Newest last. buyer_id=None = every buyer (Valio's admin view only); outcome filters on decision.outcome.
+    Blocking file read: call it off the event loop (the route is a sync def → threadpool).
     ponytail: reads the whole file per call; index by buyer in a DB when it grows."""
     with _file_lock:
         if not AUDIT_FILE.exists():
@@ -219,7 +220,8 @@ def audit_log(buyer_id: str, limit: int) -> list[dict]:
     for line in text.splitlines():
         try:
             r = json.loads(line)
-            if r["input"]["request"]["buyer_id"] == buyer_id:
+            if (buyer_id is None or r["input"]["request"]["buyer_id"] == buyer_id) and \
+                    (outcome is None or (r.get("decision") or {}).get("outcome") == outcome):
                 rows.append(r)
         except (ValueError, KeyError, TypeError):  # a torn line (crash mid-write) or junk: skip, keep the rest
             if line.strip():

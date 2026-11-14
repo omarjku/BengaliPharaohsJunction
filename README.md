@@ -54,10 +54,12 @@ Set the variables from `.env.example`:
 | `FRONTEND_ORIGINS` | Comma-separated browser origins allowed by CORS. |
 | `AGENT_KEYS` | Comma-separated `key=buyer_id[:name]` entries for purchasing agents. |
 | `APPROVER_KEYS` | Comma-separated `key=buyer_id[:name]` entries for human approvers. |
+| `VALIO_ADMIN_KEYS` | Comma-separated `key=valio[:name]` entries for Valio staff: read-only `GET /api/admin/audit` across all buyers (`X-Valio-Admin-Key`). |
 
 Use long random values for the front-door keys. `AGENT_KEYS` authenticates
 `X-Agent-Key`; `APPROVER_KEYS` authenticates `X-Approver-Key`. If either key
-set is empty, its protected routes return `503`; an agent key cannot approve.
+set is empty, its protected routes return `503`; an agent key cannot approve, and a
+Valio admin key can only read the audit trail (filters: `buyer_id`, `outcome`, `limit`).
 
 ## API surface
 

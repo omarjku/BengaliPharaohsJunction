@@ -82,4 +82,5 @@ def shop(monkeypatch, tmp_path):
     monkeypatch.setattr(mandates, "_MANDATES", dict(mandates._MANDATES))  # tests store their own; demo buyer kept
     monkeypatch.setattr(config, "AGENT_KEYS", "agent-chef=chef,agent-other=other")
     monkeypatch.setattr(config, "APPROVER_KEYS", "appr-chef=chef:Chef Aino,appr-other=other:Olli")
+    monkeypatch.setattr(config, "VALIO_ADMIN_KEYS", "valio-ops=valio:Valio ops")
     return s

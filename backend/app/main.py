@@ -3,7 +3,7 @@ import re
 import threading
 from contextlib import asynccontextmanager
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -235,6 +235,15 @@ def audit(who: Approver, buyer_id: BuyerId | None = None, limit: Annotated[int, 
     if (buyer_id or who.buyer_id) != who.buyer_id:
         raise HTTPException(403, detail="This approver key may only read its own buyer's audit trail")
     return orders.audit_log(who.buyer_id, limit)
+
+
+@app.get("/api/admin/audit")
+def admin_audit(who: Annotated[auth.Principal, Depends(auth.valio_admin)], buyer_id: BuyerId | None = None,
+                outcome: Literal["AUTO", "ASK_HUMAN", "DECLINE"] | None = None,
+                limit: Annotated[int, Query(ge=1, le=1000)] = 100) -> list[dict]:
+    """Valio's side of the audit trail: every buyer's entries (contract AuditEntry objects), oldest first,
+    optionally for one buyer and/or one decision outcome. Needs X-Valio-Admin-Key; read-only."""
+    return orders.audit_log(buyer_id, limit, outcome)
 
 
 # --- Milestone 1 buyer agent: text -> catalogue -> Valio quote -> quantity -> decision -> front-door order -> audit.
