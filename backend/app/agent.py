@@ -13,6 +13,7 @@ import json
 import logging
 import math
 import re
+from fractions import Fraction
 import time
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
@@ -459,6 +460,12 @@ async def parse(text: str) -> tuple[dict, bool]:
     return {"summary": f"[fallback parser, Gemini unavailable] {text}", "items": fallback_parse(text)}, False
 
 
+# Everyday names the catalogue words differently (searched when the name itself finds nothing).
+SYNONYMS = {"kebab bread": ["pita bread", "pitabread", "pitaleipä"], "kebab meat": ["kebab"], "doner": ["döner"],
+            "doner kebab": ["döner kebab", "kebab"], "döner kebab meat": ["döner kebab", "kebab"],
+            "gyro": ["gyros"], "fry": ["french fries", "fries"], "chip": ["french fries"], "pita": ["pita bread"]}
+
+
 async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[str], bool]:
     """Catalogue hits for one item (claims + allergen filters), narrowed and ordered by Gemini. → (ids, used_gemini)."""
     excl = sorted(set(item["exclude_allergens"]) | excluded)
@@ -466,22 +473,61 @@ async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[st
     # Catalogue names are singular ("lingonberry jam", "Digestive biscuit"), and search needs every word, so try:
     # singular (also matches the plural) → as given → each word alone, longest first ("reindeer meat" → "reindeer").
     tries = list(dict.fromkeys([" ".join(map(_singular, words)), item["query"]]  # singular first: "tomato" ⊂ "tomatoes"
-                               + (sorted({_singular(w) for w in words}, key=len, reverse=True) if len(words) > 1 else [])))
+                               + SYNONYMS.get(" ".join(map(_singular, words)).lower(), [])))
     hits = []
     for q in tries:
         if hits := catalogue.search(q, item["claims"], excl, False, None, SEARCH_LIMIT):
             break
+    if not hits and len(words) > 1:
+        # No product has every word: rank products by how many of the words they have ("döner kebab meat" → the döner
+        # kebab skewers first, then kebab meat), instead of taking whichever single word hits first.
+        found: dict[str, list] = {}
+        for w in {_singular(x) for x in words if len(x) > 2}:
+            for p in catalogue.search(w, item["claims"], excl, False, None, 200):
+                found.setdefault(p["id"], [0, p])[0] += 1
+        hits = [p for _, p in sorted(found.values(), key=lambda x: (-x[0], len(x[1]["name_en"] or "")))][:SEARCH_LIMIT]
     if not hits:
         return [], True
     listing = "\n".join(json.dumps({"id": p["id"], "name": p["name_en"] or p["name_fi"], "brand": p["brand"]},
                                    ensure_ascii=False) for p in hits)
     diet = f" ({', '.join(item['claims'] + ['no ' + a for a in item['exclude_allergens']])})" \
         if item["claims"] or item["exclude_allergens"] else ""
+    diet += f", {item['purpose']}" if item.get("purpose") else ""  # grounded: "for the rotisserie" → a spit, not slices
     out = await _gemini(RANK_PROMPT, RANK_INPUT.format(query=item["query"], diet=diet, products=listing), _RANK_SCHEMA)
     if out is None or not isinstance(out.get("ids"), list):
         return [p["id"] for p in hits[:QUOTE_TOP]], False
     known = {p["id"] for p in hits}
-    return [i for i in dict.fromkeys(map(str, out["ids"])) if i in known][:QUOTE_TOP], True
+    ids = [i for i in dict.fromkeys(map(str, out["ids"])) if i in known][:QUOTE_TOP]
+    if not ids:  # say plainly what Valio has instead
+        item["closest"] = [_name(p) for p in hits[:3]]
+    return ids, True
+
+
+_PIECES = re.compile(r"(?:(\d{1,4})\s*x\s*\d+(?:[.,]\d+)?\s*(?:g|kg|ml|cl|dl|l)\b|(\d{1,4})\s*(?:pcs|pc|kpl)\b)", re.I)
+
+
+def resolve(p: dict, amount: float, unit: str) -> dict:
+    """quantity.resolve, plus one everyday case it can't do from the data: pieces of a product sold by the case where
+    only the NAME says how many are inside ('Croissant 36x90g', '... 56 pcs 80 g'). Used only when the resolver can't
+    convert pieces; the Decisions quantity check still judges the result."""
+    q = quantity.resolve(p, amount, unit)
+    if unit.lower() not in ("pcs", "units") or (q["quantity"] is not None and not q["needs_confirmation"]):
+        return q
+    m = _PIECES.search(p.get("name_en") or p.get("name_fi") or "")
+    per = int(m[1] or m[2]) if m else 0
+    if per < 2:
+        return q
+    lot = Fraction(str(p.get("lot_size") or 1))
+    step = max(Fraction(lot.numerator), Fraction(1))
+    cases = math.ceil(Fraction(str(amount)) / per / step) * step
+    sales, delivered = p["sales_unit"], int(cases * per)
+    text = (f"{gate._qty(amount)} pcs ÷ {per} pcs per {sales} (from the product name) = "
+            f"{gate._qty(float(Fraction(str(amount)) / per))} {sales}")
+    if delivered != amount:
+        text += f"; rounded up to {gate._qty(float(cases))} {sales}: {delivered} pcs, {gate._qty(delivered - amount)} more than asked"
+    return q | {"quantity": int(cases) if cases == int(cases) else float(cases), "per_sales_unit": per,
+                "delivered": delivered, "over_delivery": delivered - amount, "rounded_up": delivered != amount,
+                "confidence": "medium", "needs_confirmation": False, "explanation": text + "."}
 
 
 def _unit_ok(unit: str | None) -> bool:
@@ -561,7 +607,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
         scored = []
         for rank, pid in enumerate(cands):
             p, q = catalogue.get(pid), quotes.get(pid)
-            qty = quantity.resolve(p, it["amount"], it["unit"]) if amount_ok else None
+            qty = resolve(p, it["amount"], it["unit"]) if amount_ok else None
             rs, info = gate.check_line(pid, qty and qty["quantity"], q, requested, m, excluded, now)
             line = {"item": n, "product": p, "quote": q, "quantity": qty, "line_total_cents": info["line_total_cents"],
                     "why": "", "chosen": False, "confidence": None, "confidence_reason": None,
@@ -598,7 +644,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             label = f"'{it['query']}'" + (f" ({', '.join(it['claims'] + ['no ' + a for a in it['exclude_allergens']])})"
                                           if it["claims"] or it["exclude_allergens"] else "")
             if not cands:
-                reasons.append(gate._r(C.UNKNOWN_PRODUCT, ASK, f"No product in Valio's catalogue matches {label}.", None,
+                near = f" Closest in the catalogue: {'; '.join(it['closest'])}." if it.get("closest") else ""
+                reasons.append(gate._r(C.UNKNOWN_PRODUCT, ASK, f"Valio doesn't seem to stock {label}.{near}", None,
                                        "Rephrase the product, or name it more precisely."))
                 continue
             if not amount_ok:

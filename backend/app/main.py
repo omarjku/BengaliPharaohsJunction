@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import agent, auth, catalogue, config, gate, mandates, menu, orders, quantity, ratelimit, rules, signing, valio
+from . import ask, agent, auth, catalogue, config, gate, mandates, menu, orders, quantity, ratelimit, rules, signing, valio
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -444,3 +444,25 @@ def save_mandate(req: SaveMandateRequest, who: Approver) -> dict:
     """Save the confirmed mandate for the approver's buyer → {mandate, changes, audit_id}. 422 while open questions
     remain; 409 for big loosenings unless confirm_large_change=true. Audited. Needs X-Approver-Key."""
     return rules.save(req.mandate, req.confirm_large_change, who)
+
+
+# --- One input for everyone: order, menu or unclear, routed by Gemini; date and guests read from the text.
+class AskRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=4000, examples=["milk and 30 croissants for tomorrow"])
+    requested_date: date | None = Field(default=None, description="Optional when the text states a day.")
+
+    @field_validator("text")
+    @classmethod
+    def utf8(cls, t: str) -> str:
+        return AgentRunRequest.utf8(t)
+
+
+@app.post("/api/agent/ask")
+async def agent_ask(req: AskRequest, who: Agent) -> dict:
+    """Free text → {intent: order|menu|unclear, covers, requested_date, date_source: request|text|null,
+    question: str|null, ...the /api/agent/run body (order) or the /api/agent/menu body (menu)}. When a question is
+    asked (no date, menu without guests, unclear, conflicting dates), only `decision` (ASK_HUMAN) follows and nothing
+    runs. Needs X-Agent-Key."""
+    _catalogue_ready()
+    return await ask.ask(req.text, req.requested_date, who.buyer_id)
