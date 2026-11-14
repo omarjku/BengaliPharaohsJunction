@@ -51,7 +51,7 @@ not the demo buyer. Gemini's numbers can move a little between runs, so say "aro
 | 8 | Zoha | J5, Gemini and Codex lines, then the close: "Any agent can visit. Only the right orders get in." | The deck's slides 7–9, or the audit view in History |
 | Q&A | Zoha | "Our own QA caught the agent picking *coffee* milk for a plain milk order: cheapest, and barely confident. Calibrated confidence plus ranking fixed it: confidence leads, price only breaks near-ties. Coffee milk is now a labelled trap in the eval" | — |
 
-**Proposed new beats (pending merge; final wording after 16:00):**
+**New beats (both features are on main, PR #70):**
 
 | # | Who | Do or say | What should appear |
 |---|---|---|---|
