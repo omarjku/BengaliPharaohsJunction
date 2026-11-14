@@ -7,7 +7,7 @@ import { COPIES, CopyContext, initialLang, rememberLang, useCopy, type Lang } fr
 import { MenuResult } from './Menu'
 import { Rules } from './Rules'
 import { RunResult } from './RunResult'
-import type { AskResponse, AuditEntry, Reason } from './types'
+import type { AskResponse, AuditEntry, MenuRun, Reason } from './types'
 import { UrgentOptions } from './Urgent'
 import { ValioView } from './Valio'
 import { useVoice, voiceSupported } from './useVoice'
@@ -25,7 +25,7 @@ type View = 'order' | 'rules' | 'history' | 'valio'
 // responses (decision cards and questions) and errors (with "Ask again" when a question expired).
 type Item =
   | { id: number; kind: 'user' | 'agent'; text: string; partial?: boolean }
-  | { id: number; kind: 'res'; res: AskResponse; date: string; asked?: string } // asked: the request it answers
+  | { id: number; kind: 'res'; res: AskResponse; date: string; asked?: string; have?: string[] } // asked: the request it answers
   | { id: number; kind: 'error'; text: string; reask: string | null }
 type NewItem = Item extends infer I ? (I extends Item ? Omit<I, 'id'> : never) : never
 
@@ -77,6 +77,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const [thread, setThread] = useState<Item[]>([])
   const nextId = useRef(0)
   const push = useCallback((it: NewItem) => setThread((t) => [...t, { ...it, id: ++nextId.current } as Item]), [])
+  const pantry = useRef<string[]>([]) // what the kitchen has for this order only (a pantry photo); sent with the next requests
   const lastRequest = useRef('') // the chef's last request (not an answer): for "Not this one", re-asks, overrides
   // New words in the thread come into view (a new card scrolls itself: RunResult/MenuResult focus their headline).
   useEffect(() => {
@@ -222,7 +223,10 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     setAnnounce(u.ask.announce)
     try {
       phaseLine.reset()
-      const input = to ? { text: '', follow_up: { to, answer: words.trim() } } : { text: words.trim(), ...(when ? { requested_date: when } : {}) } // the day comes from the words, or the agent asks
+      const have = pantry.current.length ? { have: pantry.current } : {}
+      const input = to
+        ? { text: '', follow_up: { to, answer: words.trim() }, ...have }
+        : { text: words.trim(), ...(when ? { requested_date: when } : {}), ...have } // the day comes from the words, or the agent asks
       const res = await askAgentStream(input, (p) =>
         phaseLine.push(c.UI.progress.phases[p.phase] ?? p.text),
       )
@@ -231,7 +235,10 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
       setResult(res)
       // The agent's line (the backend's one-sentence `speak`), then the decision card; a question is its own message.
       if (!res.question && res.speak) push({ kind: 'agent', text: res.speak })
-      push({ kind: 'res', res, date: res.requested_date ?? date, asked: lastRequest.current })
+      // The pantry counts for this order only: a menu card keeps it for its own re-plans, then it is cleared.
+      const usedHave = res.intent === 'menu' && !res.question ? pantry.current : undefined
+      push({ kind: 'res', res, date: res.requested_date ?? date, asked: lastRequest.current, have: usedHave })
+      if (usedHave) pantry.current = []
       if (res.question) setAnnounce(c.question(res.question, res.decision?.reasons[0]))
     } catch (err) {
       const expired = !!to && err instanceof ApiError && err.status === 404
@@ -285,6 +292,15 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     setAnnounce(u.question.leftAlone)
   }
 
+  // The cart was re-planned: the agent's line above the card said the old total, so it is rewritten.
+  function replanned(id: number, p: MenuRun) {
+    setThread((t) => {
+      const at = t.findIndex((x) => x.id === id)
+      const before = t[at - 1]
+      if (at < 1 || !before || before.kind !== 'agent') return t
+      return t.map((x, i) => (i === at - 1 ? { ...x, text: u.conv.cartNow(c.money(p.cart_total_cents)) } : x))
+    })
+  }
   const empty = thread.length === 0 && !running
   const lastRes = [...thread].reverse().find((it) => it.kind === 'res')?.id ?? null
   const [opened, setOpened] = useState<Set<number>>(new Set()) // earlier cards the chef reopened
@@ -344,7 +360,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         )}
         <div hidden={!open}>
           {isMenu ? (
-            <MenuResult plan={r} covers={r.covers ?? null} requestedDate={it.date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} after={after} menuText={it.asked} />
+            <MenuResult plan={r} covers={r.covers ?? null} requestedDate={it.date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} after={after} menuText={it.asked} have={it.have} onReplanned={(p) => replanned(it.id, p)} />
           ) : (
             <RunResult
               run={r}
@@ -544,7 +560,19 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                       onSend={send}
                       placeholder={talk.session ? u.conv.voicePlaceholder : convo ? u.conv.answerHere : u.conv.placeholder}
                       busy={running}
-                      photo={caps.photo ? <PhotoButton variant="icon" disabled={running || deciding} onRead={(words) => send(words)} /> : null}
+                      photo={
+                        caps.photo ? (
+                          <PhotoButton
+                            variant="icon"
+                            disabled={running || deciding}
+                            onRead={(words) => send(words)}
+                            onPantry={(have, message) => {
+                              pantry.current = have
+                              push({ kind: 'agent', text: message ?? u.conv.pantryRead(have.join(', ')) })
+                            }}
+                          />
+                        ) : null
+                      }
                       mic={micOn ? <MicButton voice={voice} disabled={running || deciding} /> : null}
                       onVoice={caps.talk ? startVoice : null}
                       muted={live.muted}
