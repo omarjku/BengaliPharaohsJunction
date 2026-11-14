@@ -24,6 +24,7 @@ from . import agent, auth, catalogue, conversation, gate, kitchen, mandates, men
 
 TZ = ZoneInfo("Europe/Helsinki")
 log = logging.getLogger(__name__)
+CONFIRMED_ORDER_MESSAGE = "This order is already confirmed; cancel or change it on screen (needs your approval)."
 _DUPLICATE_GUARD_BYPASS = ContextVar("duplicate_guard_bypass", default=False)
 _PROPOSALS: dict[str, dict] = {}
 INTENT_PROMPT = agent.UNTRUSTED + """
@@ -592,7 +593,12 @@ async def _primary_follow_up(entry: dict, action: dict, answer: str, buyer_id: s
     requested = _follow_up_date(entry)
     intent = action.get("intent")
     if intent in ("reject", "cancel"):
-        await _reject_order(_find_order(buyer_id, card=conversation.last_card(buyer_id)), buyer_id)
+        order = _find_order(buyer_id, card=conversation.last_card(buyer_id))
+        if order and order.get("status") == "confirmed":
+            return _simple_card("cancel", CONFIRMED_ORDER_MESSAGE), entry["text"], requested
+        if order and not await _reject_order(order, buyer_id):
+            return _simple_card("cancel", "I couldn't cancel that order safely; it remains unchanged."), \
+                entry["text"], requested
         return _rejected_card(entry, requested), entry["text"], requested
     if intent == "confirm":
         request = _copy_request(entry)
@@ -1045,7 +1051,7 @@ def _find_order(buyer_id: str, card: dict | None = None, target: str | None = No
         if matches:
             return max(matches, key=lambda order: order.get("created_at", ""))
     if target:
-        matches = [order for order in rows if order.get("status") == "pending_approval"
+        matches = [order for order in rows if order.get("status") in {"pending_approval", "confirmed"}
                    and any(_matches_line(line, target) for line in order.get("lines") or [])]
         if len(matches) == 1:
             return matches[0]
@@ -1075,21 +1081,26 @@ def _cutoff_passed(order: dict) -> bool:
 
 
 async def _reject_order(order: dict | None, buyer_id: str) -> bool:
-    """Reject one still-pending order; an old cut-off must never be bypassed by a cart edit."""
-    if not order or order.get("status") not in {"pending_approval", "confirmed"} or _cutoff_passed(order):
+    """Withdraw this agent's own pending order; confirmed orders are approver-only."""
+    if not order or order.get("status") != "pending_approval" or _cutoff_passed(order):
+        return False
+    principal = auth.CURRENT_AGENT.get()
+    if principal is None or principal.buyer_id != buyer_id:
+        principal = auth.Principal(buyer_id, buyer_id, order.get("agent_key_id") or buyer_id)
+    if order.get("agent_key_id") != principal.key_id:
         return False
     try:
-        if order.get("status") == "pending_approval":
-            await orders.reject(order["id"], auth.Principal(buyer_id, buyer_id))
-        else:
-            decision = Decision.model_validate(order.get("decision") or {})
-            entry, front_door = orders._entry(f"buyer_agent:{buyer_id}:cancel", order["id"], buyer_id,
-                                              order["requested_date"], order.get("lines") or [],
-                                              mandates.get(buyer_id), None, decision=decision,
-                                              action="cancelled", status="rejected")
-            await orders._commit(*orders._changing(order, {"status": "rejected", "signed_off_by": buyer_id,
-                                                            "updated_at": datetime.now(timezone.utc).isoformat()}),
-                                 entry, front_door)
+        decision = Decision.model_validate(order.get("decision") or {})
+        entry, front_door = orders._entry(f"agent:{principal.key_id}:withdrawn_by_agent", order["id"], buyer_id,
+                                          order["requested_date"], order.get("lines") or [], mandates.get(buyer_id),
+                                          None, decision=decision, action="withdrawn_by_agent", status="rejected")
+        body = {"total_cents": order["total_cents"], "lines": order.get("lines") or [],
+                "decision": order.get("decision") or {}, "rejected_options": [],
+                "mandate_version": order.get("mandate_version"), "signed_off_by": None, "quote_facts": []}
+        orders._signed(front_door, orders._response(order["id"], "rejected", body, entry.id))
+        await orders._commit(*orders._changing(order, {"status": "rejected", "signed_off_by": None,
+                                                        "updated_at": datetime.now(timezone.utc).isoformat()}),
+                             entry, front_door)
     except Exception:  # an edit must not create a replacement if its old order was not rejected
         log.exception("could not reject old order %s", order.get("id"))
         return False
@@ -1175,9 +1186,11 @@ async def _confirm_cart(card: dict | None, buyer_id: str) -> dict:
 async def _cancel_named_order(text: str, buyer_id: str, card: dict | None = None) -> dict:
     match = _CANCEL_ORDER.search(text)
     target = match.group(1).strip() if match else None
-    order = _find_order(buyer_id, card=card if not target else None, target=target)
+    order = _find_order(buyer_id, card=card if card and card.get("order_id") else None, target=target)
     if not order:
         return _simple_card("cancel", "I couldn't find a pending order matching that description.")
+    if order.get("status") == "confirmed":
+        return _simple_card("cancel", CONFIRMED_ORDER_MESSAGE)
     if await _reject_order(order, buyer_id):
         return _simple_card("cancel", f"Cancelled the pending {target or 'cart'} order. Nothing was ordered.")
     return _simple_card("cancel", "I couldn't cancel that order safely; it may already be past its cut-off or no longer be pending.")
@@ -1339,7 +1352,9 @@ async def _execute_action(action: dict, text: str, requested: date | None, buyer
         new_items = [{"name": item.get("name"), "amount": item.get("amount"), "unit": item.get("unit")}
                      for item in slots.get("items") or [] if item.get("name")]
         merged_items, _, _ = _merged_change_items(old_items, new_items, text)
-        if old_order and old_order.get("status") in {"pending_approval", "confirmed"} \
+        if old_order and old_order.get("status") == "confirmed":
+            return _simple_card(intent, CONFIRMED_ORDER_MESSAGE)
+        if old_order and old_order.get("status") == "pending_approval" \
                 and not await _reject_order(old_order, buyer_id):
             return _simple_card(intent, "I couldn't safely change that pending order, so it remains unchanged.")
         if not merged_items:

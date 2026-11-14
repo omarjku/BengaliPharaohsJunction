@@ -9,6 +9,7 @@ ponytail: static shared secrets; per-buyer OAuth / signed mandates before produc
 """
 import hmac
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Annotated
 
@@ -24,6 +25,9 @@ class Principal:
     buyer_id: str
     name: str
     key_id: str = field(default="", compare=False)  # the credential's config label (scopes idempotency); no secret
+
+
+CURRENT_AGENT: ContextVar[Principal | None] = ContextVar("current_agent", default=None)
 
 
 def _parse(spec: str) -> list[tuple[bytes, Principal]]:

@@ -48,12 +48,12 @@ TOOLS = [{"functionDeclarations": [
         "items": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
             "text": {"type": "STRING"}, "product_id": {"type": "STRING"}, "amount": {"type": "NUMBER"},
             "unit": {"type": "STRING"}}}}, "delivery_date": {"type": "STRING"}}, ["items"]),
-    _decl("change_order", "Reject the old order safely, then rerun the existing engine for the merged cart.", {
+    _decl("change_order", "Change an agent-created pending order, then rerun the engine for the merged cart. Confirmed orders cannot be changed; return the on-screen approval message.", {
         "order_id": {"type": "STRING"}, "changes": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
             "product_id": {"type": "STRING"}, "name": {"type": "STRING"}, "amount": {"type": "NUMBER"},
             "unit": {"type": "STRING"}, "remove": {"type": "BOOLEAN"}}}}, "delivery_date": {"type": "STRING"}},
         ["order_id", "changes"]),
-    _decl("cancel_order", "Cancel a buyer-owned pending or confirmed order through the existing change logic.", {
+    _decl("cancel_order", "Withdraw an agent-created pending order. Confirmed orders cannot be cancelled; return the on-screen approval message.", {
         "order_id": {"type": "STRING"}}, ["order_id"]),
     _decl("current_order", "Read the buyer's current and future open orders. This never changes anything."),
     _decl("kitchen_profile", "Read the compact kitchen profile and standing orders as facts. This never changes anything."),
@@ -381,6 +381,8 @@ async def _change_order(args: dict, buyer_id: str, requested_date: date | None, 
     order_id, old = _owned_order(str(args.get("order_id") or ""), buyer_id)
     if not old or old.get("buyer_id") != buyer_id:
         return {"status": "needs_info", "hold_reasons": ["I could not find that order for this kitchen."], "order_id": order_id}
+    if old.get("status") == "confirmed":
+        return {"status": "needs_info", "hold_reasons": [ask.CONFIRMED_ORDER_MESSAGE], "order_id": order_id}
     changes = [item for item in args.get("changes") or [] if isinstance(item, dict)]
     new_items = []
     snippets = []
@@ -425,6 +427,8 @@ async def _cancel_order(args: dict, buyer_id: str, _requested_date: date | None 
     order_id, order = _owned_order(str(args.get("order_id") or ""), buyer_id)
     if not order or order.get("buyer_id") != buyer_id:
         return {"status": "needs_info", "hold_reasons": ["I could not find that order for this kitchen."], "order_id": order_id}
+    if order.get("status") == "confirmed":
+        return {"status": "needs_info", "hold_reasons": [ask.CONFIRMED_ORDER_MESSAGE], "order_id": order_id}
     if not await ask._reject_order(order, buyer_id):
         return {"status": "needs_info", "hold_reasons": ["I could not cancel it safely; it may be past its cut-off."],
                 "order_id": order_id}
