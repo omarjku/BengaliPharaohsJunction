@@ -28,6 +28,7 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
   const [conflict, setConflict] = useState(false) // someone else saved first: the latest rules are shown
   const [saved, setSaved] = useState<string | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
+  const confirmTitle = useRef<HTMLParagraphElement>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -50,6 +51,9 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
   useEffect(() => {
     if (proposal || saved || conflict) heading.current?.focus()
   }, [proposal, saved, conflict])
+  useEffect(() => {
+    if (confirming) confirmTitle.current?.focus() // the "are you sure?" takes focus, so it's read and answered first
+  }, [confirming])
 
   async function check(withText: string) {
     setBusy('check')
@@ -76,9 +80,12 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
     if (text?.trim()) void check(text.trim())
   }
 
-  // Answers go back into the rules as plain sentences, and the rules are read again.
+  // Answers go back into the rules with their question (an answer alone, like "yes", means nothing to the compiler),
+  // and the rules are read again.
   function applyAnswers() {
-    const added = Object.values(answers).map((a) => a.trim()).filter(Boolean)
+    const added = Object.entries(answers)
+      .filter(([i, a]) => a.trim() && !skipped.has(Number(i)))
+      .map(([i, a]) => `${questions[Number(i)]?.question ?? ''} ${a.trim()}`.trim())
     const next = [text ?? '', ...added].join('\n').trim()
     setText(next)
     void check(next)
@@ -88,9 +95,12 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
   const open = questions.map((_, i) => i).filter((i) => !skipped.has(i))
   const typed = open.some((i) => answers[i]?.trim())
   const looser = proposal?.diff_from_current.filter((ch) => ch.change === 'looser') ?? []
+  // Looser changes first: they're the ones that need a second look.
+  const changes = [...(proposal?.diff_from_current ?? [])].sort((a, b) => Number(b.change === 'looser') - Number(a.change === 'looser'))
+  const unreadable = !!proposal?.used_fallback // the compiler couldn't read the text: nothing to save
 
   async function save() {
-    if (!proposal || open.length) return
+    if (!proposal || open.length || unreadable) return
     if (looser.length && !confirming) {
       setConfirming(true)
       return
@@ -221,11 +231,15 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
               {t.injectionBody}
             </div>
           )}
-          {proposal.used_fallback && <p className="sure unsure">{t.fallback}</p>}
+          {unreadable && (
+            <div className="problem" role="alert">
+              {t.fallback}
+            </div>
+          )}
 
           {proposal.diff_from_current.length > 0 && (
             <ul className="changes">
-              {proposal.diff_from_current.map((ch, i) => (
+              {changes.map((ch, i) => (
                 <li key={i} className="change">
                   <span className={`change-word ${ch.change}`}>{c.changeWord(ch)}</span>
                   <span>{c.changeText(ch)}</span>
@@ -285,7 +299,7 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
 
           {confirming ? (
             <div className="confirm" role="alertdialog" aria-labelledby="confirm-title">
-              <p className="title" id="confirm-title">
+              <p className="title" id="confirm-title" ref={confirmTitle} tabIndex={-1}>
                 {t.sure}
               </p>
               <ul>
@@ -304,7 +318,7 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
             </div>
           ) : (
             <div className="decide">
-              <button type="button" className="btn" onClick={save} disabled={busy !== null || open.length > 0}>
+              <button type="button" className="btn" onClick={save} disabled={busy !== null || open.length > 0 || unreadable}>
                 {busy === 'save' ? t.saving : t.save}
               </button>
               <button type="button" className="btn plain" onClick={() => setProposal(null)}>

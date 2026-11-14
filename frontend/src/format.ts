@@ -65,3 +65,10 @@ const RESULT_VIEW: Record<string, [Tone, string]> = {
 }
 export const outcomeView = (o: string): [Tone, string] => OUTCOME_VIEW[o] ?? ['neutral', o]
 export const resultView = (s: string): [Tone, string] => RESULT_VIEW[s] ?? ['neutral', s]
+
+// The chef's own words for a rule, when they really are that rule's: not a default, not a quote shared by several
+// rules (the compiler can set the whole text as every rule's source), and short enough to read as a quote.
+export function ownWords(m: { hard_rules: { source_text?: string | null }[] }, s: string | null | undefined): string | null {
+  if (!s || s.startsWith('Default:') || s.length > 140) return null
+  return m.hard_rules.filter((r) => r.source_text === s).length === 1 ? s : null
+}

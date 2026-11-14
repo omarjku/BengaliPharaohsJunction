@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { askAgentStream, DROPPED, getHealth, getKeys, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { ApiError, askAgentStream, DROPPED, getHealth, getKeys, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
 import { errorText, nextMonday } from './format'
 import { groupHistory } from './history'
@@ -7,9 +7,9 @@ import { COPIES, CopyContext, initialLang, rememberLang, useCopy, type Lang } fr
 import { MenuResult } from './Menu'
 import { Rules } from './Rules'
 import { RunResult } from './RunResult'
-import type { AskResponse, AuditEntry } from './types'
+import type { AskResponse, AuditEntry, Reason } from './types'
 import { UrgentOptions } from './Urgent'
-import { useReadBack, useVoice, voiceSupported } from './useVoice'
+import { languageOf, useReadBack, useVoice, voiceSupported } from './useVoice'
 import { usePhaseLine } from './usePhaseLine'
 import { MicButton, VoiceStatus } from './Voice'
 
@@ -61,9 +61,15 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const [dateSet, setDateSet] = useState(false) // the chef picked a date; otherwise the backend reads it from the words
   const [runDate, setRunDate] = useState(date) // the date the shown result was for (follow-up orders reuse it)
   const [result, setResult] = useState<AskResponse | null>(null)
-  const run = result?.intent === 'order' && 'lines' in result ? result : null
-  const menu = result?.intent === 'menu' && 'lines' in result ? result : null
+  // A question wins: "How much cream?" and "Order again?" come with the run attached, but only the question is shown.
   const question = result?.question ? result : null
+  const run = !question && result?.intent === 'order' && 'lines' in result ? result : null
+  const menu = !question && result?.intent === 'menu' && 'lines' in result ? result : null
+  const convo = question?.conversation_id ?? null // the question can be answered right here (typed or spoken)
+  const convoRef = useRef(convo)
+  useEffect(() => {
+    convoRef.current = convo
+  }, [convo])
   // A menu without a guest count gets a number field; any other question is said plainly, with the box open.
   const asksGuests = question?.intent === 'menu' && question.covers == null && /guest|hengel|vier/i.test(question.question)
   const example = useCyclingExample(text === '', c.EXAMPLES)
@@ -72,8 +78,9 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const readBack = useReadBack()
   const voice = useVoice(transcribe, (words) => {
     readBack.forget()
-    setText(words)
     setByVoice(true)
+    if (convoRef.current) return void ask(words, convoRef.current) // the spoken answer to the agent's question
+    setText(words)
     void ask(words)
   })
   const micOn = VOICE_READY && voiceSupported()
@@ -121,7 +128,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     refreshAudit()
   }
 
-  async function ask(words: string) {
+  // A new request, or (with `to`) the answer to the question the agent just asked.
+  async function ask(words: string, to?: string) {
     setRunning(true)
     setAnnounce(u.ask.announce)
     setError(null)
@@ -129,7 +137,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     setEditing(false)
     try {
       phaseLine.reset()
-      const res = await askAgentStream({ text: words.trim(), ...(dateSet ? { requested_date: date } : {}) }, (p) =>
+      const input = to ? { text: '', follow_up: { to, answer: words.trim() } } : { text: words.trim(), ...(dateSet ? { requested_date: date } : {}) }
+      const res = await askAgentStream(input, (p) =>
         phaseLine.push(c.UI.progress.phases[p.phase] ?? p.text),
       )
       await phaseLine.settle() // let the last step be read before the answer replaces it
@@ -137,12 +146,14 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
       if (!dateSet && res.requested_date) setDate(res.requested_date) // show the date that was used
       setResult(res)
       if (res.question) {
-        setAnnounce(res.question)
+        setAnnounce(c.question(res.question, res.decision?.reasons[0]))
         setEditing(true) // the answer goes in the box (or the guests field), so keep it open
       }
     } catch (err) {
-      setError(err instanceof Error && err.message === DROPPED ? u.progress.dropped : errorText(err))
+      const expired = to && err instanceof ApiError && err.status === 404
+      setError(expired ? u.question.expired : err instanceof Error && err.message === DROPPED ? u.progress.dropped : errorText(err))
       setAnnounce('')
+      if (expired && byVoice) readBack.speak(u.question.expired, { lang: languageOf(text) })
     } finally {
       setRunning(false)
       refreshAudit()
@@ -157,6 +168,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
 
   // "For how many guests?" answered inline: the words go into the box and the agent reads it again.
   function answerGuests(n: number) {
+    if (convo) return void ask(String(n), convo)
     const next = `${text.trim().replace(/[.\s]*$/, '')}. ${u.question.guests(n)}`
     setText(next)
     void ask(next)
@@ -174,11 +186,35 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     })
   }
 
-  // Read the answer's first sentence aloud for a request made by voice (status + headline, as announced).
+  // "Order again?": yes resends it as an answer (or, without a conversation, the same words with "again").
+  function orderAgain() {
+    if (convo) return void ask(u.question.orderAgain, convo)
+    const again = `${text.trim()} again`
+    setText(again)
+    void ask(again)
+  }
+  function leaveIt() {
+    setResult(null)
+    setAnnounce(u.question.leftAlone)
+  }
+
+  // For a request made by voice, the backend's one-sentence read-back is said aloud in the request's language. When it
+  // asked something answerable, the mic then opens by itself for the answer (Cancel stops it; typing works too).
   const { speak } = readBack
+  const lang = languageOf(text)
+  const voiceRef = useRef(voice)
   useEffect(() => {
-    if (byVoice && result && announce && !announce.endsWith('…')) speak(announce)
-  }, [announce, byVoice, result, speak])
+    voiceRef.current = voice
+  })
+  useEffect(() => {
+    if (!byVoice || !result) return
+    const line = result.speak ?? announce
+    if (!line || line.endsWith('…')) return
+    const listen = result.question && result.conversation_id && micOn
+      ? () => voiceRef.current.state === 'idle' && void voiceRef.current.start(true, true)
+      : undefined
+    speak(line, { lang, onEnd: listen })
+  }, [announce, byVoice, result, speak, lang, micOn])
 
   const empty = !result && !running && !error
   const collapsed = !!(run || menu) && !editing
@@ -231,6 +267,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         ) : (
           <>
             <section hidden={view !== 'order'} aria-label={u.nav.order}>
+              <h1 className="sr-only">{u.nav.order}</h1>
               {empty && waiting !== null && <p className="greeting">{u.greeting(partOfDay(), approver, waiting)}</p>}
               {collapsed && (
                 <button type="button" className="composer-summary" onClick={retry}>
@@ -256,7 +293,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                   aria-describedby="text-help"
                   required
                 />
-                {micOn && <MicButton voice={voice} disabled={running || deciding} />}
+                {micOn && !convo && <MicButton voice={voice} disabled={running || deciding} />}
                 </div>
                 <p className="sr-only" id="text-help">
                   {u.ask.help(c.EXAMPLES)}
@@ -283,13 +320,13 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                     {running ? u.ask.asking : result ? u.ask.again : u.ask.ask}
                   </button>
                 </div>
-                {micOn && <VoiceStatus voice={voice} />}
+                {micOn && !convo && <VoiceStatus voice={voice} />}
                 {empty && (
                   <p className="try">
                     {MOCK ? u.ask.tryDemo : u.ask.try}
                     {c.TRY.map((t, i) => (
                       <span key={t}>
-                        {i > 0 && ' · '}
+                        {i > 0 && <span className="sep"> · </span>}
                         <button type="button" className="link accent inline" onClick={() => setText(t)}>
                           {t}
                         </button>
@@ -300,9 +337,9 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
               </form>
 
               {running && (
-                <div className="working" aria-label={u.progress.aria}>
-                  {/* Re-keyed per phase, so each step fades in; screen readers get the start and the answer, not every step. */}
-                  <p key={phaseLine.phase ?? 'start'} className="phase" aria-live="off">
+                <div className="working" role="status" aria-label={u.progress.aria}>
+                  {/* Re-keyed per phase, so each step fades in; the status region reads each step out politely. */}
+                  <p key={phaseLine.phase ?? 'start'} className="phase">
                     {phaseLine.phase ?? u.progress.phases.understanding}
                   </p>
                   <div className="working-bar" aria-hidden="true" />
@@ -326,11 +363,20 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                 <GuestsQuestion key={question.audit_id ?? question.question} question={question.question} onAnswer={answerGuests} busy={running} />
               )}
               {question && !asksGuests && (
-                <section className="answer" aria-label={u.question.status}>
-                  <p className="status neutral">{question.intent === 'unclear' ? u.question.more : u.question.status}</p>
-                  <h2 className="answer-text">{question.question}</h2>
-                  {question.decision?.reasons[0]?.suggested_fix && <p className="answer-sub">{question.decision.reasons[0].suggested_fix}</p>}
-                </section>
+                <Question
+                  key={question.conversation_id ?? question.question}
+                  question={question.question}
+                  more={question.intent === 'unclear'}
+                  reason={question.decision?.reasons[0] ?? null}
+                  answerable={!!convo}
+                  byVoice={byVoice}
+                  busy={running}
+                  onAnswer={(words) => convo && void ask(words, convo)}
+                  onAgain={orderAgain}
+                  onLeave={leaveIt}
+                  mic={micOn && convo ? <MicButton voice={voice} disabled={running} /> : null}
+                  status={micOn && convo ? <VoiceStatus voice={voice} /> : null}
+                />
               )}
               {menu && (
                 <MenuResult
@@ -353,6 +399,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                   onBusy={setDeciding}
                   onAnnounce={setAnnounce}
                   onRetry={retry}
+                  onHistory={() => setView('history')}
                   after={urgentBlock}
                 />
               )}
@@ -383,6 +430,74 @@ function useCyclingExample(active: boolean, examples: string[]): string {
     return () => clearInterval(t)
   }, [active, examples.length])
   return examples[i % examples.length]
+}
+
+// The agent's question, with the answer right there: typed in the field, or spoken (the mic opens by itself after a
+// spoken question). "Order again?" is two buttons instead. Questions that can't be answered here (off-topic, a date
+// in the past) leave the box open above.
+function Question(p: {
+  question: string; more: boolean; reason: Reason | null; answerable: boolean; byVoice: boolean; busy: boolean
+  onAnswer: (words: string) => void; onAgain: () => void; onLeave: () => void; mic: ReactNode; status: ReactNode
+}) {
+  const c = useCopy()
+  const u = c.UI
+  const [words, setWords] = useState('')
+  const heading = useRef<HTMLHeadingElement>(null)
+  const field = useRef<HTMLInputElement>(null)
+  const again = p.reason?.facts.minutes_ago != null
+  useEffect(() => {
+    // typing: straight into the answer field; by voice the mic is listening, so focus just brings the question into view
+    if (p.answerable && !again && !p.byVoice) field.current?.focus()
+    else heading.current?.focus()
+  }, [p.answerable, again, p.byVoice])
+  return (
+    <section className="answer" aria-label={u.question.status}>
+      <p className="status neutral">{p.more ? u.question.more : u.question.status}</p>
+      <h2 ref={heading} tabIndex={-1} className="answer-text">
+        {c.question(p.question, p.reason)}
+      </h2>
+      {!again && p.reason?.suggested_fix && !p.answerable && <p className="answer-sub">{p.reason.suggested_fix}</p>}
+      {again ? (
+        <div className="actions">
+          <button type="button" className="btn" onClick={p.onAgain} disabled={p.busy}>
+            {p.busy ? u.question.sending : u.question.orderAgain}
+          </button>
+          <button type="button" className="btn plain" onClick={p.onLeave} disabled={p.busy}>
+            {u.question.leave}
+          </button>
+        </div>
+      ) : (
+        p.answerable && (
+          <form
+            className="guests"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (words.trim()) p.onAnswer(words)
+            }}
+          >
+            <div className="ask-inputs">
+              <div className="ask-box answer-box">
+                <input
+                  ref={field}
+                  className={`answer-input${p.mic ? ' with-mic' : ''}`}
+                  aria-label={u.question.answer}
+                  placeholder={u.question.answer}
+                  value={words}
+                  onChange={(e) => setWords(e.target.value)}
+                  enterKeyHint="send"
+                />
+                {p.mic}
+              </div>
+              <button type="submit" className="btn" disabled={p.busy || !words.trim()}>
+                {p.busy ? u.question.sending : u.question.send}
+              </button>
+            </div>
+            {p.status}
+          </form>
+        )
+      )}
+    </section>
+  )
 }
 
 // "For how many guests?" with the answer right there.
