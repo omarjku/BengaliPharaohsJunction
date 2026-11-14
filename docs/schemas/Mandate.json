@@ -1,0 +1,220 @@
+{
+  "$defs": {
+    "HardRule": {
+      "additionalProperties": false,
+      "description": "A check that is either met or not. Breaking one is a hard violation\n(except AUTO_APPROVE_LIMIT_CENTS, which only decides who signs off).",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/RuleKind"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "description": "Allergen/claim name, or a number (cents for *_cents kinds), depending on kind.",
+          "title": "Value"
+        },
+        "scope": {
+          "$ref": "#/$defs/PreferenceScope",
+          "default": "always"
+        },
+        "source_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The buyer's own words.",
+          "title": "Source Text"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "title": "HardRule",
+      "type": "object"
+    },
+    "OpenQuestion": {
+      "additionalProperties": false,
+      "description": "Something the compiler could not resolve; asked, not guessed.",
+      "properties": {
+        "question": {
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        },
+        "why": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Why"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "title": "OpenQuestion",
+      "type": "object"
+    },
+    "Preference": {
+      "additionalProperties": false,
+      "description": "Soft guidance that is not a clean check; shapes ranking, never blocks.",
+      "properties": {
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/PreferenceScope"
+        }
+      },
+      "required": [
+        "text",
+        "scope"
+      ],
+      "title": "Preference",
+      "type": "object"
+    },
+    "PreferenceScope": {
+      "description": "How long a preference lasts (D5: don't over-generalise).",
+      "enum": [
+        "this_order",
+        "always"
+      ],
+      "title": "PreferenceScope",
+      "type": "string"
+    },
+    "RuleKind": {
+      "description": "Closed list of checks a hard rule may express. Money values are net cents.",
+      "enum": [
+        "excluded_allergen",
+        "required_claim",
+        "max_unit_price_cents",
+        "min_delivery_reliability",
+        "auto_approve_limit_cents"
+      ],
+      "title": "RuleKind",
+      "type": "string"
+    },
+    "UncertaintyPolicy": {
+      "description": "What the agent does when it cannot verify something.",
+      "enum": [
+        "ask",
+        "decline",
+        "approve"
+      ],
+      "title": "UncertaintyPolicy",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "const": "0.2",
+      "default": "0.2",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "buyer_id": {
+      "minLength": 1,
+      "title": "Buyer Id",
+      "type": "string"
+    },
+    "hard_rules": {
+      "items": {
+        "$ref": "#/$defs/HardRule"
+      },
+      "title": "Hard Rules",
+      "type": "array"
+    },
+    "uncertainty_policy": {
+      "$ref": "#/$defs/UncertaintyPolicy",
+      "default": "ask"
+    },
+    "guidance": {
+      "items": {
+        "$ref": "#/$defs/Preference"
+      },
+      "title": "Guidance",
+      "type": "array"
+    },
+    "open_questions": {
+      "items": {
+        "$ref": "#/$defs/OpenQuestion"
+      },
+      "title": "Open Questions",
+      "type": "array"
+    },
+    "blocklist": {
+      "description": "Product ids that may never be ordered.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Blocklist",
+      "type": "array"
+    },
+    "per_line_cap_cents": {
+      "default": 30000,
+      "description": "Max net cents for one order line (default EUR 300).",
+      "exclusiveMinimum": 0,
+      "title": "Per Line Cap Cents",
+      "type": "integer"
+    },
+    "weekly_budget_cents": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional net-cents budget for a rolling 7 days.",
+      "title": "Weekly Budget Cents"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "After this the mandate is expired (decisions ask a human).",
+      "title": "Expires At"
+    }
+  },
+  "required": [
+    "id",
+    "buyer_id"
+  ],
+  "title": "Mandate",
+  "type": "object"
+}

@@ -1,0 +1,846 @@
+{
+  "$defs": {
+    "Alternative": {
+      "additionalProperties": false,
+      "properties": {
+        "product_id": {
+          "minLength": 1,
+          "title": "Product Id",
+          "type": "string"
+        },
+        "summary": {
+          "description": "Why this is offered instead.",
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "product_id",
+        "summary"
+      ],
+      "title": "Alternative",
+      "type": "object"
+    },
+    "AuditInput": {
+      "additionalProperties": false,
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/PurchaseRequest"
+        },
+        "mandate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Mandate"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "quotes": {
+          "items": {
+            "$ref": "#/$defs/Quote"
+          },
+          "title": "Quotes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "request"
+      ],
+      "title": "AuditInput",
+      "type": "object"
+    },
+    "Availability": {
+      "enum": [
+        "available",
+        "partial",
+        "unavailable",
+        "unknown"
+      ],
+      "title": "Availability",
+      "type": "string"
+    },
+    "Channel": {
+      "enum": [
+        "text",
+        "voice",
+        "photo",
+        "menu"
+      ],
+      "title": "Channel",
+      "type": "string"
+    },
+    "CutOff": {
+      "additionalProperties": false,
+      "properties": {
+        "closing_time": {
+          "format": "date-time",
+          "title": "Closing Time",
+          "type": "string"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "closing_time",
+        "passed"
+      ],
+      "title": "CutOff",
+      "type": "object"
+    },
+    "Decision": {
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "const": "0.2",
+          "default": "0.2",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "request_id": {
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "reasons": {
+          "description": "All reasons, highest severity first.",
+          "items": {
+            "$ref": "#/$defs/Reason"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "primary_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Reason"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "reasons[0]; filled in automatically; null only when no reasons."
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "alternatives": {
+          "items": {
+            "$ref": "#/$defs/Alternative"
+          },
+          "maxItems": 3,
+          "title": "Alternatives",
+          "type": "array"
+        },
+        "rules_version": {
+          "minLength": 1,
+          "title": "Rules Version",
+          "type": "string"
+        },
+        "decided_at": {
+          "format": "date-time",
+          "title": "Decided At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "outcome",
+        "rules_version",
+        "decided_at"
+      ],
+      "title": "Decision",
+      "type": "object"
+    },
+    "HardRule": {
+      "additionalProperties": false,
+      "description": "A check that is either met or not. Breaking one is a hard violation\n(except AUTO_APPROVE_LIMIT_CENTS, which only decides who signs off).",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/RuleKind"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "description": "Allergen/claim name, or a number (cents for *_cents kinds), depending on kind.",
+          "title": "Value"
+        },
+        "scope": {
+          "$ref": "#/$defs/PreferenceScope",
+          "default": "always"
+        },
+        "source_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The buyer's own words.",
+          "title": "Source Text"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "title": "HardRule",
+      "type": "object"
+    },
+    "Mandate": {
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "const": "0.2",
+          "default": "0.2",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "buyer_id": {
+          "minLength": 1,
+          "title": "Buyer Id",
+          "type": "string"
+        },
+        "hard_rules": {
+          "items": {
+            "$ref": "#/$defs/HardRule"
+          },
+          "title": "Hard Rules",
+          "type": "array"
+        },
+        "uncertainty_policy": {
+          "$ref": "#/$defs/UncertaintyPolicy",
+          "default": "ask"
+        },
+        "guidance": {
+          "items": {
+            "$ref": "#/$defs/Preference"
+          },
+          "title": "Guidance",
+          "type": "array"
+        },
+        "open_questions": {
+          "items": {
+            "$ref": "#/$defs/OpenQuestion"
+          },
+          "title": "Open Questions",
+          "type": "array"
+        },
+        "blocklist": {
+          "description": "Product ids that may never be ordered.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Blocklist",
+          "type": "array"
+        },
+        "per_line_cap_cents": {
+          "default": 30000,
+          "description": "Max net cents for one order line (default EUR 300).",
+          "exclusiveMinimum": 0,
+          "title": "Per Line Cap Cents",
+          "type": "integer"
+        },
+        "weekly_budget_cents": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional net-cents budget for a rolling 7 days.",
+          "title": "Weekly Budget Cents"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "After this the mandate is expired (decisions ask a human).",
+          "title": "Expires At"
+        }
+      },
+      "required": [
+        "id",
+        "buyer_id"
+      ],
+      "title": "Mandate",
+      "type": "object"
+    },
+    "OpenQuestion": {
+      "additionalProperties": false,
+      "description": "Something the compiler could not resolve; asked, not guessed.",
+      "properties": {
+        "question": {
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        },
+        "why": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Why"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "title": "OpenQuestion",
+      "type": "object"
+    },
+    "Outcome": {
+      "enum": [
+        "AUTO",
+        "ASK_HUMAN",
+        "DECLINE"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "Preference": {
+      "additionalProperties": false,
+      "description": "Soft guidance that is not a clean check; shapes ranking, never blocks.",
+      "properties": {
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/PreferenceScope"
+        }
+      },
+      "required": [
+        "text",
+        "scope"
+      ],
+      "title": "Preference",
+      "type": "object"
+    },
+    "PreferenceScope": {
+      "description": "How long a preference lasts (D5: don't over-generalise).",
+      "enum": [
+        "this_order",
+        "always"
+      ],
+      "title": "PreferenceScope",
+      "type": "string"
+    },
+    "PurchaseRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "const": "0.2",
+          "default": "0.2",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "buyer_id": {
+          "minLength": 1,
+          "title": "Buyer Id",
+          "type": "string"
+        },
+        "text": {
+          "description": "The original words, kept for the audit trail.",
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "channel": {
+          "$ref": "#/$defs/Channel",
+          "default": "text"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/RequestItem"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "needed_by": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Needed By"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "buyer_id",
+        "text",
+        "created_at"
+      ],
+      "title": "PurchaseRequest",
+      "type": "object"
+    },
+    "QuantityInfo": {
+      "additionalProperties": false,
+      "description": "Available quantity. `known=False` means unknown, NOT unlimited\n(the mock API reports Terminal stock as 999999).",
+      "properties": {
+        "known": {
+          "title": "Known",
+          "type": "boolean"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "known"
+      ],
+      "title": "QuantityInfo",
+      "type": "object"
+    },
+    "Quote": {
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "const": "0.2",
+          "default": "0.2",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "product_id": {
+          "minLength": 1,
+          "title": "Product Id",
+          "type": "string"
+        },
+        "product_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Product Name"
+        },
+        "unit_price_cents": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Net-of-VAT customer price per sales unit, integer cents; null if unknown.",
+          "title": "Unit Price Cents"
+        },
+        "unit": {
+          "description": "Sales unit, e.g. '1 L carton'.",
+          "minLength": 1,
+          "title": "Unit",
+          "type": "string"
+        },
+        "availability": {
+          "$ref": "#/$defs/Availability"
+        },
+        "quantity": {
+          "$ref": "#/$defs/QuantityInfo"
+        },
+        "available_date": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Available Date"
+        },
+        "source": {
+          "$ref": "#/$defs/QuoteSource"
+        },
+        "fetched_at": {
+          "description": "Freshness: when this was read.",
+          "format": "date-time",
+          "title": "Fetched At",
+          "type": "string"
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid Until"
+        },
+        "cut_off": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CutOff"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "product_id",
+        "unit_price_cents",
+        "unit",
+        "availability",
+        "quantity",
+        "source",
+        "fetched_at"
+      ],
+      "title": "Quote",
+      "type": "object"
+    },
+    "QuoteSource": {
+      "enum": [
+        "valio_api",
+        "valio_front_door",
+        "mock"
+      ],
+      "title": "QuoteSource",
+      "type": "string"
+    },
+    "Reason": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ReasonCode"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "message": {
+          "description": "Plain language, shown to the chef.",
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "facts": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "The numbers behind the message (money in net cents).",
+          "title": "Facts",
+          "type": "object"
+        },
+        "suggested_fix": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the human can do about it.",
+          "title": "Suggested Fix"
+        },
+        "product_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Product Id"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ],
+      "title": "Reason",
+      "type": "object"
+    },
+    "ReasonCode": {
+      "enum": [
+        "QTY_INVALID",
+        "QTY_AMBIGUOUS",
+        "QTY_SUSPICIOUS",
+        "QTY_UNKNOWN",
+        "STOCK_PARTIAL",
+        "STOCK_NONE",
+        "UNIT_MISMATCH",
+        "CUTOFF_PASSED",
+        "UNDELIVERABLE",
+        "DATE_NOT_HONOURED",
+        "LOW_RELIABILITY",
+        "QUOTE_STALE",
+        "PRICE_MISSING",
+        "PRICE_CHANGED",
+        "UNKNOWN_PRODUCT",
+        "DATA_MISSING",
+        "SPEND_OVER_LIMIT",
+        "LINE_OVER_CAP",
+        "WEEKLY_BUDGET_EXCEEDED",
+        "ALLERGEN_CONTAINS",
+        "ALLERGEN_MAY_CONTAIN",
+        "ALLERGEN_DATA_MISSING",
+        "BLOCKLISTED",
+        "MANDATE_MISSING",
+        "MANDATE_EXPIRED",
+        "MANDATE_INVALID",
+        "DEFAULT_MANDATE_APPLIED",
+        "LIMIT_CHANGE_ATTEMPT",
+        "POLICY_DECLINE_UNKNOWN",
+        "LOW_CONFIDENCE",
+        "ENGINE_ERROR"
+      ],
+      "title": "ReasonCode",
+      "type": "string"
+    },
+    "RejectedOption": {
+      "additionalProperties": false,
+      "properties": {
+        "product_id": {
+          "minLength": 1,
+          "title": "Product Id",
+          "type": "string"
+        },
+        "reasons": {
+          "items": {
+            "$ref": "#/$defs/Reason"
+          },
+          "minItems": 1,
+          "title": "Reasons",
+          "type": "array"
+        }
+      },
+      "required": [
+        "product_id",
+        "reasons"
+      ],
+      "title": "RejectedOption",
+      "type": "object"
+    },
+    "RequestItem": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "What the buyer called it, e.g. 'lactose-free milk'.",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "quantity": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantity"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "e.g. 'L', 'KG', 'PCS'.",
+          "title": "Unit"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "RequestItem",
+      "type": "object"
+    },
+    "RuleKind": {
+      "description": "Closed list of checks a hard rule may express. Money values are net cents.",
+      "enum": [
+        "excluded_allergen",
+        "required_claim",
+        "max_unit_price_cents",
+        "min_delivery_reliability",
+        "auto_approve_limit_cents"
+      ],
+      "title": "RuleKind",
+      "type": "string"
+    },
+    "Severity": {
+      "description": "Per-reason severity. The Decision outcome is the highest severity present:\nDECLINE > ASK_HUMAN > INFO (INFO only = AUTO).",
+      "enum": [
+        "INFO",
+        "ASK_HUMAN",
+        "DECLINE"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "UncertaintyPolicy": {
+      "description": "What the agent does when it cannot verify something.",
+      "enum": [
+        "ask",
+        "decline",
+        "approve"
+      ],
+      "title": "UncertaintyPolicy",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "const": "0.2",
+      "default": "0.2",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "actor": {
+      "description": "e.g. 'buyer_agent', 'valio_front_door', 'human:<name>'.",
+      "minLength": 1,
+      "title": "Actor",
+      "type": "string"
+    },
+    "input": {
+      "$ref": "#/$defs/AuditInput"
+    },
+    "decision": {
+      "$ref": "#/$defs/Decision"
+    },
+    "rejected_options": {
+      "items": {
+        "$ref": "#/$defs/RejectedOption"
+      },
+      "title": "Rejected Options",
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "timestamp",
+    "actor",
+    "input",
+    "decision"
+  ],
+  "title": "AuditEntry",
+  "type": "object"
+}
