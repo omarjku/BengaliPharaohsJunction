@@ -14,6 +14,15 @@ Team: Omar Kassem + Fathia Fairuz Zoha. Junction 2026, Espoo, 13–15 Nov 2026.
 ## Deadlines
 Draft **Fri 23:55** · Final **Sun 10:00** · Peer review **Sun 10:30** (both of us must be there).
 
+## Run locally
+```bash
+cp .env.example .env    # then fill in VALIO_API_KEY and GEMINI_API_KEY
+./dev.sh                # backend http://localhost:8000 (API docs at /docs), frontend http://localhost:5173
+```
+- `backend/`: Python FastAPI. The OpenAPI spec is generated at `/openapi.json`.
+- `frontend/`: Vite + React + TypeScript. In production it calls the backend at `VITE_API_URL`.
+- Calls to Valio's API must send a `User-Agent` header (see `docs/valio-api-notes.md`).
+
 ## Agent message board
 We coordinate through the pinned **Message Board** issue. Each person's Claude reads it before starting work and posts claims, PRs and review requests there. Run `./board.sh` for usage.
 
