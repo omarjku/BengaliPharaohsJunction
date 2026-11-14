@@ -34,6 +34,7 @@ GEMINI_TIMEOUT_S = 15
 SEARCH_LIMIT = 20  # catalogue hits shown to Gemini
 QUOTE_TOP = 5  # candidates per item actually quoted at Valio (no catalogue sweeps)
 MAX_ITEMS = 10  # bounds Valio, Gemini and Decisions calls per run
+MAX_AMOUNT = 1_000_000
 ASK, DECLINE, INFO = gate.ASK, gate.DECLINE, gate.INFO
 
 # Dietary tag (closed list Gemini must pick from) → (claims that must be present, GS1 allergens to exclude).
@@ -64,10 +65,10 @@ For each product asked for:
 summary: one short sentence restating the request."""
 
 RANK_PROMPT = UNTRUSTED + """
-You match a restaurant buyer's request to a food wholesaler's catalogue. You get the item to match, the buyer's full
-request, and catalogue products found by keyword search. Return the ids of the products that ARE the item, best match
+You match a restaurant buyer's request to a food wholesaler's catalogue. You get the item to match and catalogue
+products found by keyword search. Return the ids of the products that ARE the item, best match
 first (a product merely made from it is not a match: milk ice cream is not milk). Return an empty list if none match."""
-RANK_INPUT = "Item: {query}{diet}\n{request}\nProducts:\n{products}"
+RANK_INPUT = "Item: {query}{diet}\nProducts:\n{products}"  # parsed fields only: no raw chef text to steer the pick
 
 _PARSE_SCHEMA = {"type": "object", "required": ["summary", "items"], "properties": {
     "summary": {"type": "string"},
@@ -182,9 +183,11 @@ async def _judge_one(text: str, p: dict, kinds: list[str]) -> tuple[float | None
 def _item(query: str, amount, unit, tags) -> dict:
     tags = [t for t in dict.fromkeys(tags) if t in DIETARY]
     try:
-        amount = float(amount) if amount is not None and float(amount) > 0 else None
+        amount = float(amount) if amount is not None and not isinstance(amount, bool) else None
     except (TypeError, ValueError):
         amount = None
+    if amount is not None and not (math.isfinite(amount) and 0 < amount <= MAX_AMOUNT):
+        amount = None  # inf / absurd amounts become "how much?" instead of a crash in quantity resolution
     return {"query": query.strip(), "amount": amount, "unit": unit or None,
             "claims": sorted({c for t in tags for c in DIETARY[t][0]}),
             "exclude_allergens": sorted({a for t in tags for a in DIETARY[t][1]})}
@@ -207,27 +210,35 @@ def fallback_parse(text: str) -> list[dict]:
         if m:
             n = m[1].rstrip(".,")
             n = n.replace(",", "") if re.fullmatch(r"\d{1,3}(,\d{3})+", n) else n.replace(",", ".")
-            amount, unit, chunk = float(n), m[2] and ("pcs" if m[2].lower() == "kpl" else m[2]), m[3]
+            try:
+                amount = float(n)
+            except ValueError:  # "1.2.3 L milk": no amount rather than a 500
+                amount = None
+            unit, chunk = m[2] and ("pcs" if m[2].lower() == "kpl" else m[2]), m[3]
         query = " ".join(chunk.split())
         if query:
             items.append(_item(query, amount, unit, tags))
     return items
 
 
-_UNIT_WORDS = {"l": ("l", "litre", "liter", "litra"), "dl": ("dl",), "cl": ("cl",), "ml": ("ml",),
-               "kg": ("kg", "kilo"), "g": ("g", "gram")}
+_UNIT_WORDS = {"l": {"l", "litre", "litres", "liter", "liters", "litra", "litraa"}, "dl": {"dl"}, "cl": {"cl"},
+               "ml": {"ml"}, "kg": {"kg", "kgs", "kilo", "kilos", "kiloa", "kilogram", "kilograms"},
+               "g": {"g", "gram", "grams", "grammaa"}}
+_MEASURE_WORDS = set().union(*_UNIT_WORDS.values())
 _SPLIT = r",(?!\d)|;|\n|\band\b"
 
 
 def _numbers(text: str) -> set[float]:
-    """Every number the text could mean: 1000, 1,000, 1 000 → 1000; 1,5 / 1.5 → 1.5."""
+    """One reading per number written: 1000, 1,000, 1 000, 1.000 → 1000; 1,5 / 1.5 → 1.5. (Two readings per token
+    let '1,000 L' ground a parsed amount of 1.)"""
     out = set()
     for raw in re.findall(r"\d+(?:[ ,.]\d+)*", text):
-        for n in (re.sub(r"[ ,.](?=\d{3}\b)", "", raw), raw.replace(" ", "").replace(",", ".")):
-            try:
-                out.add(float(n))
-            except ValueError:
-                pass
+        if re.fullmatch(r"\d{1,3}(?:([ ,.])\d{3})(?:\1\d{3})*", raw):  # thousands separators
+            out.add(float(re.sub(r"[ ,.]", "", raw)))
+            continue
+        for part in raw.split():  # "16 1000" is two numbers
+            if re.fullmatch(r"\d+(?:[,.]\d+)?", part):  # "1.2.3" is no number
+                out.add(float(part.replace(",", ".")))
     return out
 
 
@@ -236,23 +247,44 @@ def _stem(w: str) -> str:
 
 
 def _words_in(words: list[str], text: str) -> bool:
-    """Every word appears in the text (case-insensitive, plural-tolerant: 'eggs' ~ 'egg', 'milk' ~ 'milks')."""
-    have = [_stem(t) for t in re.findall(r"[\wäöå]+", text.lower())]
-    return all(any(t.startswith(q) or (len(t) >= 3 and q.startswith(t)) for t in have)
-               for q in map(_stem, words) if q)
+    """Every word is a whole word of the text (case-insensitive, plural-tolerant: 'eggs' ~ 'egg'). No prefixes:
+    'milkshake' must not ground 'milk'. No words at all grounds nothing."""
+    have = {_stem(t) for t in re.findall(r"[\wäöå]+", text.lower())}
+    stems = [q for q in map(_stem, words) if q]
+    return bool(stems) and all(q in have for q in stems)
+
+
+def _unit_in(unit: str, clause: str) -> bool:
+    tokens = set(re.findall(r"[a-zäöå]+", clause.lower()))  # "20l" → "l"; "lactose" is not "l"
+    if unit in ("pcs", "units"):  # a count is only right if no volume/weight unit was written for it
+        return not tokens & _MEASURE_WORDS
+    return bool(tokens & _UNIT_WORDS.get(unit, set()))
 
 
 def ungrounded(text: str, item: dict) -> str | None:
-    """Deterministic injection / hallucination guard: what in a Gemini-parsed item is NOT in the chef's own text."""
+    """Deterministic injection / hallucination guard: what in a Gemini-parsed item is NOT in the chef's own text.
+    Product, amount and unit must all be in the SAME clause, so '12 kg butter and 1 L milk' can't become 12 L milk."""
     words = re.findall(r"[\wäöå]+", item["query"].lower())
-    if not _words_in(words, text):
-        return f"the product '{item['query']}'"
-    if item["amount"] is not None and item["amount"] not in _numbers(text):
-        return f"the amount {gate._qty(item['amount'])}"
     unit = (item["unit"] or "").lower()
-    if unit in _UNIT_WORDS and not re.search(r"(?<![a-zäöå])(" + "|".join(_UNIT_WORDS[unit]) + ")", text.lower()):
-        return f"the unit {item['unit']}"
+    if unit and unit not in quantity.MEASURES:
+        return f"the unit {item['unit']}"  # catalogue codes like KI multiply quantities; only plain units are parsed
+    clauses = [c for c in re.split(_SPLIT, text) if _words_in(words, c)]
+    if not clauses:
+        return f"the product '{item['query']}'"
+    if item["amount"] is not None:
+        clauses = [c for c in clauses if item["amount"] in _numbers(c)]
+        if not clauses:
+            return f"the amount {gate._qty(item['amount'])} for {item['query']}"
+    if unit and not any(_unit_in(unit, c) for c in clauses):
+        return f"the unit {item['unit']} for {item['query']}"
     return None
+
+
+def unassigned_tags(text: str, items: list[dict]) -> list[str]:
+    """Dietary words in the chef's text that no item carries ('20 L milk, lactose-free' splits off the word)."""
+    have = {t for t, (claims, allergens) in DIETARY.items() for it in items
+            if set(claims) <= set(it["claims"]) and set(allergens) <= set(it["exclude_allergens"])}
+    return sorted({tag for word, tag in _WORDS.items() if word in text.lower()} - have)
 
 
 _INSTRUCTION = re.compile(r"\b(ignore|disregard|instructions?|system prompt|you are|return (only|one|the following))\b",
@@ -293,8 +325,7 @@ async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[st
                                    ensure_ascii=False) for p in hits)
     diet = f" ({', '.join(item['claims'] + ['no ' + a for a in item['exclude_allergens']])})" \
         if item["claims"] or item["exclude_allergens"] else ""
-    out = await _gemini(RANK_PROMPT, RANK_INPUT.format(query=item["query"], diet=diet, request=_wrap(text),
-                                                        products=listing), _RANK_SCHEMA)
+    out = await _gemini(RANK_PROMPT, RANK_INPUT.format(query=item["query"], diet=diet, products=listing), _RANK_SCHEMA)
     if out is None or not isinstance(out.get("ids"), list):
         return [p["id"] for p in hits[:QUOTE_TOP]], False
     known = {p["id"] for p in hits}
@@ -351,6 +382,19 @@ async def run(text: str, requested: date, buyer_id: str) -> dict:
             reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The parsed item '{it['query']}' doesn't match the request: "
                                    f"{what} isn't in the buyer's text. Nothing was ordered.", None,
                                    "Check the request and the parsed items, then retry with the exact wording."))
+    if lost := unassigned_tags(text, request["items"]):  # a stated dietary need no parsed item carries
+        if len(request["items"]) == 1:
+            it = request["items"][0]
+            tags = [t for t, (cl, al) in DIETARY.items() if set(cl) <= set(it["claims"]) and set(al) <= set(it["exclude_allergens"])]
+            request["items"][0] = _item(it["query"], it["amount"], it["unit"], tags + lost)
+        else:
+            reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The request says {', '.join(t.replace('_', '-') for t in lost)}"
+                                   " but it isn't clear which product that applies to. Nothing was ordered.", None,
+                                   "Put the dietary word next to its product, e.g. '20 L lactose-free milk'."))
+    keys = [(i["query"].lower(), i["amount"], (i["unit"] or "").lower()) for i in request["items"]]
+    if len(set(keys)) < len(keys):  # the same line twice would silently double the order
+        reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, "The same item appears more than once in the request. Nothing "
+                               "was ordered.", None, "Send each product once, with the total amount."))
     if not request["items"]:
         reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, "No product could be read from the request.", None,
                                "Say what to order and how much, e.g. '1000 L lactose-free milk'."))

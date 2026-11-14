@@ -236,6 +236,12 @@ class AgentRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str = Field(min_length=1, max_length=2000, examples=["1000 L lactose-free milk for Monday"])
     requested_date: date = Field(examples=["2026-11-16"])
+    @field_validator("text")
+    @classmethod
+    def utf8(cls, t: str) -> str:
+        t.encode("utf-8")  # a lone surrogate ("\ud800") raises here → 422, not a 500 when audited
+        return t
+
     buyer_id: BuyerId | None = Field(default=None, examples=["lapland-kitchen"],
                                      description="Optional; the buyer is the X-Agent-Key's and this must match it.")
 
