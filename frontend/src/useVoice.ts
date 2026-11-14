@@ -90,7 +90,7 @@ export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (
     } catch (err) {
       cleanup()
       const denied = err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'SecurityError')
-      setMessage(denied ? 'The microphone is blocked. You can type instead, or allow it in the browser’s site settings.' : 'Couldn’t start the microphone. You can type instead.')
+      setMessage(null) // the state ('denied' / 'error') says it; VoiceStatus words it in the chef's language
       setState(denied ? 'denied' : 'error')
     }
   }

@@ -58,13 +58,26 @@ A kebab shop ordering döner meat shouldn't be asked "for how many guests". So t
 - **What happens next depends on what was asked.** An order shows the usual answer. A menu shows "A cart for 80 guests, €…". A menu without a guest count asks one thing: "For how many guests?", with the number field right there. The answer goes into the box and the agent reads it again. An unclear request asks for more in plain words.
 - **Navigation is Order · History · Rules · Keys.** There's no separate Menu tab.
 
+## Finnish and English
+- **One switch.** "FI / EN" in the header, defaulting to the browser's language and remembered on the device. The switch names the other language in that language.
+- **Everything the interface says swaps.** All wording lives in `copy.ts` and `copy.fi.ts`, and `i18n.ts` checks at build time that the Finnish module says everything the English one does. Money, dates and stock are also written in each language's style (`1 560,00 €`, `ma 16.11.`).
+- **Some English remains, on purpose.** The chef's own words, and sentences the backend writes in English (Gemini's reasoning, rule source text). Room 1 marks these as "backend English".
+- **Need it sooner?** It sits right under the answer, not below the details. It is always a suggestion, never an order: walk-in at the Helsinki Cash & Carry with today's hours and the number to call, Click & Collect, and the next delivery. The facts are re-said in the chef's language.
+- **Rules versioning.** The screen saves against the version it showed (`If-Match`). If someone changed the rules meanwhile: "Someone changed these rules a moment ago. Here's the latest." The latest rules load, and the chef's text stays in the box.
+
 ## Voice (shell; the transcription endpoint comes from Room 3)
 - **The mic lives in the box.** It sits in the field's corner, which on a phone is right above the main action, in the thumb zone. Hold to talk and let go to send. A quick tap toggles instead (tap again to send), and so do Enter and Space, for anyone who can't hold.
 - **Quiet feedback.** While listening, the mic turns solid accent and a soft ring grows with the live voice level. No waveform art. One line under the box says "Listening… let go to send", then "Thinking…".
 - **The words stay editable.** The transcript lands in the box as normal text and is sent as if typed, so a misheard word is one tap from fixed.
 - **Read-back.** For a request made by voice, the answer's status and headline are spoken ("Your call. 60 euros over the 1,500 euro order limit."). A small "Mute" next to it is remembered on this device.
 - **Asked once, honest about failure.** The first press explains what happens ("Audio is only used to transcribe this request") before the browser asks for the microphone. A blocked or missing microphone says so and points back to typing.
-- **No made-up words in production.** `transcribe()` in `api.ts` is mocked. A production build shows no mic until the real endpoint is switched on with `VITE_VOICE=1`.
+- **No made-up words in production.** `transcribe()` in `api.ts` calls Room 3's `POST /api/voice/transcribe`. A production build shows the mic only when built with `VITE_VOICE=1`.
+
+## Live progress
+- **One changing line under the box, no spinner soup.** It shows what the agent is actually doing, from the backend's stream: "Reading your request…", "Searching Valio's catalogue…", "Checking Valio stock and prices…", "Asking Gemini to double-check each match…", "Placing the order at Valio's front door…" (a menu adds "Turning the menu into ingredients…"). Each step fades up a few pixels.
+- **Readable, not a blur.** Every step stays at least 400 ms, even when the backend sends them milliseconds apart, and the answer waits until the last step has had its moment (about 1 s extra at most). Screen readers hear the start and the answer, not every step.
+- **Safe when the network isn't.** If the stream can't be opened, the plain request runs instead, because the server started nothing. If it breaks midway, it does not retry, because the agent may already have ordered: "The connection dropped before the answer came back. Check History before asking again."
+- **Voice goes straight into the stream,** so the chef sees progress right after speaking.
 
 ## Known gaps
 - Product names come straight from Valio's catalogue ("Valio Eila® 3 % milk drink 1 l lactose free"). Cleaning them up would need a naming pass in the data.

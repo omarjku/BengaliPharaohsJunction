@@ -19,7 +19,8 @@ from pathlib import Path
 
 BASE = next((a for a in sys.argv[1:] if a.startswith("http")), "https://valio-front-door-api.onrender.com").rstrip("/")
 ENV = Path(sys.argv[sys.argv.index("--env") + 1]) if "--env" in sys.argv else Path(__file__).resolve().parents[1] / ".env"
-MILK = "1000 L lactose-free milk for Monday"
+MILK = "20 L lactose-free milk for Monday"  # an everyday amount: the agent asks about unusually large ones
+HELD_QTY = 1200  # cartons via POST /api/orders: over the demo mandate's EUR 1,500 auto-approve limit → held
 results: list[bool] = []
 
 
@@ -113,6 +114,15 @@ def main() -> int:
     check("decision carries a confidence value", isinstance(conf, (int, float)), f"confidence {conf}")
     if not order:
         return finish()
+
+    # The approval path needs a held order: a direct front-door order above the auto-approve limit.
+    pid = (order.get("lines") or [{}])[0].get("product_id") or "463335"
+    status, held = call("POST", "/api/orders", {"requested_date": day, "lines": [{"product_id": pid, "quantity": HELD_QTY}]},
+                        {"X-Agent-Key": agent_key}, timeout=120)
+    check("large direct order is held for a human", status == 200 and isinstance(held, dict)
+          and held.get("status") == "pending_approval", f"HTTP {status}, status {isinstance(held, dict) and held.get('status')}")
+    if status == 200 and isinstance(held, dict) and held.get("order_id"):
+        order = held
 
     status, mine = call("GET", f"/api/orders/{order['order_id']}", headers={"X-Agent-Key": agent_key})
     check("agent reads its own order", status == 200 and isinstance(mine, dict) and mine.get("id") == order["order_id"],

@@ -1,4 +1,5 @@
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react'
+import { useCopy } from './i18n'
 import type { useVoice } from './useVoice'
 
 const HOLD_MS = 300 // shorter than this is a tap (toggle), longer is push-to-talk
@@ -7,6 +8,7 @@ const HOLD_MS = 300 // shorter than this is a tap (toggle), longer is push-to-ta
 export function MicButton({ voice, disabled }: { voice: ReturnType<typeof useVoice>; disabled: boolean }) {
   const pressedAt = useRef(0)
   const listening = voice.state === 'listening'
+  const t = useCopy().UI.voice
 
   function down(e: PointerEvent<HTMLButtonElement>) {
     if (disabled || e.button !== 0) return
@@ -44,7 +46,7 @@ export function MicButton({ voice, disabled }: { voice: ReturnType<typeof useVoi
         voice.levelEl.current = el
       }}
       className={`mic${listening ? ' on' : ''}${voice.state === 'thinking' ? ' busy' : ''}`}
-      aria-label={listening ? 'Stop and send' : 'Order by voice: hold to talk, or press to start and again to send'}
+      aria-label={listening ? t.stop : t.mic}
       aria-pressed={listening}
       disabled={disabled || voice.state === 'thinking'}
       onPointerDown={down}
@@ -63,16 +65,17 @@ export function MicButton({ voice, disabled }: { voice: ReturnType<typeof useVoi
 
 // What the voice is doing, in one quiet line under the box.
 export function VoiceStatus({ voice }: { voice: ReturnType<typeof useVoice> }) {
+  const t = useCopy().UI.voice
   if (voice.state === 'intro')
     return (
-      <div className="voice-note" role="dialog" aria-label="Order by voice">
-        <p>Hold to order by voice. Audio is only used to transcribe this request.</p>
+      <div className="voice-note" role="dialog" aria-label={t.mic}>
+        <p>{t.intro}</p>
         <div className="actions">
           <button type="button" className="btn" onClick={voice.acceptIntro}>
-            Start talking
+            {t.start}
           </button>
           <button type="button" className="btn plain" onClick={voice.dismiss}>
-            Not now
+            {t.notNow}
           </button>
         </div>
       </div>
@@ -80,13 +83,15 @@ export function VoiceStatus({ voice }: { voice: ReturnType<typeof useVoice> }) {
   const line =
     voice.state === 'listening'
       ? voice.mode === 'hold'
-        ? 'Listening… let go to send.'
-        : 'Listening… tap the mic to send.'
+        ? t.hold
+        : t.toggle
       : voice.state === 'thinking'
-        ? 'Thinking…'
-        : (voice.state === 'denied' || voice.state === 'error') && voice.message
-          ? voice.message
-          : null
+        ? t.thinking
+        : voice.state === 'denied'
+          ? t.blocked
+          : voice.state === 'error'
+            ? (voice.message ?? t.failed) // a transcription error carries its own words; a mic failure doesn't
+            : null
   return (
     <p className={`voice-status${voice.state === 'listening' ? ' live' : ''}`} role="status">
       {line}

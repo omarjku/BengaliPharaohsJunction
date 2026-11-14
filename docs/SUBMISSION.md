@@ -12,7 +12,8 @@ The buyer's agent is the visitor, and Valio wants a front door.
 ## Description: short (≈150 words)
 Front Door is the door Valio Aimo could offer to its buyers' own AI agents.
 
-A chef types a need ("1000 L lactose-free milk for Monday") or pastes a menu for 80 guests. Our Gemini
+A kebab shop, café or restaurant types a need into one box, in English or Finnish ("1000 L lactose-free milk for
+Monday", "20 kg döner kebab meat"), or pastes a menu, and the agent asks for the number of guests if needed. Our Gemini
 buyer agent finds the right products, quotes Valio's API live and converts the amounts. It orders on its own only
 when it is sure and within the buyer's rules. Everything else goes to the chef, with reasons and alternatives.
 
@@ -28,12 +29,13 @@ Gartner expects most B2B buying to run through AI agents by 2028. Valio Aimo alr
 customers, but restaurants will bring their own agents, and nothing checks them at the door. **Front Door** is that
 door: the interface and operating model Valio could offer buyers' agents.
 
-**The buyer's agent (Gemini).** A chef types a need or pastes a menu with the number of covers.
+**The buyer's agent (Gemini).** One box for kebab shops, cafés and restaurants, in English or Finnish: an order, or a
+menu (it asks "for how many guests?" when it needs to).
 - Gemini parses it.
 - Our agent searches Valio's full catalogue, quotes the live Valio API (price, stock, cut-off) and converts litres
   and kilos into sales units exactly.
 - The Gemini Decisions API gives a calibrated confidence that each product and quantity is what the chef meant.
-  On 30 labelled cases, our 0.80 threshold ordered no wrong product.
+  On 30 labelled cases, our 0.70 threshold ordered no wrong product.
 - It acts alone only when it is confident and within the buyer's limits. For example, it rejects 5-gram sugar
   sachets for baking and picks caster sugar.
 
@@ -45,6 +47,8 @@ Valio's side and never sent by the agent. It uses fresh quotes.
   short stock (it proposes a split or a substitute), prompt injection.
 - Only a human approves, even from a phone.
 - Every decision is Ed25519-signed and audited for the buyer and for Valio.
+- Urgent in Helsinki? It suggests Valio's Cash & Carry or Click & Collect (about 4 h). These are clearly suggestions;
+  it never places a pickup order.
 
 **Open and honest.**
 - An OpenAPI 3.1 spec and JSON Schemas.
@@ -55,9 +59,7 @@ Valio's side and never sent by the agent. It uses fresh quotes.
 
 Codex was our adversary: 62 findings, 43 fixed, each with a test.
 
-**Optional lines, only if they ship before submission** (add them to both descriptions):
-- One input box: "One box for kebab shops, cafés and restaurants: type an order or paste a menu, and the agent
-  asks for the number of guests when it needs it."
+**Optional line, only if voice ships before submission** (add it to both descriptions):
 - Voice: "Push-to-talk via Gemini Live, so a chef mid-service can order hands-free and the agent catches the order
   cut-off. Valio delivers in about 24 hours on agreed days, so the cut-off is what matters."
 - If voice ships, add "Gemini Live API" to Technologies used.

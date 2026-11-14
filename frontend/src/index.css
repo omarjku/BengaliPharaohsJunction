@@ -290,6 +290,9 @@ main.roomy { padding-block-start: 96px; }
 .guests-input::-webkit-inner-spin-button, .guests-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .guests-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
 
+.link.lang { font-weight: 600; letter-spacing: 0.02em; color: var(--ink-2); }
+.urgent-row a { text-decoration: underline; text-underline-offset: 2px; }
+
 /* --- Voice: a mic in the box's corner (right above the main action on a phone, in the thumb zone). */
 .ask-box { position: relative; }
 .ask-field.with-mic { padding-inline-end: 64px; }
@@ -318,6 +321,12 @@ main.roomy { padding-block-start: 96px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .mic.on { box-shadow: 0 0 0 calc(4px + var(--level) * 12px) rgba(11, 92, 173, 0.16); transition: none; }
+}
+
+/* Live progress: one line that changes, each step fading up a few pixels. */
+.phase {
+  transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out);
+  @starting-style { opacity: 0; transform: translateY(4px); }
 }
 
 /* --- Messages. */

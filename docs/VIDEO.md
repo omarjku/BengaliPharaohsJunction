@@ -29,10 +29,10 @@ ordered") on dark title cards. One display font, one text font.
 | 5 | 0:36–0:50 | UI: "1500 L …" → amber "Needs your OK", €2,100 over the limit. Cut to the **phone** (390 px): Keys set to the approver → Approve → confirmed | "Make it 1,500 litres: over the limit and over the per-line cap. The door holds it. The agent's key can't approve. The chef can, from a phone." | Over €1,500 and €2,000 cap → held · only a human approves | 14 s |
 | 6 | 0:50–0:58 | UI: "10 kg sugar for baking for Monday" → open "Other options": sachets below 0.5, caster sugar ≈0.9 | "Gemini also doubts. Five-gram sugar sachets for baking? Under half. Caster sugar? Sure." | Gemini doubts the sachets: < 0.5 | 8 s |
 | 7 | 0:58–1:08 | UI: "60 L Arla lactose-free whole milk drink for Monday" → nothing ordered, the cut-off and unknown-stock reasons, then the substitutes list | "Valio's data says available Monday, but the cut-off passed Thursday, and 999999 means unknown, not unlimited. So it asks, and offers milks that can still arrive." | Cut-off passed · stock unknown → 3 substitutes | 10 s |
-| 8 | 1:08–1:14 | UI: short-stock split, "Valio can cover it with 2 products" → Use this order. **Only if a live run shows it on the day; otherwise cut this shot and give its 6 s to shot 9** | "Short on stock? It proposes a split, and the chef decides." | Split across 2 products · chef decides | 6 s |
-| 9 | 1:14–1:26 | UI: menu tab, paste "Sautéed reindeer with mashed potatoes and lingonberries; lingonberry cheesecake", 80 covers → cart with per-dish assumptions and doubted lines highlighted | "Or paste tonight's menu for 80. Gemini turns it into a cart, with every assumption on show, and flags the lines to check. A menu never orders on its own." | Menu → cart · assumptions shown · always asks | 12 s |
+| 8 | 1:08–1:14 | UI as `helsinki-bistro`: "5 kg butter ASAP" → the urgent suggestions: Cash & Carry walk-in, Click & Collect in about 4 h, each marked as a suggestion | "Need it today in Helsinki? It points you to Valio's Cash & Carry or Click & Collect. Suggestions only, never an order." | Helsinki: pickup suggested · never ordered | 6 s |
+| 9 | 1:14–1:26 | The **one input box**: quick cuts of "20 kg döner kebab meat for the rotisserie" → Well Kebab beef kebab meat; "100 litraa laktoositonta maitoa maanantaiksi" → understood; then paste "Reindeer with mash and lingonberries; lingonberry cheesecake" → "For how many guests?" → "80" → cart with assumptions and doubted lines | "One box for a kebab shop, a café or a restaurant, in English or Finnish. Paste a menu and it asks how many guests, then builds the cart with every assumption on show. A menu never orders on its own." | One box · order or menu · suomeksi too | 12 s |
 | 10 | 1:26–1:38 | Three quick cuts: (a) an order response's `signature` + `POST /api/verify` → `valid: true`; (b) the History/audit view; (c) Claude Desktop using the MCP tools to place an order | "Every decision is signed and audited, for the buyer and for Valio. And any agent can plug in: here's Claude ordering through the same door, over MCP." | Signed · audited · any agent via MCP | 12 s |
-| 11 | 1:38–1:44 | Dark card: the eval table, animated (30 cases, 0 wrong autos at 0.80) | "Gemini's calibrated confidence decides when the agent may act alone. On 30 labelled cases, no wrong order at our threshold." | Gemini Decisions · 30 cases · 0 wrong autos at 0.80 | 6 s |
+| 11 | 1:38–1:44 | Dark card: the eval table, animated (30 cases, 0 wrong autos at 0.70) | "Gemini's calibrated confidence decides when the agent may act alone. On 30 labelled cases, no wrong order at our threshold." | Gemini Decisions · 30 cases · 0 wrong autos at 0.70 | 6 s |
 | 12 | 1:44–1:49 | Dark card: "Codex: 9 reviews · 62 findings · 43 fixed" | "Codex was our adversary: sixty-two findings, forty-three fixed, each with a test." | Codex: 62 findings · 43 fixed | 5 s |
 | 13 | 1:49–1:55 | End card: "Front Door", the pitch line, repo URL, "Built at Junction 2026" (hold for at least 3 s) | "Any agent can visit. Only the right orders get in." | github.com/omarjku/BengaliPharaohsJunction | 6 s |
 
@@ -58,8 +58,8 @@ Set up before recording:
 | 4 | Approve on the phone (shot 5b) | phone 390 px | Keys tab → approver key → Order → Approve. Keep the finger tap visible |
 | 5 | 10 kg sugar for baking (shot 6) | desktop | Expand "Other options" to show both scores; put the exact numbers from that take in the caption |
 | 6 | 60 L Arla trap (shot 7) | desktop | Scroll slowly to the substitutes |
-| 7 | Short-stock split (shot 8) | desktop | Try a low-stock product first (e.g. 462775 Arla Milkdrink, 51 in stock in the API notes). Skip it if no split appears |
-| 8 | Menu for 80 (shot 9) | desktop | Gemini takes about 20–40 s, so speed up the wait 4× in the edit |
+| 7 | Urgent pickup as `helsinki-bistro` (shot 8) | desktop | Use that buyer's keys in the Keys tab; "5 kg butter ASAP" |
+| 8 | One box: kebab, Finnish milk, menu → "For how many guests?" → 80 (shot 9) | desktop | The menu run takes about 20–40 s; speed up the wait 4× in the edit |
 | 9 | Signed statement + `/api/verify` (shot 10a) | terminal at 1920×1080, large font | `curl` the order response, then `POST /api/verify` → `valid: true` |
 | 10 | History/audit view (shot 10b) | desktop | |
 | 11 | Claude Desktop + MCP (shot 10c) | desktop | `mcp/README.md` config; ask "Order 100 L lactose-free milk from Valio for Monday" |
@@ -68,17 +68,11 @@ Set up before recording:
 **Fallback:** if RAEA breaks, cut the same takes in CapCut with the same captions. Run `raea check` (or a manual
 check) for clipped text, contrast and loudness, then time the result at 1:55 or less before uploading as Public.
 
-## Variants: if the one input box and voice land
+## Variants: if voice lands
 
-Plan for both, decide on the day, and keep the total at 1:55 or less. Each variant replaces existing shots
-rather than adding time.
-
-**One input box** (`/api/agent/ask` routes an order or a menu, and asks "for how many guests?" when needed). This
-replaces the separate menu tab in shot 9:
-- Same box, type "Reindeer with mash and lingonberries; lingonberry cheesecake" → the agent asks "For how many
-  guests?" → "80" → cart.
-- Voiceover: "Same box for a kebab shop, a café or a restaurant. Paste a menu and it asks how many guests."
-- Caption: "One box · order or menu".
+The one input box and urgent pickup are live, and are now the default shots 8 and 9. The short-stock split
+moved to the deck (slide 6) and the pitch. Voice is still "if it lands": it replaces an existing shot, so the total
+stays at 1:55 or less.
 
 **Voice** (push-to-talk via Gemini Live). Replaces shot 6 (the sugar, 8 s), and the sugar moves to the deck:
 
