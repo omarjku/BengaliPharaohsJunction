@@ -57,3 +57,4 @@ Raw responses: `data/api-samples/sample_1311.json` (git-ignored; ask Omar).
 
 **Refuted**
 - "VALO supplier-direct products = Terminal": **not supported.** Big-manufacturer vendors split 57 Terminal / 25 Stock / 18 undeliverable, similar to other vendors.
+- **Stock products can report `availableAmount` 9999999999** (effectively unlimited), a second sentinel besides Terminal's 999999 (= unknown). `backend/app/valio.py` treats 999999 as unknown and keeps 9999999999 as a (very large) known amount.
