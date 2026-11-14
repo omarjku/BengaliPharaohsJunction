@@ -531,6 +531,10 @@ export const UI = {
       sent: 'Lähetetty Valiolle', needed: 'Tarvitsi hyväksyntäsi',
     },
   },
+  kitchen: {
+    signedIn: (name: string) => `Kirjautuneena: ${name}`,
+    switch: 'Vaihda keittiö',
+  },
   conv: {
     field: 'Viesti agentille',
     placeholder: 'Pyydä tilausta tai liitä menu',
