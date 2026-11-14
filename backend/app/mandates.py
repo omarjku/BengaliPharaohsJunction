@@ -149,6 +149,7 @@ def confidence_threshold(buyer_id: str) -> float:
 # mandate. Persona: Valio's brief orders 1,000 L of milk at once, so the demo buyer is a resort's central kitchen.
 _KITCHENS = {"lapland-kitchen": "the central kitchen of a Lapland ski resort: hotel restaurants and catering, about "
                                 "1,500 meals a day in season, ordering a week of supplies at a time"}
+_KITCHENS["smoke-kitchen"] = _KITCHENS["lapland-kitchen"]  # the smoke buyer mirrors the demo kitchen, facts included
 _KITCHENS["helsinki-bistro"] = "a bistro in central Helsinki, about 120 covers a day, ordering every couple of days"
 DEFAULT_KITCHEN = "a professional restaurant kitchen, about 100 covers a day, ordering a few days of supplies at a time"
 

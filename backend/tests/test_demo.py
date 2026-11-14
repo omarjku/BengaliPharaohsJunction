@@ -85,3 +85,5 @@ def test_smoke_buyer_has_the_demo_rules_but_its_own_budget():
     assert isinstance(smoke, Mandate) and smoke.buyer_id == "smoke-kitchen" and smoke.id != demo.id
     assert smoke.hard_rules == demo.hard_rules and smoke.weekly_budget_cents == demo.weekly_budget_cents
     assert mandates.confidence_threshold("smoke-kitchen") == mandates.confidence_threshold("lapland-kitchen")
+    assert mandates.kitchen("smoke-kitchen") == mandates.kitchen("lapland-kitchen")  # the size guard judges it the same
+    assert "bistro" in mandates.kitchen("helsinki-bistro") and mandates.kitchen("unknown") == mandates.DEFAULT_KITCHEN
