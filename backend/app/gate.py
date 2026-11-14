@@ -247,21 +247,25 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
                          required_claim=claim))
 
     al = cat.get("allergens") or {}
+    contains = al.get("contains") or []
+    may_contain = al.get("may_contain") or []
+    free_from = al.get("free_from") or []
     for code in sorted(excluded):
-        word = _name_says(cat, code) if code not in al.get("contains", []) + al.get("free_from", []) else None
-        if code in al.get("contains", []):
+        word = _name_says(cat, code) if code not in contains + free_from else None
+        if code in contains:
             rs.append(_r(C.ALLERGEN_CONTAINS, DECLINE, f"{name} contains {catalogue.ALLERGEN_NAMES.get(code, code)}, "
                          "which your mandate excludes.", pid, "Pick an alternative without it.", allergen=code))
         elif word:  # allergen data doesn't list it, but the name does: refuse, no signature can override that
             rs.append(_r(C.ALLERGEN_CONTAINS, DECLINE, f"Name says {word}; your rules exclude "
                          f"{catalogue.ALLERGEN_NAMES.get(code, code)} ({name}).", pid,
                          "Pick an alternative whose label rules it out.", allergen=code, source="product_name", word=word))
-        elif code in al.get("may_contain", []):  # (name hits were refused above)
+        elif code in may_contain:  # (name hits were refused above)
             rs.append(_r(C.ALLERGEN_MAY_CONTAIN, ASK, f"{name} may contain {catalogue.ALLERGEN_NAMES.get(code, code)}.",
                          pid, "Approve if traces are acceptable, or pick an alternative.", allergen=code))
-    if excluded and not any(al.get(k) for k in ("contains", "may_contain", "free_from")):
-        rs.append(_unknown(m.uncertainty_policy, C.ALLERGEN_DATA_MISSING, f"{name} has no allergen data, so your "
-                           "allergen rules can't be verified.", pid, "Check the label, or pick a product with allergen data."))
+        elif code not in free_from and not contains:
+            rs.append(_unknown(m.uncertainty_policy, C.ALLERGEN_DATA_MISSING, f"{name} has no allergen data for "
+                               f"{catalogue.ALLERGEN_NAMES.get(code, code)}, so your rule can't be verified.", pid,
+                               "Check the label, or pick a product with allergen data.", allergen=code))
 
     for floor in _nums(m, RuleKind.MIN_DELIVERY_RELIABILITY):
         rel = cat.get("delivery_reliability")
