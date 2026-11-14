@@ -137,11 +137,40 @@ def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict
                 out["question"] = ("Which one did you mean: " + "; ".join(f"{n}) {x}" for n, x in enumerate(names, 1))
                                    + "? Or say it more precisely.")
     out["conversation_id"] = None
+    when = out.get("requested_date") or (requested and requested.isoformat())
     if kind and out.get("question"):
-        out["conversation_id"] = conversation.save(buyer_id, kind, {
-            "text": text, "requested": out.get("requested_date") or (requested and requested.isoformat()), **state})
+        out["conversation_id"] = conversation.save(buyer_id, kind, {"text": text, "requested": when, **state})
+    if out.get("request") and out.get("held_items") is not None:
+        out["next_steps"] = _next_steps(out, text, when, buyer_id)
+        if not out.get("question") and out["next_steps"]:  # a multi-line order: the first held line's question leads
+            out["question"], out["conversation_id"] = out["next_steps"][0]["question"], out["next_steps"][0]["conversation_id"]
     out["speak"] = conversation.speak(out, conversation.language(text))
     return out
+
+
+def _next_steps(out: dict, text: str, when: str | None, buyer_id: str) -> list[dict]:
+    """One answerable next step per HELD line of an order (Room 2: in a multi-line list, a held 'cream' had none):
+    'How much X?', 'Which X: 1) .. 2) ..?', or 'What should I look for instead?'. Each has its own conversation_id,
+    and an answer re-runs only that line (the lines already ordered are not sent again)."""
+    steps = []
+    for n in out["held_items"]:
+        it = out["request"]["items"][n]
+        lines = [ln for ln in out.get("lines", []) if ln.get("item") == n]
+        names = _options(lines)
+        if it["amount"] is None and lines:
+            kind, question = "amount", f"How much {it['query']}?"
+        elif names:
+            kind, question = "clarify", (f"Which {it['query']} did you mean: "
+                                         + "; ".join(f"{k}) {x}" for k, x in enumerate(names, 1)) + "? Or say it more precisely.")
+        else:
+            kind, question = "clarify", f"Valio doesn't seem to stock '{it['query']}'. What should I look for instead?"
+        cid = conversation.save(buyer_id, kind, {"text": text, "requested": when, "request": out["request"], "item": n,
+                                                 "options": names, "line_only": True})
+        why = [r["message"] for r in (out.get("decision") or {}).get("reasons", [])
+               if r["severity"] != "INFO" and r.get("product_id") in {(ln.get("product") or {}).get("id") for ln in lines}]
+        steps.append({"item": n, "query": it["query"], "kind": "amount" if kind == "amount" else "which",
+                      "question": question, "options": names, "conversation_id": cid, "why": why[:3]})
+    return steps
 
 
 _PACK = re.compile(r"\b\d[\d,.]*\s*(?:x\s*\d[\d,.]*\s*)?(?:l|dl|cl|ml|kg|g|pcs|kpl)\b|\b\d+\s*x\b", re.I)
@@ -168,7 +197,7 @@ async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, d
 
     def again(question: str, fix: str) -> dict:  # couldn't read the answer: ask the same thing again
         out = _ask("order", entry.get("covers"), requested, None, question, C.QTY_AMBIGUOUS, fix, kind)
-        out["_state"] = {k: entry[k] for k in ("request", "item", "options") if k in entry}
+        out["_state"] = {k: entry[k] for k in ("request", "item", "options", "line_only") if k in entry}
         return out
 
     today = datetime.now(TZ).date()
@@ -201,6 +230,12 @@ async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, d
         choice = options[pick - 1] if pick and pick <= len(options) else answer.strip()
         if not choice:
             return again("Which one did you mean?", "Say the number of the option, or the product."), text, requested
+        if entry.get("line_only"):  # one held line of a list: only that line runs again, as the chosen product
+            item = dict(entry["request"]["items"][entry["item"]], query=choice[:120], source="")
+            amount = f"{item['amount']:g} {item['unit']} " if item.get("amount") is not None and item.get("unit") else ""
+            merged = f"{amount}{choice}"  # only this line: the other lines' text would read as unparsed (guard)
+            one = {**entry["request"], "items": [item]}
+            return await _flow(merged, requested, buyer_id, parsed=(one, True)), merged, requested
         merged = f"{text} ({choice})"  # same clause: the amount the chef gave stays with the product
         return await _flow(merged, requested, buyer_id), merged, requested
     # amount: only the asked item's amount and unit change; the stored parse, buyer and mandate stay
@@ -212,6 +247,8 @@ async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, d
                      "a unit."), text, requested
     item["amount"], item["unit"] = got
     merged = f"{text}. {got[0]:g} {got[1]} {item['query']}"  # grounding finds amount + unit + product in one clause
+    if entry.get("line_only"):  # one held line of a list: the lines already ordered are not sent again
+        request, merged = {**request, "items": [item]}, f"{got[0]:g} {got[1]} {item['query']}"
     return await _flow(merged, requested, buyer_id, parsed=(request, True)), merged, requested
 
 
