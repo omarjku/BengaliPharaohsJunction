@@ -14,7 +14,7 @@ c = TestClient(app, raise_server_exceptions=False)
 
 
 def route(monkeypatch, intent, covers=None, items=ITEM, dishes=(PORRIDGE,), ranked=("463335",)):
-    async def fake(system, prompt, schema):
+    async def fake(system, prompt, schema, *_):
         if schema is ask._INTENT_SCHEMA:
             return {"intent": intent, "covers": covers}
         if schema is agent._PARSE_SCHEMA:
@@ -345,9 +345,9 @@ def test_menu_skips_the_order_parse_and_streams_each_ingredient(shop1, monkeypat
     seen = []
     real = agent._gemini
 
-    async def spy(system, prompt, schema):
+    async def spy(system, prompt, schema, *_):
         seen.append(schema)
-        return await real(system, prompt, schema)
+        return await real(system, prompt, schema, *_)
     monkeypatch.setattr(agent, "_gemini", spy)
     r = c.post("/api/agent/ask/stream", json={"text": "Menu for 10 guests: porridge with milk and cream",
                                               "requested_date": REQ.isoformat()}, headers={"X-Agent-Key": "agent-lk"})

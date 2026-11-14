@@ -57,7 +57,7 @@ def gemini(monkeypatch, items=None, ranked=None):
     """Fake Gemini: parse → items (None = Gemini down); candidates → ranked ids (the matcher)."""
     calls = []
 
-    async def fake(system, prompt, schema):
+    async def fake(system, prompt, schema, *_):
         assert "untrusted" in system and schema is agent._PARSE_SCHEMA
         assert "<buyer_request>" in prompt  # chef text only inside the delimiters
         calls.append(prompt)

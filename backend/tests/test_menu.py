@@ -17,7 +17,7 @@ RANKS = {"milk": ["463335"], "butter": ["102"]}
 
 
 def fake_gemini(monkeypatch, dishes):
-    async def fake(system, prompt, schema):
+    async def fake(system, prompt, schema, *_):
         if schema is menu._MENU_SCHEMA:
             assert "<buyer_request>" in prompt and "untrusted" in system
             return None if dishes is None else {"dishes": dishes}

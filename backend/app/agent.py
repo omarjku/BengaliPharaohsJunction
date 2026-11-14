@@ -115,13 +115,14 @@ def _slots() -> asyncio.Semaphore:
     return _HTTP[2]
 
 
-async def _gemini(system: str, prompt: str, schema: dict) -> dict | None:
+async def _gemini(system: str, prompt: str, schema: dict, thinking: dict | None = None) -> dict | None:
     """One structured-output call. None on no key / any failure (never raises, never logs the key)."""
     if not config.GEMINI_API_KEY:
         return None
     body = {"systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"responseMimeType": "application/json", "responseSchema": schema, "temperature": 0}}
+            "generationConfig": {"responseMimeType": "application/json", "responseSchema": schema, "temperature": 0}
+            | ({"thinkingConfig": thinking} if thinking else {})}
     try:
         r = await _http().post(f"{GEMINI_URL}/{config.GEMINI_MODEL}:generateContent",
                                headers={"x-goog-api-key": config.GEMINI_API_KEY}, json=body)

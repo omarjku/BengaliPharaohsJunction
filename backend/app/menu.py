@@ -147,7 +147,9 @@ async def check_assumption(dish: str, ingredient: str, per_cover, unit, text: st
 
 
 async def parse_menu(menu_text: str) -> list[dict] | None:
-    out = await agent._gemini(MENU_PROMPT, agent._wrap(menu_text), _MENU_SCHEMA)
+    # thinkingBudget 0: 4.8-6.1 s instead of 6.8-8.0 s, same ingredients (measured, room3-menu-speed); every
+    # assumption is still checked by Gemini Decisions afterwards
+    out = await agent._gemini(MENU_PROMPT, agent._wrap(menu_text), _MENU_SCHEMA, {"thinkingBudget": 0})
     if not out or not isinstance(out.get("dishes"), list):
         return None
     return [{"name": str(d.get("name") or "").strip(), "ingredients": [dict(i) for i in d.get("ingredients") or []
