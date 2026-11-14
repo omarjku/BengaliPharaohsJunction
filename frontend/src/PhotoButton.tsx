@@ -69,6 +69,7 @@ export function PhotoButton({ disabled, onRead, variant = 'label' }: { disabled:
               </p>
             )}
             {unreadable.length > 0 && <p className="quiet small photo-unreadable">{t.unreadable(unreadable.join(', '))}</p>}
+            {(read?.suspicious || (read?.ignored_instructions?.length ?? 0) > 0) && <p className="small photo-unreadable">{t.ignored}</p>}
             {error && <p className="photo-error">{error}</p>}
           </div>
           {variant === 'icon' && !busy && (
