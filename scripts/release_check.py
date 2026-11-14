@@ -163,12 +163,12 @@ def main() -> int:
 
     print("\n-- ordering (QA A-01, A-07, A-19, N1)")
     q = random.randint(12, 29)
-    s, r = ask(f"{q} L lactose-free milk for Monday")
+    s, r = ask(f"{q} L lactose-free milk for Monday, order again")  # "again": reruns never hit the duplicate guard
     ok = s == 200 and order_of(r) and order_of(r)["status"] in ("confirmed", "pending_approval")
     record("milk, English: ordered, not coffee milk", bool(ok) and "coffee" not in names(r).lower(),
            f"{q} L → {names(r) if s == 200 else s}, {order_of(r) and order_of(r)['status']}")
     q = random.randint(31, 49)
-    s, r = ask(f"{q} litraa laktoositonta maitoa maanantaiksi")
+    s, r = ask(f"{q} litraa laktoositonta maitoa maanantaiksi, tilaa uudelleen")
     ok = s == 200 and order_of(r) and order_of(r)["status"] in ("confirmed", "pending_approval")
     record("milk, Finnish: ordered, not coffee milk", bool(ok) and "kahvi" not in names(r).lower()
            and "coffee" not in names(r).lower(), f"{q} L → {names(r) if s == 200 else s}")
@@ -219,7 +219,7 @@ def main() -> int:
     s, r = ask("Menu for 30 guests on Monday: salmon soup")
     record("menu with guests: cart, ASK_HUMAN", s == 200 and r.get("intent") == "menu"
            and (r.get("decision") or {}).get("outcome") == "ASK_HUMAN", f"{len(r.get('lines') or [])} lines")
-    s, r = ask("lactose-free milk for Monday")
+    s, r = ask("lactose-free milk for Monday, order again")
     cid = r.get("conversation_id") if isinstance(r, dict) else None
     record("order without an amount: asks how much", s == 200 and bool(cid) and not order_of(r),
            str((r or {}).get("question"))[:60])
@@ -231,8 +231,8 @@ def main() -> int:
 
     print("\n-- duplicate warning (QA CO-01)")
     q = random.randint(51, 69)
-    ask(f"{q} L lactose-free milk for Monday")
-    s, r = ask(f"{q} L lactose-free milk for Monday")
+    ask(f"{q} L lactose-free milk for Monday, order again")  # always orders...
+    s, r = ask(f"{q} L lactose-free milk for Monday")          # ...so this identical one must be asked
     dup = any("ago" in x.get("message", "") and "again" in x.get("message", "").lower()
               for x in (r.get("decision") or {}).get("reasons", [])) if isinstance(r, dict) else False
     record("same order twice: asks 'order again?', nothing ordered", s == 200 and dup and not order_of(r))

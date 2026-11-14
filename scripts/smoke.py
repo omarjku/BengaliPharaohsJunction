@@ -20,9 +20,10 @@ from pathlib import Path
 
 BASE = next((a for a in sys.argv[1:] if a.startswith("http")), "https://valio-front-door-api.onrender.com").rstrip("/")
 ENV = Path(sys.argv[sys.argv.index("--env") + 1]) if "--env" in sys.argv else Path(__file__).resolve().parents[1] / ".env"
-# An everyday amount (the agent asks about unusually large ones), varied per run: an identical order within 30
-# minutes gets the duplicate question instead of an order, which the run checks on purpose below.
+# An everyday amount (the agent asks about unusually large ones). The first run says "order again", which the
+# 30-minute duplicate guard accepts, so reruns always order; the second, identical but without it, must be asked.
 MILK = f"{random.randint(12, 39)} L lactose-free milk for Monday"
+MILK_AGAIN = MILK + ", order again"
 HELD_QTY = 1200  # cartons via POST /api/orders: over the demo mandate's EUR 1,500 auto-approve limit → held
 results: list[bool] = []
 
@@ -107,7 +108,7 @@ def main() -> int:
         check(f"no key → 401: {method} {path.replace('00000000-0000-4000-8000-000000000000', '{id}')}",
               status == 401, f"HTTP {status}")
 
-    status, run = call("POST", "/api/agent/run", {"text": MILK, "requested_date": day}, {"X-Agent-Key": agent_key},
+    status, run = call("POST", "/api/agent/run", {"text": MILK_AGAIN, "requested_date": day}, {"X-Agent-Key": agent_key},
                        timeout=180)
     order = run.get("order") if isinstance(run, dict) else None
     conf = (run.get("decision") or {}).get("confidence") if isinstance(run, dict) else None
