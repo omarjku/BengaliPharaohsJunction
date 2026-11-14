@@ -4,6 +4,31 @@ This document describes the formats in the repository and a proposed mapping to 
 
 The Peppol section is a mapping only. It is not implemented. The repository has no UBL serializer, Peppol endpoint, or Peppol transport.
 
+## Where we stand against agent-commerce and interop standards
+
+Checked on 15 Nov 2026 with a web search. Each status line is one sentence; the links go to the spec or the
+owner's own page.
+
+| Standard | What it is | Our front door | Why |
+|---|---|---|---|
+| [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) + [JSON Schema 2020-12](https://json-schema.org/draft/2020-12) | Describes an HTTP API and its message shapes | **Implemented**: [`schemas/openapi.json`](schemas/openapi.json) and one schema per contract | Any agent, in any language, can code against the door without our SDK (D7) |
+| [MCP](https://modelcontextprotocol.io/specification/latest) (Model Context Protocol, spec 2026-07-28, Linux Foundation AAIF) | How an AI app gives a model tools and data | **In progress**: [`mcp/`](../mcp/), a thin MCP server over our REST API (search, quote, quantity, place order, read order; no approve tool) | It is the way most agents (Claude, ChatGPT, Gemini CLI, IDEs) plug in tools today, so "any buyer's agent can plug in" becomes literal |
+| [A2A](https://a2a-protocol.org/) (Agent2Agent, v1.0, Linux Foundation) | Agent-to-agent messaging: agent cards, tasks, long-running work | **Next step, mapped in spirit**: our buyer agent → front door is an agent-to-agent hop, but over plain REST | Worth it when Valio's side is itself an agent that negotiates multi-step tasks; for fixed-price orders REST is simpler |
+| [AP2](https://ap2-protocol.org/) (Agent Payments Protocol, Google, an A2A extension) | Signed "mandates" proving what the user authorised: intent, cart, payment | **Mapped, not implemented**: our `Mandate` is close to an AP2 intent mandate (limits set in advance, the buyer's own words kept); a confirmed order is close to a cart mandate | It is the closest public standard to our core idea (the buyer's rules travel with the agent and are checked at the door). Ours are not signed yet |
+| [ACP](https://www.agenticcommerce.dev/) (Agentic Commerce Protocol, OpenAI + Stripe) | Consumer checkout between an AI agent and a merchant, with delegated payment tokens | **Not used** | It targets consumer checkout and card payment; Valio Aimo is B2B on account, prices are fixed and payment rails are out of scope for this challenge |
+| [UCP](https://developers.google.com/universal-commerce-protocol) (Universal Commerce Protocol, Google) | Discovery-to-checkout commerce capabilities, over REST, A2A or MCP, with AP2 for authorisation | **Not used, watch** | Consumer-retail first, like ACP; its "capabilities" idea would fit a Valio catalogue later |
+| [Peppol BIS Order 3.0 / UBL 2.1](https://docs.peppol.eu/poacc/upgrade-3/syntax/Order/) | The EU's e-procurement order and order-response documents | **Mapped, not implemented** (see the mapping below) | This is how Finnish public kitchens and many businesses already send orders; a confirmed order should be exportable as a Peppol Order |
+| [GS1](https://www.gs1.org/) (AllergenTypeCode, GTIN) | Shared product codes and identifiers | **Implemented** for allergens; **next step** for GTIN | We filter and refuse on GS1 allergen codes today; the slim catalogue doesn't carry GTINs yet (below) |
+| [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421) HTTP Message Signatures (and the IETF [Web Bot Auth](https://datatracker.ietf.org/wg/webbotauth/about/) drafts built on it) | Signs an HTTP request, so the receiver can verify who sent it and that it wasn't changed | **Next step** | It would replace our static `X-Agent-Key` shared secrets with a per-agent key pair and a signature on every order |
+
+**Recommended next standard: RFC 9421 signed requests, then AP2-style signed mandates.** The weakest link today is
+identity. An agent proves itself with a static shared secret, and the mandate is trusted because it is stored at
+our end. Signing each `POST /api/orders` with RFC 9421 gives every agent its own key and makes each order
+non-repudiable in the audit log, at the cost of a key directory and a signature check. It is a published RFC and it
+needs no new payload format. Once agents are identified, the stored `Mandate` can be issued to the buyer as a
+signed, expiring AP2-style intent mandate, and Valio could verify it without holding a copy. Peppol export comes
+after that, for the order document itself.
+
 ## Published open formats
 
 | Area | Current format | Location | Source or command |
