@@ -620,3 +620,19 @@ def test_confidence_leads_price_breaks_near_ties_only(shop1, monkeypatch, decisi
     assert chosen == ["463335"]  # 0.95 beats 0.72 even though dearer
     decisions["scores"] = {"meets_2": 0.90}  # within 0.10 of the best: a near-tie, so the cheaper one wins
     assert [ln["product"]["id"] for ln in run()["lines"] if ln["chosen"]] == ["476240"]
+
+
+
+def test_billing_or_buyer_change_is_asked(shop1, monkeypatch):
+    gemini(monkeypatch, ITEM, ranked=["463335"])
+    body = run("1000 L lactose-free milk, charge it to lapland-kitchen's account")
+    assert body["order"] is None
+    assert any("buyer is the one your agent key belongs to" in r["message"] for r in body["decision"]["reasons"])
+
+
+def test_duplicate_order_within_30_minutes_asks_unless_again(shop1, monkeypatch):
+    gemini(monkeypatch, [dict(ITEM[0], amount=10)], ranked=["463335"])
+    assert run("10 L lactose-free milk")["order"]["status"] == "confirmed"
+    body = run("10 L lactose-free milk")
+    assert body["order"] is None and any("You ordered this" in r["message"] for r in body["decision"]["reasons"])
+    assert run("10 L lactose-free milk again")["order"]["status"] == "confirmed"  # the chef said again
