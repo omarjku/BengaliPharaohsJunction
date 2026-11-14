@@ -24,7 +24,8 @@ TZ = ZoneInfo("Europe/Helsinki")
 log = logging.getLogger(__name__)
 INTENT_PROMPT = agent.UNTRUSTED + """
 You route a food buyer's message for a wholesaler's ordering agent. Classify it:
-- "order": a list of products to buy (e.g. "20 kg döner kebab meat", "milk and 30 croissants for tomorrow").
+- "order": one or more products to buy, WITH OR WITHOUT an amount (e.g. "20 kg döner kebab meat", "milk and 30
+  croissants for tomorrow", "gluten-free pizza", "cream"). A product name alone is an order; the agent asks how much.
 - "menu": dishes to cook, usually for a number of guests (e.g. "Menu for 80 guests: reindeer stew, cheesecake").
 - "unclear": neither, or you can't tell.
 covers: the number of guests/people/portions if the message states one, else null. Never estimate it."""
@@ -193,7 +194,7 @@ async def _flow(text: str, requested: date | None, buyer_id: str, covers: int | 
     # Menu markers always route to the menu path (classify), so its parse starts now and the order parse is skipped
     # (room3-menu-speed: the unused order parse used to block the menu parse for ~8 s).
     menu_first = given_parse is None and bool(given_covers is not None or _COVERS.search(text) or _MENU_WORD.search(text))
-    dishes = asyncio.create_task(menu.parse_menu(text)) if menu_first else None
+    dishes = asyncio.create_task(menu.parse_menu(text, buyer_id)) if menu_first else None
     try:
         return await _route(text, requested, buyer_id, today, stated, guess, t0, given_covers, given_parse, dishes)
     finally:

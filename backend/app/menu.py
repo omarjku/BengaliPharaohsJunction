@@ -18,7 +18,7 @@ from trade_contracts import AuditEntry, AuditInput, Mandate, PurchaseRequest, Re
 from trade_contracts import ReasonCode as C
 from trade_contracts.common import Channel, RuleKind
 
-from . import agent, catalogue, gate, mandates, orders, quantity, valio, progress
+from . import agent, catalogue, gate, mandates, orders, profile, progress, quantity, valio
 
 MAX_INGREDIENTS = 20
 MAX_DISHES, MAX_PER_DISH = 12, 15  # bound what a (possibly steered) menu parse can make the agent check and price
@@ -146,10 +146,19 @@ async def check_assumption(dish: str, ingredient: str, per_cover, unit, text: st
     return None if None in ys else min(ys)
 
 
-async def parse_menu(menu_text: str) -> list[dict] | None:
+async def parse_menu(menu_text: str, buyer_id: str | None = None) -> list[dict] | None:
+    # The kitchen's standing needs (buyer profile) shape the recipe: a gluten-free kitchen's pizza uses gluten-free
+    # flour, not wheat flour. Only when the menu itself says nothing about diet; it comes from our own data, never
+    # from the buyer's text.
+    system = MENU_PROMPT
+    low = menu_text.lower()
+    if buyer_id and not any(w in low for w in agent._WORDS) and not agent._PLAIN.search(low):
+        if needs := [t.replace("_", "-") for t, _ in profile.dietary(buyer_id)]:
+            system += (f"\nThis kitchen's standing dietary needs (from its profile): {', '.join(needs)}. Choose "
+                       "ingredients that fit them (e.g. gluten-free flour instead of wheat flour).")
     # thinkingBudget 0: 4.8-6.1 s instead of 6.8-8.0 s, same ingredients (measured, room3-menu-speed); every
     # assumption is still checked by Gemini Decisions afterwards
-    out = await agent._gemini(MENU_PROMPT, agent._wrap(menu_text), _MENU_SCHEMA, {"thinkingBudget": 0})
+    out = await agent._gemini(system, agent._wrap(menu_text), _MENU_SCHEMA, {"thinkingBudget": 0})
     if not out or not isinstance(out.get("dishes"), list):
         return None
     return [{"name": str(d.get("name") or "").strip(), "ingredients": [dict(i) for i in d.get("ingredients") or []
@@ -177,7 +186,7 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
     excluded = set().union(*(gate._allergen_codes(str(v)) for v in gate._rules(m, RuleKind.EXCLUDED_ALLERGEN)))
 
     progress.phase("planning")
-    dishes, steer = await asyncio.gather(dishes_task or parse_menu(menu_text), agent.steering(menu_text))
+    dishes, steer = await asyncio.gather(dishes_task or parse_menu(menu_text, buyer_id), agent.steering(menu_text))
     if steer is not None and steer >= agent.INJECTION_MAX:
         reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, "This menu seems to try to change limits, delivery, invoicing or "
                                f"approvals, or claims special authority (Gemini Decisions: {agent._pct(steer)}).", None,
@@ -209,6 +218,12 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
                                "Split the menu into smaller parts."))
         ingredients = ingredients[:MAX_INGREDIENTS]
     items = ingredients  # agent.canonical() tells the judge which dishes each ingredient is for
+    needs = sorted({c for i in ingredients for c in i.get("claims") or []})
+    if needs:  # said once for the cart, in plain words; each unlabelled line then says "check the label"
+        words = " and ".join(agent._claim_words(needs))
+        reasons.append(gate._r(C.MENU_ASSUMPTIONS, gate.INFO, f"{words.capitalize()}: I only pick products Valio "
+                               f"labels {words}. Where Valio labels none (often cheese, oil or butter), the closest "
+                               "product is shown and the line says 'check the label'.", None, None, claims=", ".join(needs)))
 
     res, checks = await asyncio.gather(  # pricing and the assumption checks run side by side
         agent._pipeline(menu_text, items, requested, buyer_id, m, excluded, now, reasons, True),

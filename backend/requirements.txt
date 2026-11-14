@@ -8,3 +8,4 @@ av==19.0.2  # voice: decodes browser recordings (wheels bundle ffmpeg)
 websockets>=14  # voice: Gemini Live (additional_headers needs >= 14; uvicorn[standard] installs it too)
 ../contracts
 ../compiler
+../profile

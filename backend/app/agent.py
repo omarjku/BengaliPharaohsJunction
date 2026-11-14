@@ -29,7 +29,7 @@ from trade_contracts import (Alternative, AuditEntry, AuditInput, Decision, Mand
 from trade_contracts import ReasonCode as C
 from trade_contracts.common import RuleKind
 
-from . import catalogue, config, conversation, gate, mandates, orders, progress, quantity, valio
+from . import catalogue, config, conversation, gate, mandates, orders, profile, progress, quantity, valio
 
 RULES_VERSION = "m1-buyer-agent-0.1"
 ACTOR = "buyer_agent"
@@ -632,27 +632,56 @@ async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[st
     # singular (also matches the plural) → as given → each word alone, longest first ("reindeer meat" → "reindeer").
     tries = list(dict.fromkeys([" ".join(map(_singular, words)), item["query"]]  # singular first: "tomato" ⊂ "tomatoes"
                                + SYNONYMS.get(" ".join(map(_singular, words)).lower(), [])))
-    hits = []
-    for q in tries:
-        if hits := catalogue.search(q, item["claims"], excl, False, None, SEARCH_LIMIT):
-            break
-    if expansions := EVERYDAY.get(" ".join(map(_singular, words)).lower()):
-        # A bare everyday noun ("cream", "kerma") lists ice cream, sour cream and coconut cream first; the plain
-        # products a kitchen means come first here, the plain word's own hits after (QA round 2: "I need cream ASAP"
-        # → "Valio doesn't seem to stock 'cream'"; "kerma" → coconut cream). The matcher still judges every hit.
-        pool = [p for q in expansions for p in catalogue.search(q, item["claims"], excl, False, None, MATCH_HITS)]
-        hits = list({p["id"]: p for p in pool + hits}.values())[:SEARCH_LIMIT]
-    if not hits and len(words) > 1:
-        # No product has every word: rank products by how many of the words they have ("döner kebab meat" → the döner
-        # kebab skewers first, then kebab meat), instead of taking whichever single word hits first.
-        found: dict[str, list] = {}
-        for w in {_singular(x) for x in words if len(x) > 2}:
-            for p in catalogue.search(w, item["claims"], excl, False, None, 200):
-                found.setdefault(p["id"], [0, p])[0] += 1
-        hits = [p for _, p in sorted(found.values(), key=lambda x: (-x[0], len(x[1]["name_en"] or "")))][:SEARCH_LIMIT]
+
+    def find(claims: list[str]) -> list[dict]:
+        hits = []
+        for q in tries:
+            if hits := catalogue.search(q, claims, excl, False, None, SEARCH_LIMIT):
+                break
+        if expansions := EVERYDAY.get(" ".join(map(_singular, words)).lower()):
+            # A bare everyday noun ("cream", "kerma") lists ice cream, sour cream and coconut cream first; the plain
+            # products a kitchen means come first here, the plain word's own hits after (QA round 2: "I need cream
+            # ASAP" → "Valio doesn't seem to stock 'cream'"; "kerma" → coconut cream). The matcher judges every hit.
+            pool = [p for q in expansions for p in catalogue.search(q, claims, excl, False, None, MATCH_HITS)]
+            hits = list({p["id"]: p for p in pool + hits}.values())[:SEARCH_LIMIT]
+        if not hits and len(words) > 1:
+            # No product has every word: rank products by how many of the words they have ("döner kebab meat" → the
+            # döner kebab skewers first, then kebab meat), instead of taking whichever single word hits first.
+            found: dict[str, list] = {}
+            for w in {_singular(x) for x in words if len(x) > 2}:
+                for p in catalogue.search(w, claims, excl, False, None, 200):
+                    found.setdefault(p["id"], [0, p])[0] += 1
+            hits = [p for _, p in sorted(found.values(), key=lambda x: (-x[0], len(x[1]["name_en"] or "")))][
+                :SEARCH_LIMIT]
+        return hits
+
+    prefer = [c for c in item.get("prefer_claims") or [] if c not in item["claims"]]
+    hits = find(item["claims"] + prefer)
+    if prefer and hits:  # the profile's need is labelled here: from now on the judge checks it too
+        item["claims"] = item["claims"] + prefer
+        item["profile_applied"] = prefer
+    elif prefer:
+        item["profile_unlabelled"] = prefer
+        hits = find(item["claims"])
+    if not hits and item["claims"]:
+        # The buyer's stated need (e.g. gluten-free) is labelled on no matching product (mozzarella, olive oil): offer
+        # the closest unlabelled one and say plainly "check the label". The line always asks; never a silent guess.
+        if hits := find([]):
+            item["unlabelled"], item["claims"] = item["claims"], []
     if not hits:
         return [], True
     ids = await match(item, hits)
+    if ids == [] and (item.get("profile_applied") or (item["claims"] and not item.get("unlabelled"))):
+        # Labelled products exist, but none IS the item ("wheat flour" + gluten-free only finds buckwheat): judge the
+        # unlabelled ones too, so the chef sees the real product with "check the label" instead of "not stocked".
+        need = item.pop("profile_applied", None) or []
+        claims = [c for c in item["claims"] if c not in need]
+        if (plain := find(claims if need else [])):
+            if need:
+                item["claims"], item["profile_unlabelled"] = claims, need
+            else:
+                item["unlabelled"], item["claims"] = item["claims"], []
+            hits, ids = plain, await match(item, plain)
     if ids is None:  # Decisions unavailable: plain search order, flagged by the caller
         return [p["id"] for p in hits[:QUOTE_TOP]], False
     if not ids:  # say plainly what Valio has instead
@@ -721,18 +750,53 @@ def _facts_text(f: dict) -> str:
 
 def _decided_by(scored: list) -> str:
     """One clause when reliability or Finnish origin, not price or Gemini's rank, decided against the runner-up."""
-    # Keys end (..., concerns, not_finnish, total, rank).
+    # Keys end (..., concerns, not_usual, not_finnish, total, rank).
     (bk, best, _), rest = scored[0], scored[1:]
     for k, ln, asks in rest:
         if k[0] or k[-2:] >= bk[-2:]:  # blocked, or it loses on price and rank anyway
             continue
         rel = [r.message for r in asks if r.code in (C.LOW_RELIABILITY, C.DATA_MISSING) and "min_reliability" in r.facts]
-        if k[:-4] == bk[:-4] and k[-4] > bk[-4] and rel:  # it lost on concerns, and one is reliability
+        if k[:-5] == bk[:-5] and k[-5] > bk[-5] and rel:  # it lost on concerns, and one is reliability
             return f" Chosen over {_name(ln['product'])}: {rel[0]}"
+        if k[:-4] == bk[:-4] and not bk[-4] and k[-4]:
+            return f" Chosen over {_name(ln['product'])} because you usually order this, at a similar match."
         if k[:-3] == bk[:-3] and not bk[-3] and k[-3]:
             return f" Chosen over {_name(ln['product'])} because it is Finnish-origin (your preference), at a similar price."
         return ""
     return ""
+
+
+_PLAIN = re.compile(r"\b(regular|normal|ordinary|not gluten|with gluten|not lactose|tavallis\w*|normaali\w*)\b")
+
+
+def _claim_words(claims: list[str]) -> list[str]:
+    """FREE_FROM_GLUTEN → 'gluten-free', VEGAN → 'vegan': what the chef reads, never the code."""
+    return [c.lower().replace("free_from_", "").replace("_", " ") + ("-free" if c.startswith("FREE_FROM_") else "")
+            for c in claims]
+
+
+def _label_reasons(it: dict, best: dict) -> list[Reason]:
+    """One plain sentence per dietary label decision on a chosen line (profile default, or no labelled product)."""
+    pid, name, out = best["product"]["id"], _name(best["product"]), []
+    if it.get("unlabelled"):  # the buyer asked for it: never guessed, always asked
+        need = " and ".join(_claim_words(it["unlabelled"]))
+        out.append(gate._r(C.DATA_MISSING, ASK, f"Valio labels no {it['query']} {need}. Closest: {name}. Check its "
+                           f"label before ordering.", pid, f"Check that {name} is {need}, or pick another product.",
+                           unlabelled=", ".join(it["unlabelled"])))
+    if it.get("profile_applied"):
+        need = " and ".join(_claim_words(it["profile_applied"]))
+        out.append(gate._r(C.PROFILE_DEFAULT, INFO, f"{need.capitalize()}, because {it['profile_why']}: only "
+                           f"{it['query']} that Valio labels {need} was considered.", pid,
+                           f"Say 'regular {it['query']}' if this order doesn't need it.",
+                           profile=it["profile_why"], claims=", ".join(it["profile_applied"])))
+    if it.get("profile_unlabelled"):
+        need = " and ".join(_claim_words(it["profile_unlabelled"]))
+        # still never guessed: a gluten-free kitchen checks an unlabelled product before it is ordered
+        out.append(gate._r(C.PROFILE_DEFAULT, ASK, f"Your profile asks for {need} ({it['profile_why']}), but Valio "
+                           f"labels no {it['query']} {need}. Closest: {name}. Check its label before ordering.", pid,
+                           f"Check that {name} is {need}.", profile=it["profile_why"],
+                           claims=", ".join(it["profile_unlabelled"])))
+    return out
 
 
 async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str, m: Mandate, excluded: set[str],
@@ -741,6 +805,14 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
     gate checks, Gemini Decisions confidence, the choice (safety, confidence, limits, concerns, Finnish preference,
     price), substitutes. Appends the problems it finds to `reasons`. The Decisions judge reads `canonical(item)`
     (parsed fields only; menu items add their dishes), never raw text."""
+    standing = profile.dietary(buyer_id)
+    low = text.lower()
+    stated = {t for w, t in _WORDS.items() if w in low}
+    if standing and not stated and not _PLAIN.search(low):  # the buyer's own words beat the profile
+        for it in items:
+            it["prefer_claims"] = [c for t, _ in standing for c in DIETARY.get(t, ([], []))[0]]
+            it["profile_why"] = "; ".join(why for _, why in standing)
+    usual = profile.usual(buyer_id)
     progress.phase("searching")
     done = [0]
 
@@ -823,7 +895,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                         not low and best is not None and ln["confidence"] < best - NEAR_TIE) + k[2:], ln, a)
                       for k, ln, a in scored]
 
-            label = f"'{it['query']}'" + (f" ({', '.join(it['claims'] + ['no ' + a for a in it['exclude_allergens']])})"
+            label = f"'{it['query']}'" + (f" ({', '.join(_claim_words(it['claims']) + ['no ' + catalogue.ALLERGEN_NAMES.get(a, a) for a in it['exclude_allergens']])})"
                                           if it["claims"] or it["exclude_allergens"] else "")
             if not cands:
                 near = f" Closest in the catalogue: {'; '.join(it['closest'])}." if it.get("closest") else ""
@@ -848,7 +920,10 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                 if it.get("origin"):
                     return origin != it["origin"]
                 return not (fi_pref and cheapest is not None and origin == "fi" and total <= cheapest * 1.1)
-            scored = [((*k[:-2], other_origin(ln, k[-2]), *k[-2:]), ln, a) for k, ln, a in scored]
+            # Usual products (profile + past confirmed orders) break near-ties only: after safety, confidence, limits
+            # and concerns, so they never beat a more confident line or the threshold.
+            scored = [((*k[:-2], ln["product"]["id"] not in usual, other_origin(ln, k[-2]), *k[-2:]), ln, a)
+                      for k, ln, a in scored]
             scored.sort(key=lambda s: s[0])
             (not_viable, *_), best, best_asks = scored[0]
             if not_viable:  # every candidate is blocked: bring the best one's traps to the human
@@ -875,10 +950,13 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                 continue
             best["chosen"] = True
             chosen.append(best)
+            best["usual"] = best["product"]["id"] in usual
+            reasons += _label_reasons(it, best)
             late = next((r for r in best_asks if r.code is C.DATE_NOT_HONOURED), None)  # QA VT-05: say it plainly
             when = (f"orderable, but it arrives {late.facts.get('available_date')}, not {requested}" if late
                     else f"orderable for {requested}")
             best["why"] = (f"Best match for {label}: {_name(best['product'])}, {_offer(best)}, {when}. "
+                           + ("You usually order this. " if best["usual"] else "")
                            + best["quantity"]["explanation"] + (" " + best["why"] if best_asks else "")
                            + _decided_by(scored) + _facts_text(best["facts"]))
             if best["quantity"]["needs_confirmation"]:

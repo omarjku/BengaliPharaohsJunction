@@ -1,0 +1,163 @@
+"""Room3-understand: a product without an amount asks "how much", stated dietary needs never guess a label, and the
+buyer profile (Zoha's trade_profile) adds visible, overridable assumptions. Gemini, Valio and Decisions are faked."""
+from conftest import REQ, product, quote
+from fastapi.testclient import TestClient
+from test_agent import decisions, shop1  # noqa: F401 - pytest fixtures
+from test_menu import fake_gemini
+
+from app import agent, ask, config, menu, profile
+from app.main import app
+
+c = TestClient(app, raise_server_exceptions=False)
+KEYS = {"lapland-kitchen": "agent-lk", "helsinki-bistro": "agent-hb"}
+
+
+def pizza_shop(shop):
+    for p in [product("201", "Gluten-free pizza base", claims=("FREE_FROM_GLUTEN",)),
+              product("202", "Pizza base", claims=()), product("203", "Mozzarella block", claims=()),
+              product("204", "Mozzarella grated", claims=())]:
+        p.update(base_unit="ST", units={"ST": 1.0}, volume={"unit": "LTR", "value": 1.0}, net_weight=None)
+        shop.products[p["id"]] = p
+        shop.quotes[p["id"]] = quote(p["id"], price=3.0)
+
+
+def fake(monkeypatch, items, intent="order", covers=None):
+    async def gemini(system, prompt, schema, *_):
+        if schema is ask._INTENT_SCHEMA:
+            return {"intent": intent, "covers": covers}
+        if schema is agent._PARSE_SCHEMA:
+            return {"summary": "x", "items": items}
+        return None
+    monkeypatch.setattr(agent, "_gemini", gemini)
+
+    async def match(item, hits):  # every hit matches, in search order
+        return [p["id"] for p in hits]
+    monkeypatch.setattr(agent, "match", match)
+
+
+def post(text, buyer="lapland-kitchen", path="/api/agent/ask", **extra):
+    r = c.post(path, json={"text": text, **extra}, headers={"X-Agent-Key": KEYS[buyer]})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def reasons(body):
+    return body["decision"]["reasons"]
+
+
+def test_a_product_without_an_amount_asks_how_much_with_options(shop1, monkeypatch):  # noqa: F811
+    """'gluten-free pizza' used to be refused as off-topic; it is an order that asks the amount (and remembers it)."""
+    pizza_shop(shop1)
+    fake(monkeypatch, [{"query": "pizza", "amount": None, "unit": None, "dietary": ["gluten_free"]}])
+    body = post("gluten-free pizza for Monday")
+    assert body["intent"] == "order" and body["question"].startswith("How much pizza?")
+    assert body["conversation_id"] and body["order"] is None
+    assert [ln["product"]["id"] for ln in body["lines"]] == ["201"]  # only the labelled base is an option
+    assert "gluten-free pizza" in ask.INTENT_PROMPT and "WITH OR WITHOUT an amount" in ask.INTENT_PROMPT
+
+
+def test_a_stated_need_never_guesses_a_label_and_says_so_plainly(shop1, monkeypatch):  # noqa: F811
+    """No mozzarella is labelled gluten-free: the closest one is offered with 'check its label', and the order asks."""
+    pizza_shop(shop1)
+    fake(monkeypatch, [{"query": "mozzarella", "amount": 2, "unit": "L", "dietary": ["gluten_free"]}])
+    body = post("2 L gluten-free mozzarella", path="/api/agent/run", requested_date=REQ.isoformat())
+    msg = [r for r in reasons(body) if r["code"] == "DATA_MISSING"]
+    assert msg and msg[0]["severity"] == "ASK_HUMAN" and "check its label" in msg[0]["message"].lower()
+    assert "Valio labels no mozzarella gluten-free" in msg[0]["message"]
+    assert body["order"] is None or body["order"]["status"] != "confirmed"
+    assert not any("FREE_FROM" in r["message"] for r in reasons(body))  # plain words, never codes
+
+
+def test_menu_says_the_dietary_rule_once_for_the_cart(shop1, monkeypatch):  # noqa: F811
+    pizza_shop(shop1)
+    fake_gemini(monkeypatch, [{"name": "Gluten-free pizza", "ingredients": [
+        {"name": "pizza base", "per_cover": 1, "unit": "L", "assumption": "1 base", "dietary": ["gluten_free"]},
+        {"name": "mozzarella", "per_cover": 0.1, "unit": "L", "assumption": "100 g", "dietary": ["gluten_free"]}]}])
+
+    async def match(item, hits):
+        return [p["id"] for p in hits]
+    monkeypatch.setattr(agent, "match", match)
+    r = c.post("/api/agent/menu", json={"menu_text": "Gluten-free pizza", "covers": 20,
+                                        "requested_date": REQ.isoformat()}, headers={"X-Agent-Key": "agent-lk"})
+    body = r.json()
+    cart = [x for x in reasons(body) if x["code"] == "MENU_ASSUMPTIONS" and x["severity"] == "INFO"]
+    assert len(cart) == 1 and cart[0]["message"].startswith("Gluten-free: I only pick products Valio labels gluten-free")
+    assert any(x["code"] == "DATA_MISSING" and "mozzarella" in x["message"] for x in reasons(body))
+
+
+def test_profile_gluten_free_kitchen_is_a_visible_default_and_words_beat_it(shop1, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(config, "AGENT_KEYS", config.AGENT_KEYS + ",agent-hb=helsinki-bistro")
+    pizza_shop(shop1)
+    fake(monkeypatch, [{"query": "pizza base", "amount": 10, "unit": "L", "dietary": []}])
+    body = post("10 L pizza base", "helsinki-bistro", "/api/agent/run", requested_date=REQ.isoformat())
+    chosen = [ln["product"]["id"] for ln in body["lines"] if ln["chosen"]]
+    assert chosen == ["201"]  # the labelled base, because of the profile
+    why = [r for r in reasons(body) if r["code"] == "PROFILE_DEFAULT"][0]
+    assert why["severity"] == "INFO" and why["message"].startswith("Gluten-free, because your profile says")
+    assert why["facts"]["profile"].startswith("your profile says")
+    plain = post("10 L regular pizza base", "helsinki-bistro", "/api/agent/run", requested_date=REQ.isoformat())
+    assert not any(r["code"] == "PROFILE_DEFAULT" for r in reasons(plain))  # the buyer's own word wins
+    empty = post("10 L pizza base again", "lapland-kitchen", "/api/agent/run", requested_date=REQ.isoformat())
+    assert not any(r["code"] == "PROFILE_DEFAULT" for r in reasons(empty))  # lapland's profile stays empty
+
+
+def test_usual_product_breaks_near_ties_only(shop1, monkeypatch, decisions):  # noqa: F811
+    monkeypatch.setattr(config, "AGENT_KEYS", config.AGENT_KEYS + ",agent-hb=helsinki-bistro")
+    pizza_shop(shop1)
+    monkeypatch.setattr(profile, "usual", lambda buyer: {"204"} if buyer == "helsinki-bistro" else set())
+    fake(monkeypatch, [{"query": "mozzarella", "amount": 2, "unit": "L", "dietary": []}])
+    body = post("2 L regular mozzarella", "helsinki-bistro", "/api/agent/run", requested_date=REQ.isoformat())
+    best = [ln for ln in body["lines"] if ln["chosen"]][0]
+    assert best["product"]["id"] == "204" and best["usual"] and "You usually order this." in best["why"]
+    real = agent.judge_line
+
+    async def judge(text, p, expl):  # the usual one is far less sure: confidence still leads
+        conf, why, weakest = await real(text, p, expl)
+        return (0.5 if p["id"] == "204" else conf), why, weakest
+    monkeypatch.setattr(agent, "judge_line", judge)
+    body = post("2 L regular mozzarella please", "helsinki-bistro", "/api/agent/run", requested_date=REQ.isoformat())
+    assert [ln for ln in body["lines"] if ln["chosen"]][0]["product"]["id"] == "203"
+
+
+def test_get_profile_is_read_only_per_buyer(shop1, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(config, "AGENT_KEYS", config.AGENT_KEYS + ",agent-hb=helsinki-bistro")
+    hb = c.get("/api/profile", headers={"X-Agent-Key": "agent-hb"}).json()
+    assert hb["dietary"] == [{"tag": "gluten_free", "label": "gluten-free",
+                              "because": "your profile says: Our kitchen is gluten-free"}]
+    assert set(hb["usual_product_ids"]) == {"464411", "475852", "471650"} and hb["memories"]
+    lk = c.get("/api/profile", headers={"X-Agent-Key": "agent-lk"}).json()
+    assert lk["dietary"] == [] and lk["usual_product_ids"] == [] and lk["memories"] == []
+    assert c.get("/api/profile").status_code == 401
+
+
+def test_labelled_but_wrong_products_fall_back_to_the_real_one(shop1, monkeypatch):  # noqa: F811
+    """'wheat flour' + gluten-free found only buckwheat: when no labelled product IS the item, the unlabelled ones are
+    judged too, and the line says 'check the label' instead of 'not stocked'."""
+    pizza_shop(shop1)
+    fake(monkeypatch, [{"query": "pizza base", "amount": 2, "unit": "L", "dietary": ["gluten_free"]}])
+
+    async def match(item, hits):  # the labelled base "isn't" a pizza base here; the plain one is
+        return [p["id"] for p in hits if p["id"] != "201"]
+    monkeypatch.setattr(agent, "match", match)
+    body = post("2 L gluten-free pizza base", path="/api/agent/run", requested_date=REQ.isoformat())
+    assert [ln["product"]["id"] for ln in body["lines"] if ln["chosen"]] == ["202"]
+    assert any(r["code"] == "DATA_MISSING" and "check its label" in r["message"].lower() for r in reasons(body))
+    assert not any(r["code"] == "UNKNOWN_PRODUCT" for r in reasons(body))
+
+
+def test_menu_reading_knows_the_kitchen_is_gluten_free(monkeypatch, tmp_path):
+    """helsinki-bistro's pizza came back with wheat flour: the menu reading now gets the profile's standing needs
+    (from our data, never the buyer's text); lapland-kitchen and a menu that states its own diet don't."""
+    import asyncio
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    seen = []
+
+    async def gemini(system, prompt, schema, *_):
+        seen.append(system)
+        return {"dishes": []}
+    monkeypatch.setattr(agent, "_gemini", gemini)
+    asyncio.run(menu.parse_menu("pizza for 20 people", "helsinki-bistro"))
+    asyncio.run(menu.parse_menu("pizza for 20 people", "lapland-kitchen"))
+    asyncio.run(menu.parse_menu("regular pizza for 20 people", "helsinki-bistro"))
+    assert "standing dietary needs (from its profile): gluten-free" in seen[0]
+    assert seen[1] == seen[2] == menu.MENU_PROMPT

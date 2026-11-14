@@ -80,6 +80,7 @@ def shop(monkeypatch, tmp_path):
     monkeypatch.setattr(orders, "ORDERS_FILE", tmp_path / "orders.json")
     monkeypatch.setattr(orders, "_orders", None)
     monkeypatch.setattr(mandates, "STORE", tmp_path / "mandates.json")  # never the real saved rules
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)  # profile event logs (profile.py) never touch the real data/
     monkeypatch.setattr(orders, "IDEM_FILE", tmp_path / "idempotency.json")
     monkeypatch.setattr(orders, "_idem", None)
     monkeypatch.setattr(mandates, "_MANDATES", dict(mandates._MANDATES))  # tests store their own; demo buyer kept

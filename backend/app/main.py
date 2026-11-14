@@ -17,8 +17,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import (agent, ask, auth, catalogue, config, gate, httpsig, mandates, menu, orders, progress, quantity,
-               ratelimit, rules, signing, valio, voice)
+from . import (agent, ask, auth, catalogue, config, gate, httpsig, mandates, menu, orders, profile, progress,
+               quantity, ratelimit, rules, signing, valio, voice)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -452,6 +452,13 @@ async def compile_mandate_route(req: CompileRequest, who: Approver) -> dict:
 
 def _if_match(value: str | None) -> str | None:
     return value.removeprefix("W/").strip().strip('"') if value else None
+
+
+@app.get("/api/profile")
+def get_profile(who: Agent) -> dict:
+    """The calling buyer's profile, read-only (guidance, never rules): standing dietary needs with the reason, usual
+    product ids, the remembered items with why each is used, open questions, recent confirmed orders."""
+    return profile.context(who.buyer_id)
 
 
 @app.get("/api/mandate")
