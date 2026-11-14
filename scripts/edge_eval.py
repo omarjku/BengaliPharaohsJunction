@@ -141,12 +141,17 @@ def compact_answer(data, status=None):
     elif status is not None and status >= 400: view["detail"] = "HTTP error without a JSON detail."
     return view
 
+def ask_payload(text, conversation_id=None):
+    """Build the documented /api/agent/ask request shape for either turn type."""
+    if conversation_id is None:
+        return {"text": text}
+    return {"follow_up": {"to": conversation_id, "answer": text}}
+
 def ask_front_door(base, key, text, conversation_id=None):
     started, status, answer, headers = time.monotonic(), None, None, {}
     for attempt in range(2):
         try:
-            body = {"text": text}
-            if conversation_id is not None: body["conversation_id"] = conversation_id
+            body = ask_payload(text, conversation_id)
             request = urllib.request.Request(base + "/api/agent/ask", method="POST",
                 data=json.dumps(body, ensure_ascii=False).encode(),
                 headers={"Content-Type": "application/json", "User-Agent": "edge-eval/1", "X-Agent-Key": key})
@@ -182,7 +187,7 @@ def run_case(base, key, case):
         if index:
             conversation_id = answer.get("conversation_id") if answer else None
             if not conversation_id:
-                generated_id = generated_id or str(uuid4())
+                generated_id = generated_id or uuid4().hex
                 conversation_id = generated_id
         answer = (ask_front_door(base, key, text, conversation_id) if conversation_id is not None
                   else ask_front_door(base, key, text))
@@ -331,7 +336,7 @@ def answer_summary(answer):
     if view.get("detail"): bits.append("detail=" + str(view["detail"]))
     return clip(" | ".join(str(x) for x in bits if x) or "No observable answer.", 600)
 
-def report(path, results, cases, answers, grades):
+def render_report(results, cases, answers, grades):
     meta, by_grade = results.get("meta", {}), {x.get("id"): x for x in grades}
     by_answer, total = {x.get("id"): x for x in answers}, len(cases)
     passed = sum(by_grade.get(c.get("id"), {}).get("verdict") == "pass" for c in cases)
@@ -354,7 +359,10 @@ def report(path, results, cases, answers, grades):
         quote = lambda value: "\n".join("> " + line for line in str(value or "").splitlines()) or "> "
         lines += [f"### {case.get('id', '')} — {case.get('group', '')} (severity {severity})", "", "**Request:**", quote(case_text(case)), "",
                   "**Expected rule:**", quote(case.get("expect", "")), "", f"**App answer:** {answer_summary(answer)}", f"**Gemini reason:** {reason}", ""]
-    path.write_text("\n".join(lines).rstrip() + "\n")
+    return "\n".join(lines).rstrip() + "\n"
+
+def report(path, results, cases, answers, grades):
+    path.write_text(render_report(results, cases, answers, grades))
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -362,12 +370,23 @@ def parse_args():
     parser.add_argument("--buyer", default="smoke-kitchen"); parser.add_argument("--cases", default=str(ROOT / "docs/testing/edge-cases.json"))
     parser.add_argument("--date", default=date.today().isoformat()); parser.add_argument("--only", help="comma-separated group names")
     parser.add_argument("--limit", type=int); parser.add_argument("--regrade", action="store_true")
-    parser.add_argument("--label", default="", metavar="TAG")
+    parser.add_argument("--label", default="local", metavar="TAG",
+                        help="output tag (defaults to local so committed baselines are not replaced)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="validate selected cases and print their count without network calls or file writes")
     return parser.parse_args()
 
 def main():
     options = parse_args()
     if options.limit is not None and options.limit < 0: raise SystemExit("--limit must be non-negative")
+    if options.dry_run:
+        cases = selected(json.loads(Path(options.cases).read_text()), options.only, options.limit)
+        if not all(isinstance(case, dict) and case.get("id") for case in cases):
+            raise SystemExit("every selected case must be an object with an id")
+        if len({case["id"] for case in cases}) != len(cases):
+            raise SystemExit("selected case ids must be unique")
+        print(f"edge-eval validation: {len(cases)} cases ready; no network calls or files written")
+        return 0
     base = options.base.rstrip("/")
     label = options.label.strip()
     suffix = f"-{label}" if label else ""
