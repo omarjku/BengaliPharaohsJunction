@@ -142,3 +142,30 @@ def test_switched_off_and_health(talk, monkeypatch):
         with pytest.raises(WebSocketDisconnect) as e:
             ws.receive_json()
     assert e.value.code == 4503
+
+
+def test_signed_buyers_refused_and_every_tool_call_costs_a_token(talk, monkeypatch):
+    """Security review: a buyer that registered RFC 9421 keys can't use Talk to skip signatures; each tool call takes
+    a token from the same agent bucket as HTTP requests."""
+    from app import httpsig, ratelimit
+    monkeypatch.setattr(httpsig, "keys_for", lambda buyer: {"k1": object()} if buyer == "chef" else {})
+    talk([])
+    with c.websocket_connect("/api/live") as ws:
+        ws.send_json({"type": "auth", "agent_key": "agent-chef"})
+        assert "signed requests" in ws.receive_json()["message"]
+        with pytest.raises(WebSocketDisconnect) as e:
+            ws.receive_json()
+    assert e.value.code == 4401
+    monkeypatch.setattr(httpsig, "keys_for", lambda buyer: {})
+    waits = iter([0, 5])  # session start passes; the tool call finds the bucket empty
+    monkeypatch.setattr(ratelimit, "wait_s", lambda kind, who, now=None: 0 if kind == "ip" else next(waits))
+    fake = talk([{"toolCall": {"functionCalls": [{"id": "c1", "name": "ask_agent", "args": {"text": "milk"}}]}},
+                 {"serverContent": {"turnComplete": True}}])
+    with c.websocket_connect("/api/live") as ws:
+        ws.send_json({"type": "auth", "agent_key": "agent-chef"})
+        assert ws.receive_json() == {"type": "ready"}
+        seen = until(ws, "turn_complete")
+        ws.send_json({"type": "stop"})
+    assert "result" not in [m["type"] for m in seen]
+    resp = next(m["toolResponse"] for m in fake.sent if "toolResponse" in m)["functionResponses"][0]
+    assert "Too many requests" in resp["response"]["error"]

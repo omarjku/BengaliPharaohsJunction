@@ -15,7 +15,7 @@ Protocol (fixed with Room 4; change it only together):
 """
 import asyncio
 import base64
-import binascii
+import hashlib
 import json
 import logging
 from datetime import date, timedelta
@@ -24,7 +24,7 @@ import websockets
 from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 
-from . import ask, auth, catalogue, config, ratelimit, valio
+from . import ask, auth, catalogue, config, httpsig, orders, ratelimit, valio
 from .voice import LIVE_URL
 
 connect = websockets.connect  # tests replace this with a fake Live socket
@@ -35,6 +35,7 @@ MAX_TEXT = 500
 MAX_TOOL_CALLS = 20  # per session: each ask_agent runs the whole pipeline
 MAX_PER_BUYER = 2  # concurrent Talk sessions per buyer
 _open: dict[str, int] = {}
+_TOOL_TASKS: set = set()  # in-flight tool calls: a disconnect never cancels an order half-way (strong refs)
 log = logging.getLogger(__name__)
 
 SYSTEM = """You are the voice of a purchasing assistant for a restaurant kitchen that buys from Valio Aimo, a Finnish
@@ -118,7 +119,7 @@ async def _client_to_live(ws: WebSocket, live) -> None:
                                                           "turnComplete": True}}))
 
 
-async def _live_to_client(ws: WebSocket, live, buyer_id: str) -> None:
+async def _live_to_client(ws: WebSocket, live, buyer_id: str, bucket: str) -> None:
     said = {"user": "", "agent": ""}
     calls = 0
     async for raw in live:
@@ -129,16 +130,22 @@ async def _live_to_client(ws: WebSocket, live, buyer_id: str) -> None:
                 name, args = fc.get("name"), fc.get("args") or {}
                 await ws.send_json({"type": "tool", "name": name, "status": "running", "label": LABELS.get(name, "Working…")})
                 calls += 1
+                body = None
                 if calls > MAX_TOOL_CALLS:
                     out = {"error": "Too many requests in one conversation; start a new one."}
-                elif name == "ask_agent":
-                    out, body = await ask_agent(buyer_id, args)
-                    if body is not None:
-                        await ws.send_json({"type": "result", "payload": body})
-                elif name == "search_catalogue":
-                    out = await search_catalogue(args)
+                elif ratelimit.wait_s("agent", bucket) > 0:  # every call costs a token, like an HTTP agent request
+                    out = {"error": "Too many requests right now; wait a moment, then ask again."}
+                elif name in ("ask_agent", "search_catalogue"):
+                    job = asyncio.create_task(ask_agent(buyer_id, args) if name == "ask_agent"
+                                              else search_catalogue(args))
+                    _TOOL_TASKS.add(job)  # runs to the end (order + audit) even if the chef hangs up meanwhile
+                    job.add_done_callback(_TOOL_TASKS.discard)
+                    res = await asyncio.shield(job)
+                    out, body = res if name == "ask_agent" else (res, None)
                 else:
                     out = {"error": "unknown tool"}
+                if body is not None:
+                    await ws.send_json({"type": "result", "payload": body})
                 await ws.send_json({"type": "tool", "name": name, "status": "done", "label": LABELS.get(name, "Done")})
                 responses.append({"id": fc.get("id"), "name": name, "response": out})
             await live.send(json.dumps({"toolResponse": {"functionResponses": responses}}))
@@ -172,16 +179,27 @@ async def session(ws: WebSocket) -> None:
         await ws.close(code=4429)
         return
     await ws.accept()
+    first: dict = {}
     try:
         first = json.loads(await asyncio.wait_for(ws.receive_text(), AUTH_S))
         who = auth._agent(first.get("agent_key") if first.get("type") == "auth" else None)
     except (HTTPException, ValueError, AttributeError, asyncio.TimeoutError, WebSocketDisconnect):
+        key = first.get("agent_key") if isinstance(first, dict) else None
+        if key:  # audited like a refused key on the HTTP routes
+            owner = auth._owner(str(key))
+            orders.security_event("key_used_outside_its_role" if owner else "invalid_key", "WS /api/live", ip,
+                                  buyer_id=owner[1] if owner else None, header="auth message",
+                                  key_role=owner[0] if owner else None, http_status=401)
         await _close(ws, 4401, "Send {\"type\":\"auth\",\"agent_key\":...} first, with a valid agent key.")
         return
+    if httpsig.keys_for(who.buyer_id):  # this buyer requires RFC 9421 signed requests; a WebSocket can't carry them
+        await _close(ws, 4401, "This buyer requires signed requests, which Talk doesn't support; use the API.")
+        return
+    bucket = hashlib.sha256(str(first["agent_key"]).encode()).hexdigest()  # the HTTP limiter's own agent bucket
     if not config.TALK_ENABLED or not config.GEMINI_API_KEY:
         await _close(ws, 4503, "Talk is switched off on this server; type or hold the mic instead.")
         return
-    if ratelimit.wait_s("agent", who.buyer_id) > 0 or _open.get(who.buyer_id, 0) >= MAX_PER_BUYER:
+    if ratelimit.wait_s("agent", bucket) > 0 or _open.get(who.buyer_id, 0) >= MAX_PER_BUYER:
         await _close(ws, 4429, "Too many conversations at once; try again in a minute.")
         return
     _open[who.buyer_id] = _open.get(who.buyer_id, 0) + 1
@@ -193,7 +211,7 @@ async def session(ws: WebSocket) -> None:
                 raise RuntimeError("Live setup failed")
             await ws.send_json({"type": "ready"})
             tasks = [asyncio.create_task(_client_to_live(ws, live)),
-                     asyncio.create_task(_live_to_client(ws, live, who.buyer_id))]
+                     asyncio.create_task(_live_to_client(ws, live, who.buyer_id, bucket))]
             done, pending = await asyncio.wait(tasks, timeout=SESSION_S, return_when=asyncio.FIRST_COMPLETED)
             for t in pending:
                 t.cancel()
