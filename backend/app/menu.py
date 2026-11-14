@@ -21,6 +21,7 @@ from trade_contracts.common import Channel, RuleKind
 from . import agent, catalogue, gate, mandates, orders, quantity, valio
 
 MAX_INGREDIENTS = 20
+MAX_DISHES, MAX_PER_DISH = 12, 15  # bound what a (possibly steered) menu parse can make the agent check and price
 # Per-cover amounts above these are flagged, not trusted: 1 kg of potato per plate is a misread, not a recipe.
 PER_COVER_MAX = {"volume": 1.0, "weight": 1.0, "count": 6}  # L, kg, pieces
 BASE_UNIT = {"volume": "L", "weight": "kg", "count": "pcs"}
@@ -150,8 +151,8 @@ async def parse_menu(menu_text: str) -> list[dict] | None:
     if not out or not isinstance(out.get("dishes"), list):
         return None
     return [{"name": str(d.get("name") or "").strip(), "ingredients": [dict(i) for i in d.get("ingredients") or []
-                                                                         if isinstance(i, dict)]}
-            for d in out["dishes"] if isinstance(d, dict) and str(d.get("name") or "").strip()]
+                                                                         if isinstance(i, dict)][:MAX_PER_DISH]}
+            for d in out["dishes"] if isinstance(d, dict) and str(d.get("name") or "").strip()][:MAX_DISHES]
 
 
 async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -> dict:
@@ -207,7 +208,7 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -
     res, checks = await asyncio.gather(  # pricing and the assumption checks run side by side
         agent._pipeline(menu_text, items, requested, buyer_id, m, excluded, now, reasons, True),
         asyncio.gather(*(check_assumption(a["dish"], a["ingredient"], a["per_cover"], a["unit"], a["text"])
-                         for a in assumptions)))
+                         for a in assumptions[:MAX_DISHES * MAX_PER_DISH])))
     for a, y in zip(assumptions, checks):
         a["check"], a["flagged"] = y, y is not None and y < ASSUMPTION_MIN
         if a["flagged"]:

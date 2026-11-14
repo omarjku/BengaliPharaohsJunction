@@ -118,6 +118,7 @@ async def _gemini(system: str, prompt: str, schema: dict) -> dict | None:
 
 
 _DECISION_CACHE: dict[str, tuple[float, dict]] = {}
+_DECISION_SLOTS = asyncio.Semaphore(16)  # bound concurrent paid Decisions calls per process (menus fan out)
 DECISION_CACHE_TTL_S = 600
 DECISION_CACHE_MAX = 5000
 
