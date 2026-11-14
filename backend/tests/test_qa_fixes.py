@@ -56,7 +56,7 @@ def test_name_check_covers_finnish_and_groundnut(shop):
     assert run([("902", 1)], [("excluded_allergen", "AW")]).status == "refused"
 
 
-def test_negated_names_and_declared_free_from_are_not_refused_by_name(shop):
+def test_negated_names_are_not_refused_but_inconsistent_free_from_is(shop):
     no_allergen_data(shop, "903", "Peanut-free cookies")
     no_allergen_data(shop, "904", "Keksi", "Pähkinätön keksi")
     no_allergen_data(shop, "905", "Gluten free bread")
@@ -70,7 +70,7 @@ def test_negated_names_and_declared_free_from_are_not_refused_by_name(shop):
     shop.products["906"] = product("906", "Peanut-style crunch", category="300", claims=(), contains=())
     shop.products["906"]["allergens"]["free_from"] = ["AP"]  # the label explicitly rules it out
     shop.quotes["906"] = quote("906")
-    assert run([("906", 1)], [("excluded_allergen", "AP")]).status == "confirmed"
+    assert run([("906", 1)], [("excluded_allergen", "AP")]).status == "refused"
 
 
 def test_name_refusal_survives_the_route_and_cannot_be_approved(shop):

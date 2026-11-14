@@ -81,6 +81,20 @@ def test_approve_with_new_price_goes_back_to_the_human(shop):
     assert body["status"] == "confirmed" and body["total_cents"] == 150000
 
 
+def test_approved_later_delivery_is_stored_returned_and_audited(shop):
+    later_date = REQ + timedelta(days=2)
+    later = later_date.isoformat()
+    shop.quotes["463335"] = quote("463335", avail_date=later_date)
+    pending = order([("463335", 1000)]).json()
+    assert pending["status"] == "pending_approval"
+
+    approved = outcome(c.post(f"/api/orders/{pending['order_id']}/approve", json={"approver": "Chef Aino"}))
+    assert approved["delivery_date"] == later
+    stored = c.get(f"/api/orders/{pending['order_id']}").json()
+    assert stored["delivery_date"] == later
+    assert later in audit()[-1]["input"]["request"]["text"]
+
+
 def test_reject(shop):
     oid = order([("463335", 1000)]).json()["order_id"]
     body = c.post(f"/api/orders/{oid}/reject", json={"approver": "Chef Aino"}).json()

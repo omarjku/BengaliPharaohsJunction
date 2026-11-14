@@ -122,6 +122,43 @@ def test_free_from_excluded_allergen_passes(shop):
     assert res.status == "confirmed" and codes(res) == []
 
 
+def test_dansukker_caster_sugar_free_from_peanuts_is_not_missing_data(shop):
+    shop.products["460325"] = dict(shop.products["103"], id="460325", name_en="Dansukker Caster Sugar 1kg",
+                                     allergens={"contains": [], "may_contain": [], "free_from": ["AP"], "undeclared": []})
+    shop.quotes["460325"] = quote("460325")
+    res = run([("460325", 1)], mandate(rules=[("excluded_allergen", "AP")]))
+    assert res.status == "confirmed" and "ALLERGEN_DATA_MISSING" not in codes(res)
+
+
+def test_breyers_undeclared_peanuts_never_passes_a_peanut_ban(shop):
+    shop.products["468099"] = dict(shop.products["103"], id="468099", name_en="Breyers Cookies & Cream",
+                                     allergens={"contains": ["AM", "AE", "AW"], "may_contain": [], "free_from": [],
+                                                "undeclared": ["AP", "AN"]})
+    shop.quotes["468099"] = quote("468099")
+    res = run([("468099", 1)], mandate(rules=[("excluded_allergen", "AP")]))
+    assert res.status == "pending_approval" and codes(res) == ["ALLERGEN_DATA_MISSING"]
+
+
+def test_product_name_still_overrides_inconsistent_free_from_declaration(shop):
+    shop.products["460325"] = dict(shop.products["103"], id="460325", name_en="Peanut butter 1kg",
+                                     allergens={"contains": [], "may_contain": [], "free_from": ["AP"], "undeclared": []})
+    shop.quotes["460325"] = quote("460325")
+    res = run([("460325", 1)], mandate(rules=[("excluded_allergen", "AP")]))
+    assert res.status == "refused" and codes(res) == ["ALLERGEN_CONTAINS"]
+
+
+def test_alternative_with_undeclared_banned_allergen_is_not_offered(shop):
+    shop.products["source"] = dict(shop.products["103"], id="source", name_en="Peanut snack",
+                                    allergens={"contains": ["AM"], "may_contain": [], "free_from": [], "undeclared": []},
+                                    substitutes=["candidate"])
+    shop.products["candidate"] = dict(shop.products["103"], id="candidate", name_en="Peanut snack alternative",
+                                       allergens={"contains": ["AM"], "may_contain": [], "free_from": [], "undeclared": ["AP"]})
+    shop.quotes["source"] = quote("source")
+    shop.quotes["candidate"] = quote("candidate")
+    res = run([("source", 1)], mandate(rules=[("excluded_allergen", "AP")]))
+    assert all(a.product_id != "candidate" for a in res.decision.alternatives)
+
+
 def test_uncertainty_policy_decline_and_approve(shop):
     shop.quotes["463038"] = quote("463038", "Terminal", 999999.0, price=31.31, unit="KI")  # cut-off still open
     assert run([("463038", 1)]).status == "pending_approval"
@@ -141,6 +178,12 @@ def test_price_missing_and_price_changed(shop):
     assert run([("102", 2)]).status == "refused"
     res = run([("463335", 1)], approved_prices={"463335": 130})
     assert codes(res) == ["PRICE_CHANGED"] and res.status == "pending_approval"
+
+
+def test_deposit_note_is_carried_on_order_line(shop):
+    shop.products["463335"]["deposits"] = [{"material": "4", "unit": "ST", "quantity": 1}]
+    res = run([("463335", 1)])
+    assert res.lines[0]["deposit"] == "returnable packaging deposit charged by Valio; not priced by the mock API"
 
 
 def test_mandate_expired(shop):

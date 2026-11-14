@@ -84,6 +84,8 @@ def _verified_basis(product: dict, diet: str) -> str | None:
     targets = _allergen_targets(diet)
     if targets & _allergen_codes(product, "may_contain"):
         return None
+    if targets & _allergen_codes(product, "undeclared"):
+        return None
     for claim in _diet_claims(diet):
         if claim in claims:
             return f"labelled {_claim_word(claim)}"

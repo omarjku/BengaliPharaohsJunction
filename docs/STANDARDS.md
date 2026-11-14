@@ -74,13 +74,14 @@ Current routes include quote lookup, product search, quantity resolution, order 
 
 ## GS1 allergen data
 
-`backend/app/catalogue.py` reads the Valio `synkkaData.classifications` entries whose name is `allergen`. It keeps the GS1-style `id` and maps the containment level into three lists:
+`backend/app/catalogue.py` reads `CONTAINS`, `MAY_CONTAIN`, and `UNDECLARED` from the `allergen` classification and `FREE_FROM` from the separate `nonAllergen` classification. It keeps the GS1-style `id` and maps them into runtime lists:
 
 | Source level | Runtime catalogue field |
 |---|---|
 | `CONTAINS` | `allergens.contains` |
 | `MAY_CONTAIN` | `allergens.may_contain` |
-| `FREE_FROM` | `allergens.free_from` |
+| `FREE_FROM` (`nonAllergen`) | `allergens.free_from` |
+| `UNDECLARED` | `allergens.undeclared` (unknown to safety checks) |
 
 Examples used by the code:
 
