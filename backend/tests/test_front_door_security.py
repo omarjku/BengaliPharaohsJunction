@@ -6,7 +6,7 @@ from types import SimpleNamespace as L
 
 import httpx
 import pytest
-from conftest import NOW, REQ, product, quote
+from conftest import NOW, REQ, product, quote, store_mandate
 from fastapi.testclient import TestClient
 from trade_contracts import Mandate
 
@@ -20,8 +20,8 @@ MANDATE = {"id": "m1", "buyer_id": "chef", "per_line_cap_cents": 10**9}
 
 
 def order(lines, mandate=None, headers=AG, **extra):
-    body = {"requested_date": REQ.isoformat(), "mandate": mandate or MANDATE,
-            "lines": [{"product_id": p, "quantity": q} for p, q in lines], **extra}
+    store_mandate(mandate or MANDATE)
+    body = {"requested_date": REQ.isoformat(), "lines": [{"product_id": p, "quantity": q} for p, q in lines], **extra}
     return c.post("/api/orders", json=body, headers=headers)
 
 
@@ -94,11 +94,40 @@ def test_agent_keys_never_approve(shop, monkeypatch):
 
 def test_buyer_comes_from_the_agent_key(shop):
     assert order([("463335", 1)], buyer_id="other").status_code == 403
-    assert order([("463335", 1)], dict(MANDATE, buyer_id="other")).status_code == 403
-    assert order([("463335", 1)], headers={"X-Agent-Key": "agent-other"}).status_code == 403  # chef's mandate
     body = order([("463335", 1)], buyer_id="chef").json()
-    assert orders._store()[body["order_id"]]["buyer_id"] == "chef"
-    assert shop.calls and len(shop.calls) == 1
+    assert orders._store()[body["order_id"]]["buyer_id"] == "chef" and len(shop.calls) == 1
+
+
+def test_orders_are_judged_by_the_stored_mandate_never_the_clients(shop):
+    store_mandate(dict(MANDATE, hard_rules=[{"kind": "max_unit_price_cents", "value": 10}]))
+    r = c.post("/api/orders", headers=AG, json={"requested_date": REQ.isoformat(), "mandate": MANDATE,
+                                                "lines": [{"product_id": "463335", "quantity": 1}]})
+    assert r.status_code == 422 and shop.calls == []  # a body mandate is refused outright
+    body = c.post("/api/orders", headers=AG, json={"requested_date": REQ.isoformat(),
+                                                   "lines": [{"product_id": "463335", "quantity": 1}]}).json()
+    assert body["status"] == "refused" and body["decision"]["reasons"][0]["facts"]["max_cents"] == 10
+
+
+def test_no_stored_mandate_is_refused_without_calling_valio(shop):
+    r = c.post("/api/orders", headers={"X-Agent-Key": "agent-other"},  # "other" has no mandate on file
+               json={"requested_date": REQ.isoformat(), "lines": [{"product_id": "463335", "quantity": 1}]})
+    body = r.json()
+    assert r.status_code == 200 and body["status"] == "refused" and body["order_id"] is None
+    assert [x["code"] for x in body["decision"]["reasons"]] == ["MANDATE_MISSING"] and shop.calls == []
+    [entry] = c.get("/api/audit", headers={"X-Approver-Key": "appr-other"}).json()
+    assert entry["input"]["mandate"] is None and entry["decision"]["primary_reason"]["code"] == "MANDATE_MISSING"
+
+
+def test_approve_uses_the_current_stored_mandate(shop, monkeypatch):
+    m = dict(MANDATE, hard_rules=[{"kind": "auto_approve_limit_cents", "value": 100}])
+    oid = order([("463335", 1000)], m).json()["order_id"]
+    store_mandate(dict(m, hard_rules=m["hard_rules"] + [{"kind": "required_claim", "value": "VEGAN"}]))  # tightened
+    assert c.post(f"/api/orders/{oid}/approve", headers=AP).json()["status"] == "refused"
+    oid = order([("463335", 1000)], m).json()["order_id"]
+    from app import mandates
+    del mandates._MANDATES["chef"]  # mandate withdrawn while the order waited
+    body = c.post(f"/api/orders/{oid}/approve", headers=AP).json()
+    assert body["status"] == "refused" and body["decision"]["reasons"][0]["code"] == "MANDATE_MISSING"
 
 
 def test_approver_must_belong_to_the_orders_buyer_and_name_comes_from_the_key(shop):
@@ -198,17 +227,9 @@ def test_budget_change_between_decide_and_commit_is_redecided(shop, monkeypatch)
     assert body["decision"]["reasons"][0]["code"] == "WEEKLY_BUDGET_EXCEEDED" and len(shop.calls) == 2
 
 
-# 6. MEDIUM: size caps, file I/O off the loop, torn audit lines.
-@pytest.mark.parametrize("field,n,item", [
-    ("blocklist", 1001, "1"), ("hard_rules", 51, {"kind": "required_claim", "value": "VEGAN"}),
-    ("guidance", 51, {"text": "x", "scope": "always"}), ("open_questions", 21, {"question": "q"})])
-def test_mandate_lists_are_capped(shop, field, n, item):
-    assert order([("463335", 1)], dict(MANDATE, **{field: [item] * n})).status_code == 422
-    assert shop.calls == []
-
-
+# 6. MEDIUM: size cap (mandates are server-side now, so no list caps), file I/O off the loop, torn audit lines.
 def test_request_size_is_capped(shop):
-    assert order([("463335", 1)], dict(MANDATE, id="x" * 70_000)).status_code == 413
+    assert order([("463335", 1)], padding="x" * 70_000).status_code == 413
     chunks = iter([b'{"requested_date": "', REQ.isoformat().encode(), b'"}'])
     assert c.post("/api/orders", content=chunks, headers={**AG, "Content-Type": "application/json"}).status_code == 411
     assert shop.calls == []

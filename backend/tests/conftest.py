@@ -3,7 +3,9 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from app import catalogue, config, orders, valio
+from trade_contracts import Mandate
+
+from app import catalogue, config, mandates, orders, valio
 
 NOW = datetime.now(timezone.utc)
 REQ = date.today() + timedelta(days=2)
@@ -29,6 +31,11 @@ def quote(pid, model="Stock", amount=5000.0, cutoff=None, price=1.4, unit="ST", 
         "productId": pid, "catalogPrice": {"value": price} if price is not None else None, "netPriceFound": True,
         "comparisonPrice": {"value": price}, "comparisonUnit": "L"}
     return valio._merge(a, p, NOW)
+
+
+def store_mandate(m: dict) -> None:
+    """The mandate Valio has on file for m["buyer_id"] (orders never carry one)."""
+    mandates._MANDATES[m["buyer_id"]] = Mandate.model_validate(m)
 
 
 class Shop:
@@ -72,6 +79,7 @@ def shop(monkeypatch, tmp_path):
     monkeypatch.setattr(orders, "AUDIT_FILE", tmp_path / "audit.jsonl")
     monkeypatch.setattr(orders, "ORDERS_FILE", tmp_path / "orders.json")
     monkeypatch.setattr(orders, "_orders", None)
+    monkeypatch.setattr(mandates, "_MANDATES", dict(mandates._MANDATES))  # tests store their own; demo buyer kept
     monkeypatch.setattr(config, "AGENT_KEYS", "agent-chef=chef,agent-other=other")
     monkeypatch.setattr(config, "APPROVER_KEYS", "appr-chef=chef:Chef Aino,appr-other=other:Olli")
     return s
