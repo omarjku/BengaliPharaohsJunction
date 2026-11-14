@@ -221,6 +221,11 @@ re-checks fresh data at approval. `backend/app/auth.py`, `/api/audit`, and the
 `AuditEntry` contract scope and record the actors, reasons, quotes, and rejected
 options.
 
+
+**Where decisions are made, honestly.** `decision/` (`trade_decision.decide()`) is Zoha's standalone reference
+decision engine, with its own tests. The live decisions on every request are made by `backend/app/agent.py` (the
+buyer's agent) and `backend/app/gate.py` (Valio's front door). Both use the same contracts.
+
 ### J4 — Robustness to exceptions
 
 `backend/app/valio.py` makes cut-offs, sales blocks, undeliverable products,
