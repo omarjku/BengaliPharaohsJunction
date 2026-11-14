@@ -96,13 +96,18 @@ One box for kebab shops, cafés and restaurants, typed or spoken. Same door, sam
 |---|---|---|
 | 0.6 | 15 | 0 |
 | **0.7** | **14** | **0** |
-| 0.8 | 12 | 0 |
+| 0.8 | 11 | 0 |
+| 0.9 | 6 | 0 |
+
+![Each mark is one labelled case: green circle = right product, red diamond = wrong product; dashed line at 0.70](deck/assets/gemini-distribution.png)
+
+*n = 33 (28 "is it the product" + 5 "acceptable substitute"). Thresholds were tuned on this same set and 0.6 also had 0 wrong: this shows separation, not proof of calibration.*
 
 Sugar sachets for baking: **below 0.4** (eval). Coffee milk for "milk": a trap our QA caught, now in the eval.
 
 > **Notes:**
-> - Gemini Decisions API: calibrated P(yes) on 30 hand-labelled cases with real Valio products.
-> - Every trap scored at most 0.37. We set 0.70 from this: 93% of the right lines go through alone, versus 80% at 0.80.
+> - Gemini Decisions API: calibrated P(yes) on 33 hand-labelled cases with real Valio products.
+> - Every trap scored at most 0.26. We set 0.70 from this: 93% of the right lines go through alone, versus 73% at 0.80.
 > - The evaluation changed the agent: it now asks "is it the product?" and "is the quantity right?" separately.
 > - If Gemini is down, the agent asks the chef: it loses autonomy, not safety.
 

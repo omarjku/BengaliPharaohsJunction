@@ -82,7 +82,7 @@ signature base and the limits are in `docs/STANDARDS.md` ("Signed agent requests
 
 - **Unit and integration tests:** `cd backend && .venv/bin/python -m pytest -q tests` gives 434 passed
   (offline, with Valio and Gemini faked).
-- **Labelled Gemini evaluation:** `backend/eval/` has 30 cases with real Valio products. It set the 0.70 threshold,
+- **Labelled Gemini evaluation:** `backend/eval/` has 33 cases with real Valio products. It set the 0.70 threshold,
   and now includes the coffee-milk and coffee-cream traps.
 - **Two independent black-box QA rounds** against a real backend with the live Valio mock and live Gemini. The
   tester wrote the cases and expectations from the docs only, and read the code afterwards.

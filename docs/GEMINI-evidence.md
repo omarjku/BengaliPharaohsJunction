@@ -105,7 +105,7 @@ Accuracy at P(yes) ≥ 0.5 is **100 %** (30 of 30), and two runs gave identical 
 
 **Threshold: propose 0.70 for `lapland-kitchen`.** On this set it is as precise as 0.80 (100 %), handles 93 % of the right lines alone instead of 80 %, and still sits 0.33 above the worst trap. It also matters for the demo: the cheapest correct milk now scores 0.81, stable but only just over 0.80. It is a one-line per-buyer setting (`mandates._CONFIDENCE_THRESHOLDS`).
 
-**Threshold set to 0.70 from the eval on Sat 14 Nov: 100 % precision, 93 % recall** (for `lapland-kitchen`, `smoke-kitchen` and `helsinki-bistro`; unknown buyers keep the conservative 0.80 default). Live results above that say "asks at 0.80" (e.g. croissants at 0.74) were measured before this change. Thirty cases are evidence, not proof. Every chosen line's confidence goes to the audit log, so approvals and rejections there will grow the set.
+**Threshold set to 0.70 from the eval on Sat 14 Nov: 100 % precision, 93 % recall** (for `lapland-kitchen`, `smoke-kitchen` and `helsinki-bistro`; unknown buyers keep the conservative 0.80 default). Live results above that say "asks at 0.80" (e.g. croissants at 0.74) were measured before this change. Thirty-three cases are evidence, not proof. Every chosen line's confidence goes to the audit log, so approvals and rejections there will grow the set.
 
 ## Showcase 4: one input for everyone (`POST /api/agent/ask`)
 
@@ -171,7 +171,7 @@ No check was removed or loosened. The matcher is the same calibrated question th
 
 Room 1 measured on the live API: "1000 L lactose-free milk" auto-confirmed **Valio coffee milk** (0.72, just over the 0.70 threshold, cheapest at €1,300) while plain milks scored 0.96. "10 L lactose-free cream" picked coffee cream. Two fixes; the 0.70 threshold is unchanged, because it decides whether the agent may act alone, not which product wins:
 1. **Ranking:** among confident lines, a line more than **0.10** below the item's best confidence loses even if cheaper. Within that near-tie band, limits, Finnish preference and price decide as before.
-2. **Judge wording:** "is it the product?" now says that a narrower special-purpose variant the buyer didn't ask for (coffee milk or coffee cream for milk or cream) is not a match. Coffee milk for "lactose-free milk" fell from 0.72 to 0.12 (and still scores 0.91 when coffee milk is what was asked).
+2. **Judge wording:** "is it the product?" now says that a narrower special-purpose variant the buyer didn't ask for (coffee milk or coffee cream for milk or cream) is not a match. Coffee milk for "lactose-free milk" fell from 0.72 (from our notes) to 0.115 (the app shows 11%), both single-candidate calls, only the wording changed (and still scores 0.91 when coffee milk is what was asked).
 3. **Search recall:** a generic word like "cream" lists sour cream, ice cream and coffee cream first, and real creams only from hit ~21. The matcher now judges up to 36 hits in batches of 12, stopping at the first batch with real matches.
 
 **Eval** (33 cases, with three new coffee traps): **33/33**, 0 wrong autos at every threshold. At 0.70: precision 100 %, recall 93 %. Traps score ≤ 0.26, correct products ≥ 0.67.
