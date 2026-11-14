@@ -18,8 +18,17 @@ USER_AGENT = "BengaliPharaohs-Junction2026/0.1 (+https://github.com/omarjku/Beng
 MAX_BATCH = 1000
 UNKNOWN_QTY = 999999.0
 CACHE_TTL_S = 60  # ponytail: in-process dict cache, fine for one Render instance; use Redis/Postgres if we scale out
+CACHE_MAX = 20_000  # bound memory: the route is public, so ids/dates come from anyone
 
 _cache: dict[tuple[str, str], tuple[float, dict]] = {}
+
+
+def _prune(now: float) -> None:
+    """Drop expired entries; if still over the cap, drop the oldest (dicts keep insertion order)."""
+    for k in [k for k, (t, _) in _cache.items() if now - t >= CACHE_TTL_S]:
+        del _cache[k]
+    for k in list(_cache)[: max(0, len(_cache) - CACHE_MAX)]:
+        del _cache[k]
 
 
 def _client() -> httpx.AsyncClient:
@@ -79,9 +88,14 @@ async def get_quotes(product_ids: list[str], requested_date: str, customer: str 
     """Quotes for the given products and delivery date (YYYY-MM-DD), in request order. Cached for CACHE_TTL_S."""
     ids = list(dict.fromkeys(product_ids))  # dedupe, keep order
     fresh = time.monotonic()
-    todo = [i for i in ids if not ((c := _cache.get((i, requested_date))) and fresh - c[0] < CACHE_TTL_S)]
+    found: dict[str, dict] = {}
+    for i in ids:
+        if (c := _cache.get((i, requested_date))) and fresh - c[0] < CACHE_TTL_S:
+            found[i] = c[1]
+    todo = [i for i in ids if i not in found]
 
     if todo:
+        _prune(fresh)
         async with _client() as http:
             for start in range(0, len(todo), MAX_BATCH):
                 batch = todo[start:start + MAX_BATCH]
@@ -97,8 +111,9 @@ async def get_quotes(product_ids: list[str], requested_date: str, customer: str 
                     quote = _merge(item, prices.get(item["productId"]), now)
                     quote["currency"] = p_json.get("currency")
                     _cache[(item["productId"], requested_date)] = (fresh, quote)
+                    found[item["productId"]] = quote
 
-    return [_cache[(i, requested_date)][1] for i in ids if (i, requested_date) in _cache]
+    return [found[i] for i in ids if i in found]
 
 
 async def ping() -> bool:

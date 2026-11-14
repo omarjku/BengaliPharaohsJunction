@@ -1,7 +1,10 @@
 """Valio Aimo front door: API entry point. OpenAPI spec is served at /openapi.json, docs at /docs."""
+from datetime import date
+from typing import Annotated
+
 from fastapi import FastAPI
-from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from . import config, valio
 
@@ -23,13 +26,24 @@ def health() -> dict:
     }
 
 
+ProductId = Annotated[str, StringConstraints(pattern=r"^\d{1,12}$")]  # Valio product codes are short digit strings
+DATE_WINDOW_DAYS = 60
+
+
 class QuoteRequest(BaseModel):
-    product_ids: list[str] = Field(min_length=1, max_length=valio.MAX_BATCH, examples=[["463335", "463038"]])
-    requested_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$", examples=["2026-11-16"])
+    product_ids: list[ProductId] = Field(min_length=1, max_length=valio.MAX_BATCH, examples=[["463335", "463038"]])
+    requested_date: date = Field(examples=["2026-11-16"])
+
+    @field_validator("requested_date")
+    @classmethod
+    def near_today(cls, d: date) -> date:
+        if abs((d - date.today()).days) > DATE_WINDOW_DAYS:
+            raise ValueError(f"requested_date must be within {DATE_WINDOW_DAYS} days of today")
+        return d
 
 
 @app.post("/api/quotes")
 async def quotes(req: QuoteRequest) -> list[dict]:
     """Live price + availability from Valio for specific products, merged into one quote each,
     with explicit trap flags (cutoff_passed, quantity_unknown, undeliverable, out_of_stock, unknown_product)."""
-    return await valio.get_quotes(req.product_ids, req.requested_date)
+    return await valio.get_quotes(req.product_ids, req.requested_date.isoformat())
