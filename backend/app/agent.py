@@ -903,9 +903,13 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             # 0.96 for "lactose-free milk"). When every line is below the threshold, the most likely one goes first.
             best = max((ln["confidence"] for k, ln, _ in scored if not k[0] and ln["confidence"] is not None),
                        default=None)
+            # Within the near-tie band, a line Valio delivers on the day beats one that arrives later (black-box E3:
+            # rice and onion that couldn't come on time won over deliverable ones of similar confidence). Outside the
+            # band, confidence still leads; the threshold and the labels are untouched.
             scored = [((k[0], k[1], low := ln["confidence"] is None or ln["confidence"] < threshold,
-                        -(ln["confidence"] or 0) if low else 0,
-                        not low and best is not None and ln["confidence"] < best - NEAR_TIE) + k[2:], ln, a)
+                        best is not None and (ln["confidence"] or 0) < best - NEAR_TIE,
+                        any(r.code is C.DATE_NOT_HONOURED for r in a),
+                        -(ln["confidence"] or 0) if low else 0) + k[2:], ln, a)
                       for k, ln, a in scored]
 
             label = f"'{it['query']}'" + (f" ({', '.join(_claim_words(it['claims']) + ['no ' + catalogue.ALLERGEN_NAMES.get(a, a) for a in it['exclude_allergens']])})"
@@ -963,6 +967,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                 continue
             best["chosen"] = True
             chosen.append(best)
+            late_beaten = next((ln for k, ln, a in scored[1:] if not k[0] and k[4] and not scored[0][0][4]
+                                and (ln["confidence"] or 0) > (best["confidence"] or 0)), None)
             best["usual"] = best["product"]["id"] in usual
             reasons += _label_reasons(it, best)
             late = next((r for r in best_asks if r.code is C.DATE_NOT_HONOURED), None)  # QA VT-05: say it plainly
@@ -970,6 +976,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                     else f"orderable for {requested}")
             best["why"] = (f"Best match for {label}: {_name(best['product'])}, {_offer(best)}, {when}. "
                            + ("You usually order this. " if best["usual"] else "")
+                           + (f"{_name(late_beaten['product'])} can't be delivered by {requested}, so this one. "
+                              if late_beaten else "")
                            + best["quantity"]["explanation"] + (" " + best["why"] if best_asks else "")
                            + _decided_by(scored) + _facts_text(best["facts"]))
             if best["quantity"]["needs_confirmation"]:
