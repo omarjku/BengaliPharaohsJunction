@@ -241,18 +241,22 @@ class AgentRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str = Field(min_length=1, max_length=2000, examples=["1000 L lactose-free milk for Monday"])
     requested_date: date = Field(examples=["2026-11-16"])
-    buyer_id: BuyerId = Field(examples=["lapland-kitchen"])
+    buyer_id: BuyerId | None = Field(default=None, examples=["lapland-kitchen"],
+                                     description="Optional; the buyer is the X-Agent-Key's and this must match it.")
 
     @field_validator("requested_date")
     @classmethod
     def near_today(cls, d: date) -> date:
-        return QuoteRequest.near_today(d)
+        return OrderRequest.near_today(d)
 
 
 @app.post("/api/agent/run")
-async def agent_run(req: AgentRunRequest) -> dict:
-    """The buyer's agent end to end. The mandate is loaded server-side for buyer_id (never from the client).
+async def agent_run(req: AgentRunRequest, who: Agent) -> dict:
+    """The buyer's agent end to end. Needs X-Agent-Key: the buyer comes from the key, and the mandate is loaded
+    server-side for that buyer (never from the client).
     Returns {request, lines, decision, order, audit_id}: every candidate quoted (chosen or not, with why), a contract
     Decision, the front door's order response when an order was placed (else null), and the audit entry id."""
+    if (req.buyer_id or who.buyer_id) != who.buyer_id:
+        raise HTTPException(403, detail="This agent key may only run the agent for its own buyer")
     _catalogue_ready()
-    return await agent.run(req.text, req.requested_date, req.buyer_id)
+    return await agent.run(req.text, req.requested_date, who.buyer_id)
