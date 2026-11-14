@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { placeOrder, planMenu } from './api'
-import { STATUS, unitName } from './copy'
+import { amountOf, headline, humanize, tidyName } from './copy'
 import { errorText, formatCents, formatDay, nextMonday } from './format'
 import { RunResult } from './RunResult'
 import type { Line, MenuRun, OrderResponse } from './types'
@@ -13,7 +13,7 @@ type Props = {
 
 const MENU_EXAMPLE = 'Creamy salmon soup; lingonberry quark pie'
 const PLANNING = 'Reading the menu, estimating amounts per cover, then checking Valio stock and prices…'
-const productName = (l: Line) => l.product.name_en ?? l.product.name_fi ?? l.product.id
+const productName = (l: Line) => tidyName(l.product.name_en ?? l.product.name_fi ?? l.product.id)
 const amount = (n: number | null, unit: string | null) => [n?.toLocaleString('en-US'), unit].filter(Boolean).join(' ')
 const and = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`)
 
@@ -29,12 +29,25 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
   const [ordered, setOrdered] = useState<OrderResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
+  // The order button comes after the cart, and on a phone it floats only once the total has been seen.
+  const totalRef = useRef<HTMLDivElement>(null)
+  const [totalSeen, setTotalSeen] = useState(false)
+  useEffect(() => {
+    const el = totalRef.current
+    if (!el || totalSeen) return
+    const io = new IntersectionObserver(([e]) => e.isIntersecting && setTotalSeen(true), { threshold: 1 })
+    io.observe(el)
+    return () => io.disconnect()
+  })
+  // The decision's reasons about a product in the cart (not the generic 'amounts are estimates' one).
+  const concerns = (l: Line) =>
+    plan?.decision.reasons.filter((r) => r.product_id === l.product.id && r.severity !== 'INFO' && r.code !== 'MENU_ASSUMPTIONS') ?? []
   const n = Number(covers)
   const coversOk = Number.isInteger(n) && n >= 1 && n <= 2000
 
   useEffect(() => {
     if (!plan) return
-    onAnnounce(`${STATUS.ASK_HUMAN}. A cart for ${planFor.covers} covers, ${formatCents(plan.cart_total_cents)}.`)
+    onAnnounce(`Ready to order. A cart for ${planFor.covers} covers, ${formatCents(plan.cart_total_cents)}.`)
     heading.current?.focus()
   }, [plan, planFor.covers, onAnnounce])
 
@@ -43,6 +56,7 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
     setRunning(true)
     setError(null)
     setPlan(null)
+    setTotalSeen(false)
     setOrdered(null)
     onAnnounce('Planning the cart…')
     try {
@@ -85,6 +99,12 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
           maxLength={4000}
           value={text}
           onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault()
+              e.currentTarget.form?.requestSubmit()
+            }
+          }}
           placeholder={MENU_EXAMPLE}
           required
         />
@@ -153,43 +173,13 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
       {plan && !ordered && (
         <>
           <section className="answer" aria-label="Proposed cart">
-            <p className="status warn">{STATUS.ASK_HUMAN}</p>
+            <p className="status neutral">Ready to order</p>
             <h2 ref={heading} tabIndex={-1} className="answer-text">
               A cart for {planFor.covers.toLocaleString('en-US')} covers, {formatCents(plan.cart_total_cents)}.
             </h2>
             <p className="answer-sub">
-              The amounts per cover are the agent’s estimates. Check them below, then order. Delivery{' '}
-              {formatDay(planFor.date)}, prices before VAT.
+              Portions are estimates. Check them before you order. Delivery {formatDay(planFor.date)}, prices excl. VAT.
             </p>
-            {plan.order_lines.length > 0 && (
-              <div className="decide">
-                <button type="button" className="btn" onClick={orderCart} disabled={ordering}>
-                  {ordering ? 'Ordering…' : 'Order this cart'}
-                </button>
-              </div>
-            )}
-          </section>
-
-          <section className="instead" aria-labelledby="menu-dishes">
-            <h2 className="title" id="menu-dishes">
-              The menu
-            </h2>
-            {plan.menu.dishes.map((d) => (
-              <div key={d.name}>
-                <h3 className="dish">{d.name}</h3>
-                <ul>
-                  {d.ingredients.map((i, k) => (
-                    <li key={k} className="alt">
-                      <div>
-                        <p>{i.name}</p>
-                        {i.assumption && <p className="quiet small">{i.assumption}</p>}
-                      </div>
-                      <p className="alt-side quiet">{i.per_cover != null ? `${amount(i.per_cover, i.unit)} per cover` : 'Amount unclear'}</p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
           </section>
 
           <section className="instead" aria-labelledby="menu-cart">
@@ -206,14 +196,23 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
                     {amount(ing.amount, ing.unit)} {ing.query}
                   </p>
                   <p className="quiet small">For {and(ing.dishes)}</p>
-                  {chosen.length === 0 && <p className="option-why warn">Nothing on Valio’s list fits this yet.</p>}
+                  {chosen.length === 0 && (
+                    <p className="option-why warn">
+                      {others.length ? 'No confident match, so nothing is in the cart for this. See the options.' : 'Nothing on Valio’s list fits this.'}
+                    </p>
+                  )}
                   {chosen.map((l) => (
                     <div key={l.product.id} className="split-row">
                       <span>{productName(l)}</span>
                       <span className="qty r">
-                        {l.quantity?.quantity != null ? `${l.quantity.quantity.toLocaleString('en-US')} × ${unitName(l.quantity.sales_unit)}` : 'Amount unclear'}
+                        {l.quantity?.quantity != null ? amountOf(l.quantity.quantity, l.quantity.sales_unit) : 'Amount unclear'}
                       </span>
                       <span className="r">{l.line_total_cents !== null ? formatCents(l.line_total_cents) : '—'}</span>
+                      {concerns(l).map((r, k) => (
+                        <span key={k} className="option-why warn concern">
+                          {headline({ ...r, message: humanize(r.message) })}
+                        </span>
+                      ))}
                     </div>
                   ))}
                   {others.length > 0 && (
@@ -232,10 +231,46 @@ export function MenuPlanner({ onAction, onBusy, onAnnounce }: Props) {
                 </div>
               )
             })}
-            <div className="split-total">
+            <div className="split-total" ref={totalRef}>
               <span>
-                <strong>{formatCents(plan.cart_total_cents)}</strong> <span className="quiet">before VAT</span>
+                <strong className="num">{formatCents(plan.cart_total_cents)}</strong> <span className="quiet">excl. VAT</span>
               </span>
+            </div>
+            {plan.order_lines.length > 0 && (
+              <div className={`decide${totalSeen ? ' floating' : ''}`}>
+                <button type="button" className="btn" onClick={orderCart} disabled={ordering}>
+                  {ordering ? 'Ordering…' : `Order this cart · ${formatCents(plan.cart_total_cents)}`}
+                </button>
+              </div>
+            )}
+          </section>
+
+          <section className="instead" aria-labelledby="menu-dishes">
+            <h2 className="title" id="menu-dishes">
+              Amounts per cover
+            </h2>
+            <div className="more flush">
+              {plan.menu.dishes.map((d) => (
+                <details key={d.name}>
+                  <summary>
+                    {d.name}
+                    <span className="quiet small summary-count">
+                      {d.ingredients.length} ingredients
+                    </span>
+                  </summary>
+                  <ul className="more-body">
+                    {d.ingredients.map((i, k) => (
+                      <li key={k} className="option">
+                        <div>
+                          <p>{i.name}</p>
+                          {i.assumption && <p className="quiet small">{i.assumption}</p>}
+                        </div>
+                        <p className="option-side quiet">{i.per_cover != null ? `${amount(i.per_cover, i.unit)} per cover` : 'Amount unclear'}</p>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ))}
             </div>
           </section>
         </>

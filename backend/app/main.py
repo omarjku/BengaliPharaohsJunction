@@ -298,6 +298,32 @@ def verify_statement(req: VerifyRequest) -> dict:
             "meaning": "Issued by this Valio front door, unchanged." if ok else "Not issued by this front door, or changed."}
 
 
+class DemoReset(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    restore_mandate: bool = False
+
+
+def _demo_status() -> dict:
+    return {"demo_reset_enabled": config.DEMO_RESET_ENABLED, "signing_kid": signing.KID, "buyers": orders.budgets()}
+
+
+@app.get("/api/admin/demo/status")
+def demo_status(who: Annotated[auth.Principal, Depends(auth.valio_admin)]) -> dict:
+    """Pre-demo checklist data: weekly budget used / left and confidence threshold per buyer, signing key id.
+    Needs X-Valio-Admin-Key; read-only."""
+    return _demo_status()
+
+
+@app.post("/api/admin/demo/reset")
+async def demo_reset(who: Annotated[auth.Principal, Depends(auth.valio_admin)], body: DemoReset | None = None) -> dict:
+    """Archive orders, audit trail and idempotency keys to DATA_DIR/archive/<timestamp>/ and start empty (nothing is
+    deleted); saved mandates stay unless restore_mandate=true. Only when DEMO_RESET_ENABLED=1. Needs X-Valio-Admin-Key."""
+    if not config.DEMO_RESET_ENABLED:
+        raise HTTPException(404, detail="Demo reset is not enabled on this server")
+    done = await orders.demo_reset(who.name, bool(body and body.restore_mandate))
+    return {**done, **_demo_status()}
+
+
 @app.get("/api/admin/audit")
 def admin_audit(who: Annotated[auth.Principal, Depends(auth.valio_admin)], buyer_id: BuyerId | None = None,
                 outcome: Literal["AUTO", "ASK_HUMAN", "DECLINE"] | None = None,

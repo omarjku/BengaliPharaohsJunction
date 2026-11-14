@@ -7,7 +7,7 @@
 //   anything else                        -> AUTO, order confirmed (small butter order)
 import type {
   AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
-  MenuInput, MenuRun, Product, Quote, QuantityResolution, Reason, RunInput, Substitute,
+  CompileResult, Mandate, MenuInput, MenuRun, Product, RuleChange, SaveResult, Quote, QuantityResolution, Reason, RunInput, Substitute,
 } from './types'
 
 const NOW = '2026-11-14T10:00:00+00:00'
@@ -147,6 +147,17 @@ const DRINK: Fixture = {
       confidence: 0.72,
       confidence_reason: 'A fat-free UHT drink; "milk drink" could also mean the regular Eila drink.',
       facts: { delivery_reliability: 0.947, carbon_kg_per_kg: 1.0, origin: 'fi' },
+    },
+    {
+      product: product({ id: '463335', name_en: 'Valio Eila® 3 % milk drink 1 l lactose free', sales_unit: 'ST', delivery_reliability: 1.0 }),
+      quote: quote({ product_id: '463335', price: 1.56, comparison_price: 1.56, comparison_unit: 'L', available_amount: 2400 }),
+      quantity: qty('463335', 200, 'L', 'ST', 200, 1, '200 L ÷ 1 L per ST (1 LTR per ST) = 200 ST.'),
+      line_total_cents: 31200,
+      why: 'The regular Eila milk drink, in stock for Monday.',
+      chosen: false,
+      confidence: 0.69,
+      confidence_reason: 'A milk drink, but the request didn’t say lactose free.',
+      facts: { delivery_reliability: 1.0, carbon_kg_per_kg: 1.1, origin: 'fi' },
     },
   ],
   decision: decision(
@@ -395,7 +406,119 @@ const MENU: Omit<MenuRun, 'audit_id'> = {
   ),
 }
 
+// --- Rules: the seeded Lapland kitchen mandate, a tiny rule reader, and the backend's diff wording.
+let mandate: Mandate = {
+  contract_version: '0.2', id: 'lapland-kitchen-2026-11', buyer_id: 'lapland-kitchen', uncertainty_policy: 'ask',
+  hard_rules: [
+    { kind: 'excluded_allergen', value: 'AP', scope: 'always', source_text: 'Our kitchen is peanut-free.' },
+    { kind: 'auto_approve_limit_cents', value: 150000, scope: 'always', source_text: 'Order on your own up to 1,500 euros per order; above that, ask me.' },
+    { kind: 'min_delivery_reliability', value: 0.9, scope: 'always', source_text: 'Deliveries up here are fragile: ask me before anything that arrives on time under 90%.' },
+  ],
+  guidance: [{ text: 'Prefer Finnish-origin products when the price is similar.', scope: 'always' }],
+  open_questions: [], blocklist: [], per_line_cap_cents: 200000, weekly_budget_cents: 600000, expires_at: null,
+}
+const ALLERGEN_WORDS: [RegExp, string, string][] = [
+  [/peanut/i, 'AP', 'peanuts'], [/gluten/i, 'AW', 'gluten (cereals)'], [/\bmilk|dairy/i, 'AM', 'milk'], [/\begg/i, 'AE', 'egg'],
+  [/\bfish/i, 'AF', 'fish'], [/tree nut|\bnuts?\b/i, 'AN', 'tree nuts'], [/\bsoy/i, 'AY', 'soy'], [/sesame/i, 'AS', 'sesame'],
+]
+const eurText = (c: number | null) => (c == null ? 'none' : `EUR ${(c / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}`)
+const money = (s: string) => Math.round(Number(s.replace(/[,\s]/g, '')) * 100)
+
+function readRules(text: string): Mandate {
+  const sentences = text.split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).filter(Boolean)
+  const said = (re: RegExp) => sentences.find((x) => re.test(x)) ?? null
+  const rules: Mandate['hard_rules'] = []
+  for (const [re, code] of ALLERGEN_WORDS) {
+    const s = said(re)
+    if (s && !/prefer/i.test(s)) rules.push({ kind: 'excluded_allergen', value: code, scope: 'always', source_text: s })
+  }
+  const auto = said(/(up to|on (its|your) own)[^.]*?(€\s?)?\d[\d,]*/i)
+  const autoV = auto && /(?:€\s?)?(\d[\d,]*)\s*(?:€|euros?)?/i.exec(auto.replace(/^[^\d€]*/, ''))
+  rules.push({ kind: 'auto_approve_limit_cents', value: autoV ? money(autoV[1]) : 50000, scope: 'always', source_text: auto ?? 'Default: no auto-approve limit was stated.' })
+  const rel = said(/on time[^.]*?\d+\s*%/i)
+  if (rel) rules.push({ kind: 'min_delivery_reliability', value: Number(/(\d+)\s*%/.exec(rel)![1]) / 100, scope: 'always', source_text: rel })
+  const line = said(/one product|per line/i)
+  const week = said(/a week|per week|weekly/i)
+  const local = said(/local/i)
+  return {
+    ...mandate, id: 'lapland-kitchen-draft', hard_rules: rules,
+    guidance: sentences.filter((x) => /^prefer/i.test(x)).map((t) => ({ text: t, scope: 'always' })),
+    per_line_cap_cents: line ? money(/(\d[\d,]*)/.exec(line)![1]) : 30000,
+    weekly_budget_cents: week ? money(/(\d[\d,]*)/.exec(week)![1]) : null,
+    open_questions: local && !/finnish|finland/i.test(local)
+      ? [{ question: `I noted “${local}” as a wish, but I can’t check “local” automatically yet. Should I ask you about it on each order?`, why: 'No automatic check exists yet for this kind of rule.' }]
+      : [],
+  }
+}
+
+function diffRules(a: Mandate, b: Mandate): RuleChange[] {
+  const out: RuleChange[] = []
+  const add = (field: string, before: unknown, after: unknown, change: RuleChange['change'], text: string, large = false) =>
+    out.push({ field, before, after, change, text, needs_confirmation: large })
+  const num = (m: Mandate, kind: string) => {
+    const v = m.hard_rules.filter((r) => r.kind === kind).map((r) => Number(r.value))
+    return v.length ? Math.min(...v) : null
+  }
+  const limits: [string, string, (m: Mandate) => number | null][] = [
+    ['auto_approve_limit_cents', 'auto-approve limit per order', (m) => num(m, 'auto_approve_limit_cents')],
+    ['per_line_cap_cents', 'per-line cap', (m) => m.per_line_cap_cents],
+    ['weekly_budget_cents', 'weekly budget', (m) => m.weekly_budget_cents],
+  ]
+  for (const [field, label, get] of limits) {
+    const x = get(a), y = get(b)
+    if (x !== y) {
+      const looser = y === null || (x !== null && y > x)
+      add(field, x, y, looser ? 'looser' : 'tighter', `${label}: ${eurText(x)} → ${eurText(y)}${y === null ? ' (no limit at all)' : ''}`,
+        looser && (y === null || (x !== null && y / x > 10)))
+    }
+  }
+  const set = (m: Mandate) => new Set(m.hard_rules.filter((r) => r.kind === 'excluded_allergen').map((r) => String(r.value)))
+  const name = (c: string) => ALLERGEN_WORDS.find(([, code]) => code === c)?.[2] ?? c
+  const [xa, ya] = [set(a), set(b)]
+  for (const v of ya) if (!xa.has(v)) add('excluded_allergens', null, v, 'tighter', `new excluded allergen: ${name(v)}`)
+  for (const v of xa) if (!ya.has(v)) add('excluded_allergens', v, null, 'looser', `excluded allergen removed: ${name(v)}`, true)
+  const xr = a.hard_rules.find((r) => r.kind === 'min_delivery_reliability')?.value ?? null
+  const yr = b.hard_rules.find((r) => r.kind === 'min_delivery_reliability')?.value ?? null
+  if (xr !== yr) {
+    const pct = (v: unknown) => (v === null ? 'none' : `${Math.round(Number(v) * 100)}%`)
+    const looser = yr === null || (xr !== null && Number(yr) < Number(xr))
+    add('min_delivery_reliability', xr, yr, looser ? 'looser' : 'tighter', `on-time delivery floor: ${pct(xr)} → ${pct(yr)}`, looser && yr === null)
+  }
+  const g = (m: Mandate) => m.guidance.map((x) => x.text).sort()
+  if (JSON.stringify(g(a)) !== JSON.stringify(g(b))) add('guidance', g(a), g(b), 'changed', 'guidance changed (soft or administrative)')
+  return out
+}
+
 export const mockApi = {
+  async getMandate(): Promise<Mandate> {
+    await wait()
+    return structuredClone(mandate)
+  },
+
+  async compile(text: string): Promise<CompileResult> {
+    await wait()
+    const proposed = readRules(text)
+    return {
+      proposed_mandate: proposed, diff_from_current: diffRules(mandate, proposed), open_questions: proposed.open_questions,
+      assumptions: [
+        'Money amounts are read as net of VAT (Valio’s customer price without VAT).',
+        'Rules apply to every order unless you said ‘this order’.',
+        'Anything you didn’t mention goes back to the safe default; see the changes list.',
+      ],
+      used_fallback: false, injection_flagged: /ignore (all|previous)/i.test(text),
+    }
+  },
+
+  async saveMandate(next: Mandate): Promise<SaveResult> {
+    await wait()
+    if (next.open_questions.length) throw new Error('Request failed (422): Answer the open questions first (or remove them), then save.')
+    const changes = diffRules(mandate, next)
+    mandate = { ...structuredClone(next), id: `lapland-kitchen-${Date.now()}` }
+    const d = decision('AUTO', changes.map((c) => reason('LIMIT_CHANGE_ATTEMPT', 'INFO', `Chef (mock key) changed the rules: ${c.text} (${c.change}).`)))
+    return { mandate: structuredClone(mandate), changes, audit_id: log('human:Chef (mock key):mandate', 'lapland-kitchen', `Rules changed by Chef (mock key): ${changes.map((c) => c.text).join('; ') || 'no changes'}`, d) }
+  },
+
+
   async menu(input: MenuInput): Promise<MenuRun> {
     await wait()
     if (input.menu_text.toLowerCase().includes('error')) throw new Error('Request failed (500): mock backend error')
@@ -414,7 +537,7 @@ export const mockApi = {
     const text = input.text.toLowerCase()
     if (text.includes('error')) throw new Error('Request failed (500): mock backend error')
     const f = structuredClone(
-      /stock|split/.test(text) ? SHORT : /drink/.test(text) ? DRINK : /1[ ,]?000/.test(text) ? MILK : /cream|tomorrow/.test(text) ? CREAM : BUTTER,
+      /stock|split/.test(text) || (/butter/.test(text) && /1[ ,]?000/.test(text)) ? SHORT : /drink/.test(text) ? DRINK : /1[ ,]?000/.test(text) ? MILK : /cream|tomorrow/.test(text) ? CREAM : BUTTER,
     )
     const buyer = input.buyer_id ?? 'lapland-kitchen' // the real backend takes it from the agent key
     const chosen = f.lines.filter((l) => l.chosen)
@@ -479,9 +602,10 @@ export const mockApi = {
     return o.res
   },
 
-  async order(orderId: string): Promise<{ signed_off_by: string | null }> {
+  async order(orderId: string): Promise<{ signed_off_by: string | null; status: OrderStatus }> {
     await wait()
-    return { signed_off_by: orders.get(orderId)?.signedOffBy ?? null }
+    const o = orders.get(orderId)
+    return { signed_off_by: o?.signedOffBy ?? null, status: o?.res.status ?? 'refused' }
   },
 
   async audit(): Promise<AuditEntry[]> {
