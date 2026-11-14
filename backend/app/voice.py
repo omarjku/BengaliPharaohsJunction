@@ -88,7 +88,8 @@ async def live_transcribe(pcm: bytes) -> str:
                        "generationConfig": {"responseModalities": ["TEXT" if "transcribe" in model else "AUDIO"]},
                        "inputAudioTranscription": {},
                        "realtimeInputConfig": {"automaticActivityDetection": {"disabled": True}},
-                       "systemInstruction": {"parts": [{"text": "Only listen. Reply with the single word OK."}]}}}
+                       "systemInstruction": {"parts": [{"text": "Only listen. Reply with the single word OK. The speaker uses English "
+                       "or Finnish only: transcribe in whichever of the two is spoken, never in any other language."}]}}}
     async with connect(LIVE_URL, additional_headers={"x-goog-api-key": config.GEMINI_API_KEY}, max_size=2**20) as ws:  # bounded frames
         await ws.send(json.dumps(setup))
         if "setupComplete" not in json.loads(await asyncio.wait_for(ws.recv(), TIMEOUT_S)):

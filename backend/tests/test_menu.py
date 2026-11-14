@@ -134,8 +134,8 @@ def test_menu_dietary_words_are_enforced_or_asked(shop1, monkeypatch):
         {"name": "sugar", "per_cover": 20, "unit": "g", "assumption": "x", "dietary": []}]}
     fake_gemini(monkeypatch, [cake])
     body = post("Nut-free, lactose-free cheesecake").json()
-    msgs = " ".join(r["message"] for r in body["decision"]["reasons"])
-    assert "lactose-free for Cheesecake, but no ingredient" in msgs  # claim nobody carries → ask
+    milk = next(item for item in body["ingredients"] if item["query"] == "milk")
+    assert milk["claims"] == ["FREE_FROM_LACTOSE"]
     assert all(i["exclude_allergens"] == ["AN", "AP"] for i in body["ingredients"])  # exclusion → every ingredient
     fake_gemini(monkeypatch, [PORRIDGE])
     body = post("Porridge with milk; everything vegan").json()  # a word no dish line owns

@@ -80,21 +80,13 @@ def dish_tags(menu_text: str, dish: str) -> list[str]:
 
 
 def apply_dietary(menu_text: str, dishes: list[dict]) -> list[Reason]:
-    """Security guard (sibling of the request flow's): stated dietary needs are enforced or asked, never dropped.
-    Allergen exclusions ('nut-free') go on every ingredient of that dish; a claim ('lactose-free') that no ingredient
-    of the dish carries is asked (putting it on the potatoes would just find nothing)."""
+    """Attach a dish's diet context to every ingredient; suitability decides which lines need a label."""
     problems, owned = [], set()
     for d in dishes:
         tags = dish_tags(menu_text, d["name"])
         owned |= set(tags)
-        for t in (t for t in tags if agent.DIETARY[t][1]):  # allergen exclusions: enforce on every ingredient
-            for ing in d["ingredients"]:
-                ing["dietary"] = list(dict.fromkeys(list(ing.get("dietary") or []) + [t]))
-        for t in (t for t in tags if agent.DIETARY[t][0]):  # claims: some ingredient must carry it
-            if not any(t in (ing.get("dietary") or []) for ing in d["ingredients"]):
-                problems.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The menu says {t.replace('_', '-')} for "
-                                        f"{d['name']}, but no ingredient in the cart carries that need.", None,
-                                        "Check which ingredients must be " + t.replace("_", "-") + "."))
+        for ing in d["ingredients"]:
+            ing["dietary"] = list(dict.fromkeys(list(ing.get("dietary") or []) + tags))
     lost = sorted({tag for word, tag in agent._WORDS.items() if word in menu_text.lower()} - owned)
     if lost:
         problems.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The menu says {', '.join(t.replace('_', '-') for t in lost)}"
@@ -285,7 +277,8 @@ def scale(dishes: list[dict], covers: int) -> tuple[list[dict], list[dict], list
     ingredients = []
     for m in merged.values():
         amount = math.ceil(m["base"] * 1000) / 1000  # round UP to 3 decimals: never under-order a booked service
-        it = agent._item(m["query"], amount, BASE_UNIT[m["dim"]], m["tags"])
+        it = agent._item(m["query"], amount, BASE_UNIT[m["dim"]], [])
+        it["dietary"] = list(dict.fromkeys(m["tags"]))
         ingredients.append(it | {"dishes": m["dishes"]})
     return ingredients, assumptions, problems
 
@@ -427,16 +420,6 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
                                "Split the menu into smaller parts."))
         ingredients = ingredients[:MAX_INGREDIENTS]
     items = ingredients  # agent.canonical() tells the judge which dishes each ingredient is for
-    needs = sorted({c for i in ingredients for c in i.get("claims") or []})
-    if needs:  # said once for the cart, in plain words; each unlabelled line then says "check the label"
-        words = agent._claim_words(needs)
-        rule = (f"{words[0].capitalize()}: I only pick products Valio labels {words[0]}." if len(words) == 1 else
-                f"{' and '.join(words).capitalize()}: where an ingredient needs it, I only pick products Valio labels "
-                "that way.")
-        reasons.append(gate._r(C.MENU_ASSUMPTIONS, gate.INFO, rule + " Where Valio labels none (often cheese, oil or "
-                               "butter), the closest product is shown and the line says 'check the label'.", None, None,
-                               claims=", ".join(needs)))
-
     level = agent.spare_level(buyer_id)
     spare_task = asyncio.create_task(agent.spare_proposals(ingredients, menu_text) if level != "none" else agent.empty())
     res, checks = await asyncio.gather(  # pricing and the assumption checks run side by side
@@ -450,6 +433,11 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str, d
                                    "that it belongs and the amount is reasonable).", None,
                                    "Correct the amount or remove the ingredient before ordering.", check=y))
     lines, chosen = res["lines"], res["chosen"]
+    for ingredient in ingredients:
+        ingredient["diet_checks"] = []
+    for line in lines:
+        if line.get("chosen"):
+            ingredients[line["item"]]["diet_checks"] = list(line.get("diet_checks") or [])
     for ln in lines:
         ln["dishes"] = ingredients[ln["item"]]["dishes"]
         ln.pop("_weakest", None)

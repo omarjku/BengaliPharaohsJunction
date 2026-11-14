@@ -83,7 +83,9 @@ def test_menu_says_the_dietary_rule_once_for_the_cart(shop1, monkeypatch):  # no
     body = r.json()
     cart = [x for x in reasons(body) if x["code"] == "MENU_ASSUMPTIONS" and x["severity"] == "INFO"
             and x["message"].startswith("Gluten-free")]
-    assert len(cart) == 1 and cart[0]["message"].startswith("Gluten-free: I only pick products Valio labels gluten-free")
+    assert cart == []
+    assert any("because" in line["why"].lower() and "gluten-free" in line["why"].lower()
+               for line in body["lines"] if line["chosen"])
     assert any(x["code"] == "DATA_MISSING" and "mozzarella" in x["message"] for x in reasons(body))
 
 
