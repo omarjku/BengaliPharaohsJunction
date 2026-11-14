@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
-from . import agent, catalogue, config, orders, profile
+from . import agent, catalogue, config, orders, profile, sandbox
 
 HELSINKI = ZoneInfo("Europe/Helsinki")
 SEED = Path(__file__).with_name("kitchen_seed.json")
@@ -167,14 +167,23 @@ def _amount(rng: random.Random, spec: dict):
     return round(rng.uniform(lo, hi), 1)
 
 
+def _seed_buyer(buyer_id: str) -> str:
+    return sandbox.TEMPLATE if sandbox.is_sandbox_buyer(buyer_id) else buyer_id
+
+
+def _seed_for(buyer_id: str) -> dict | None:
+    return SEEDS.get(_seed_buyer(buyer_id))
+
+
 def _seed_rows(buyer_id: str, end: date) -> list[dict]:
-    pattern = SEEDS.get(buyer_id)
+    seed_buyer = _seed_buyer(buyer_id)
+    pattern = SEEDS.get(seed_buyer)
     if not pattern:
         return []
     rows = []
     for offset in range(55, -1, -1):
         when = end - timedelta(days=offset)
-        rng = random.Random(f"{buyer_id}-{when.isoformat()}")
+        rng = random.Random(f"{seed_buyer}-{when.isoformat()}")
         low, high = pattern["covers"][DAY_KEYS[when.weekday()]]
         covers = rng.randint(low, high)
         revenue = round(covers * pattern["revenue_per_cover_eur"] * rng.uniform(0.95, 1.05), 2)
@@ -372,7 +381,7 @@ def ghost_staples(habits: list[dict], cart_product_ids: list, pantry_product_ids
 
 
 def _simulated_order_history(buyer_id: str) -> dict | None:
-    ledger = (SEEDS.get(buyer_id) or {}).get("simulated_order_ledger")
+    ledger = (_seed_for(buyer_id) or {}).get("simulated_order_ledger")
     if not isinstance(ledger, list):
         return None
     weekdays = {}
@@ -405,7 +414,7 @@ def kitchen_context(buyer_id: str, now: datetime | None = None) -> dict:
         if row.get("covers") is not None:
             weekday_values[DAY_KEYS[date.fromisoformat(row["date"]).weekday()]].append(row["covers"])
     avg = {key: (round(sum(values) / len(values), 1) if values else None) for key, values in weekday_values.items()}
-    pattern = SEEDS.get(buyer_id) or {}
+    pattern = _seed_for(buyer_id) or {}
     busiest = list(pattern.get("busiest_days") or [])
     if not busiest:
         busiest = sorted(DAY_KEYS, key=lambda key: (-(avg[key] or -1), DAY_KEYS.index(key)))[:2] if rows else []

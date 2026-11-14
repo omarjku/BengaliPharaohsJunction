@@ -13,7 +13,7 @@ from typing import Annotated
 
 from fastapi import Header, HTTPException, Request
 
-from . import config
+from . import config, sandbox
 
 
 @dataclass(frozen=True)
@@ -35,15 +35,19 @@ def _parse(spec: str) -> list[tuple[bytes, Principal]]:
     return out
 
 
-def _match(spec: str, key: str | None, what: str) -> Principal:
+def _match(spec: str, key: str | None, what: str, role: str) -> Principal:
     keys = _parse(spec)
-    if not keys:
-        raise HTTPException(503, detail=f"{what} keys are not configured on this server")
     hit = None
     for k, p in keys:  # compare against every key, constant time each
         if hmac.compare_digest(k, (key or "").encode()):
             hit = p
     if hit is None:
+        if credential := sandbox.lookup(key, role):
+            return Principal(credential.buyer_id, credential.name, credential.buyer_id)
+        if key and sandbox.recognizes(key):
+            raise HTTPException(401, detail=f"Missing or invalid {what} key")
+        if not keys:
+            raise HTTPException(503, detail=f"{what} keys are not configured on this server")
         raise HTTPException(401, detail=f"Missing or invalid {what} key")
     return hit
 
@@ -53,14 +57,14 @@ def _listed(spec: str, key: str) -> bool:
 
 
 def _agent(key: str | None) -> Principal:
-    p = _match(config.AGENT_KEYS, key, "X-Agent-Key")
+    p = _match(config.AGENT_KEYS, key, "X-Agent-Key", "agent")
     if _listed(config.VALIO_ADMIN_KEYS, key):  # same secret listed twice: the read-only role wins
         raise HTTPException(403, detail="A Valio admin key is read-only")
     return p
 
 
 def _approver(key: str | None) -> Principal:
-    p = _match(config.APPROVER_KEYS, key, "X-Approver-Key")
+    p = _match(config.APPROVER_KEYS, key, "X-Approver-Key", "approver")
     if _listed(config.AGENT_KEYS, key):
         raise HTTPException(403, detail="An agent key can never sign off")  # same secret listed in both: refuse
     if _listed(config.VALIO_ADMIN_KEYS, key):
@@ -69,7 +73,7 @@ def _approver(key: str | None) -> Principal:
 
 
 def _admin(key: str | None) -> Principal:
-    p = _match(config.VALIO_ADMIN_KEYS, key, "X-Valio-Admin-Key")
+    p = _match(config.VALIO_ADMIN_KEYS, key, "X-Valio-Admin-Key", "admin")
     if _listed(config.AGENT_KEYS, key) or _listed(config.APPROVER_KEYS, key):
         raise HTTPException(403, detail="Admin keys must be separate from agent and approver keys")
     return p
@@ -82,6 +86,8 @@ def _owner(key: str) -> tuple[str, str] | None:
         for k, p in _parse(spec):
             if hmac.compare_digest(k, key.encode()):
                 return role, p.buyer_id
+    if credential := sandbox.lookup_any(key):
+        return credential.role, credential.buyer_id
     return None
 
 
