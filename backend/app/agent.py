@@ -29,7 +29,7 @@ from trade_contracts import (Alternative, AuditEntry, AuditInput, Decision, Mand
 from trade_contracts import ReasonCode as C
 from trade_contracts.common import RuleKind
 
-from . import catalogue, config, conversation, gate, mandates, orders, profile, progress, quantity, valio
+from . import catalogue, config, conversation, diet, expand, gate, mandates, orders, profile, progress, quantity, valio
 
 RULES_VERSION = "m1-buyer-agent-0.1"
 ACTOR = "buyer_agent"
@@ -50,6 +50,14 @@ DIETARY = {
     "egg_free": ([], ["AE"]), "nut_free": ([], ["AN", "AP"]), "peanut_free": ([], ["AP"]),
     "soy_free": ([], ["AY"]), "fish_free": ([], ["AF"]),
 }
+DIETARY_LABELS = {tag: list(dict.fromkeys([*claims, *({
+    "milk_free": ["FREE_FROM_MILK"], "egg_free": ["FREE_FROM_EGGS"],
+    "soy_free": ["FREE_FROM_SOY"], "fish_free": ["FREE_FROM_FISH"],
+}.get(tag, []))])) for tag, (claims, _) in DIETARY.items()}
+
+
+def _diet_claims(tag: str) -> list[str]:
+    return DIETARY_LABELS.get(tag, [])
 _WORDS = {"lactose-free": "lactose_free", "lactose free": "lactose_free", "gluten-free": "gluten_free",
           "gluten free": "gluten_free", "vegan": "vegan", "vegetarian": "vegetarian", "dairy-free": "milk_free",
           "dairy free": "milk_free", "milk-free": "milk_free", "egg-free": "egg_free", "nut-free": "nut_free",
@@ -399,6 +407,16 @@ def _item(query: str, amount, unit, tags, source: str = "", purpose: str = "") -
     if purpose := " ".join(re.findall(r"[\wäöåÄÖÅ'-]+", str(purpose))[:10]):
         out["purpose"] = purpose
     return out
+
+
+def _diet_tags(item: dict, extra: list[str] | None = None) -> list[str]:
+    """Diet tags carried by an item, recovering them from the legacy claims/exclusions shape."""
+    tags = [tag for tag in (extra if extra is not None else item.get("dietary") or []) if tag in DIETARY]
+    claims, excluded = set(item.get("claims") or []), set(item.get("exclude_allergens") or [])
+    for tag, (needed, avoided) in DIETARY.items():
+        if (needed or avoided) and set(needed) <= claims and set(avoided) <= excluded:
+            tags.append(tag)
+    return list(dict.fromkeys(tags))
 
 
 _SALES_UNIT_NAMES = {"KG": "kg", "KGM": "kg", "G": "g", "GRM": "g", "L": "L", "LTR": "L",
@@ -769,63 +787,101 @@ EVERYDAY = {"cream": ["whipping cream", "cooking cream"], "kerma": ["kuohukerma"
             "sugar": ["granulated sugar", "caster sugar"], "sokeri": ["sokeri 1 kg", "granulated sugar"]}
 
 
-async def candidates(text: str, item: dict, excluded: set[str]) -> tuple[list[str], bool]:
-    """Catalogue hits for one item (claims + allergen filters), narrowed and ordered by Gemini. → (ids, used_gemini)."""
+def _ensure_allergen_shape() -> None:
+    """Keep older slim rows searchable while treating empty evidence as unknown, not safe."""
+    for product in getattr(catalogue, "_products", {}).values():
+        allergens = product.get("allergens")
+        if not isinstance(allergens, dict):
+            allergens = product["allergens"] = {}
+        for key in ("contains", "may_contain", "free_from"):
+            allergens.setdefault(key, [])
+
+
+async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str, set[str]] | None = None,
+                     diets: list[str] | None = None, profile_diets: list[str] | None = None) -> tuple[list[str], bool]:
+    """Catalogue hits, requiring diet labels only for items classified as at risk."""
+    tags = _diet_tags(item, diets)
+    if risks is None:
+        risks = await diet.at_risk([item["query"]], tags)
+    profile_diets = [tag for tag in profile_diets or [] if tag in tags]
+    risky = {tag for tag in tags if item["query"] in risks.get(tag, set())}
+    diet_claims = {claim for tag in risky for claim in _diet_claims(tag)}
+    profile_claims = {claim for tag in risky if tag in profile_diets for claim in _diet_claims(tag)}
+    item["exclude_allergens"] = sorted(set(item.get("exclude_allergens") or []) |
+                                       {allergen for tag in tags for allergen in DIETARY[tag][1]})
+    all_diet_claims = {claim for tag in DIETARY for claim in _diet_claims(tag)}
+    base_claims = [claim for claim in item.get("claims") or [] if claim not in all_diet_claims]
+    stated_claims = sorted(diet_claims - profile_claims)
+    required_claims = sorted(set(base_claims) | diet_claims)
+    item["claims"] = required_claims
     excl = sorted(set(item["exclude_allergens"]) | excluded)
     words = item["query"].split()
-    # Catalogue names are singular ("lingonberry jam", "Digestive biscuit"), and search needs every word, so try:
-    # singular (also matches the plural) → as given → each word alone, longest first ("reindeer meat" → "reindeer").
-    tries = list(dict.fromkeys([" ".join(map(_singular, words)), item["query"]]  # singular first: "tomato" ⊂ "tomatoes"
-                               + SYNONYMS.get(" ".join(map(_singular, words)).lower(), [])))
+    singular = " ".join(map(_singular, words))
+    tries = list(dict.fromkeys([item["query"], singular] + SYNONYMS.get(singular.lower(), [])))
+    _ensure_allergen_shape()
 
-    def find(claims: list[str]) -> list[dict]:
-        hits = []
-        for q in tries:
-            if hits := catalogue.search(q, claims, excl, False, None, SEARCH_LIMIT):
-                break
-        if expansions := EVERYDAY.get(" ".join(map(_singular, words)).lower()):
-            # A bare everyday noun ("cream", "kerma") lists ice cream, sour cream and coconut cream first; the plain
-            # products a kitchen means come first here, the plain word's own hits after (QA round 2: "I need cream
-            # ASAP" → "Valio doesn't seem to stock 'cream'"; "kerma" → coconut cream). The matcher judges every hit.
-            pool = [p for q in expansions for p in catalogue.search(q, claims, excl, False, None, MATCH_HITS)]
-            hits = list({p["id"]: p for p in pool + hits}.values())[:SEARCH_LIMIT]
+    def safe_search(query: str, claims: list[str], limit: int) -> list[dict]:
+        try:
+            return catalogue.search(query, claims, excl, False, None, limit)
+        except KeyError:
+            _ensure_allergen_shape()
+            return catalogue.search(query, claims, excl, False, None, limit)
+
+    def safe_hits(rows: list[dict]) -> list[dict]:
+        diet_excluded = {allergen for tag in tags for allergen in DIETARY[tag][1]}
+        return [product for product in rows if not any(diet.contradicts(product, tag) for tag in tags)
+                and not diet_excluded & set((product.get("allergens") or {}).get("may_contain") or [])]
+
+    async def find(claims: list[str]) -> list[dict]:
+        queries = list(dict.fromkeys([item["query"], *(await expand.queries(item["query"])), *tries]))
+        rows = [product for query in queries for product in safe_search(query, claims, SEARCH_LIMIT)]
+        everyday_rows = [product for query in EVERYDAY.get(singular.lower(), [])
+                          for product in safe_search(query, claims, MATCH_HITS)]
+        hits = list({product["id"]: product for product in safe_hits(everyday_rows + rows)}.values())[:SEARCH_LIMIT]
         if not hits and len(words) > 1:
-            # No product has every word: rank products by how many of the words they have ("döner kebab meat" → the
-            # döner kebab skewers first, then kebab meat), instead of taking whichever single word hits first.
             found: dict[str, list] = {}
-            for w in {_singular(x) for x in words if len(x) > 2}:
-                for p in catalogue.search(w, claims, excl, False, None, 200):
-                    found.setdefault(p["id"], [0, p])[0] += 1
+            for word in {_singular(value) for value in words if len(value) > 2}:
+                for product in safe_hits(safe_search(word, claims, 200)):
+                    found.setdefault(product["id"], [0, product])[0] += 1
             hits = [p for _, p in sorted(found.values(), key=lambda x: (-x[0], len(x[1]["name_en"] or "")))][
                 :SEARCH_LIMIT]
         return hits
 
-    prefer = [c for c in item.get("prefer_claims") or [] if c not in item["claims"]]
-    hits = find(item["claims"] + prefer)
-    if prefer and hits:  # the profile's need is labelled here: from now on the judge checks it too
-        item["claims"] = item["claims"] + prefer
-        item["profile_applied"] = prefer
-    elif prefer:
-        item["profile_unlabelled"] = prefer
-        hits = find(item["claims"])
-    if not hits and item["claims"]:
-        # The buyer's stated need (e.g. gluten-free) is labelled on no matching product (mozzarella, olive oil): offer
-        # the closest unlabelled one and say plainly "check the label". The line always asks; never a silent guess.
-        if hits := find([]):
-            item["unlabelled"], item["claims"] = item["claims"], []
+    hits = await find(required_claims)
+    labelled_hits = list(hits) if required_claims else []
+    if required_claims and not hits:
+        fallback_claims = sorted(set(base_claims) | set(stated_claims))
+        hits = await find(fallback_claims)
+        if hits:
+            item["claims"] = fallback_claims
+            if profile_claims:
+                item["profile_unlabelled"] = sorted(profile_claims)
+        else:
+            hits, item["claims"] = await find(base_claims), base_claims
+            if stated_claims:
+                item["unlabelled"] = stated_claims
+            if profile_claims:
+                item["profile_unlabelled"] = sorted(profile_claims)
+        if labelled_hits:
+            item["labelled_alternative"] = _name(labelled_hits[0])
+    elif profile_claims:
+        item["profile_applied"] = sorted(profile_claims)
     if not hits:
         return [], True
     ids = await match(item, hits)
-    if ids == [] and (item.get("profile_applied") or (item["claims"] and not item.get("unlabelled"))):
-        # Labelled products exist, but none IS the item ("wheat flour" + gluten-free only finds buckwheat): judge the
-        # unlabelled ones too, so the chef sees the real product with "check the label" instead of "not stocked".
-        need = item.pop("profile_applied", None) or []
-        claims = [c for c in item["claims"] if c not in need]
-        if (plain := find(claims if need else [])):
-            if need:
-                item["claims"], item["profile_unlabelled"] = claims, need
-            else:
-                item["unlabelled"], item["claims"] = item["claims"], []
+    if ids == [] and required_claims:
+        fallback_claims = sorted(set(base_claims) | (set(stated_claims) if profile_claims else set()))
+        plain = await find(fallback_claims)
+        if not plain and fallback_claims != base_claims:
+            fallback_claims, plain = base_claims, await find(base_claims)
+        if plain:
+            item["claims"] = fallback_claims
+            if profile_claims:
+                item.pop("profile_applied", None)
+                item["profile_unlabelled"] = sorted(profile_claims)
+            missing = sorted(set(required_claims) - set(fallback_claims))
+            if missing:
+                item["unlabelled"] = missing
             hits, ids = plain, await match(item, plain)
     if ids is None:  # Decisions unavailable: plain search order, flagged by the caller
         return [p["id"] for p in hits[:QUOTE_TOP]], False
@@ -975,6 +1031,42 @@ def _label_reasons(it: dict, best: dict) -> list[Reason]:
     return out
 
 
+def _dietary_checks(it: dict, product: dict, risks: dict[str, set[str]], details: dict[str, dict[str, dict]],
+                    tags: list[str] | None = None) -> list[dict]:
+    """Return the visible diet evidence; contradictory candidates were filtered before this point."""
+    checks = []
+    for tag in tags or _diet_tags(it):
+        risky = it["query"] in risks.get(tag, set())
+        if not risky and not diet.requires_diet_check(product, tag):
+            continue
+        result = diet.check(product, tag, True, (details.get(tag) or {}).get(it["query"]))
+        if result["level"] in diet.LEVELS:
+            checks.append({"diet": tag, **result})
+    return checks
+
+
+def _dietary_reasons(it: dict, product: dict, checks: list[dict]) -> list[Reason]:
+    unknown = [check for check in checks if check["level"] == "unverifiable"]
+    if not unknown:
+        return []
+    tags = [check["diet"] for check in unknown]
+    labels = " and ".join(" and ".join(_claim_words(DIETARY[tag][0]) or [tag.replace("_", "-")]) for tag in tags)
+    alternative = it.get("labelled_alternative")
+    question = f"Can't verify this {it['query']} is {labels}."
+    question += f" Use it, or pick the labelled {alternative}?" if alternative else " Use it, or pick a labelled one?"
+    allergens = product.get("allergens") if isinstance(product.get("allergens"), dict) else {}
+    code = C.DATA_MISSING if any(allergens.get(key) for key in ("contains", "may_contain", "free_from")) else C.ALLERGEN_DATA_MISSING
+    fix = f"Pick the labelled {alternative}, or check this label before ordering." if alternative else f"Check the label for {labels} before ordering."
+    return [gate._r(code, ASK, question, product["id"], fix, diet=", ".join(tags))]
+
+
+def _dietary_line_reason(product: dict, checks: list[dict]) -> str:
+    if not checks:
+        return ""
+    evidence = "; ".join(f"{check['diet'].replace('_', '-')}: {check['basis']}" for check in checks)
+    return f"Diet check: {_name(product)}, because {evidence}."
+
+
 async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str, m: Mandate, excluded: set[str],
                     now: datetime, reasons: list[Reason], parsed_by_gemini: bool) -> dict:
     """Per-item core shared by the request and menu flows: catalogue search, Gemini rank, live Valio quotes, quantity,
@@ -984,18 +1076,32 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
     standing = profile.dietary(buyer_id)
     low = text.lower()
     stated = {t for w, t in _WORDS.items() if w in low}
-    if standing and not stated and not _PLAIN.search(low):  # the buyer's own words beat the profile
-        for it in items:
-            if it.get("_profile_checked"):
-                continue  # menu.py has already limited the profile to ingredients that need a special product
-            it["prefer_claims"] = [c for t, _ in standing for c in DIETARY.get(t, ([], []))[0]]
+    item_diets, item_profile_diets = {}, {}
+    profile_tags = [tag for tag, _ in standing] if standing and not stated and not _PLAIN.search(low) else []
+    for it in items:
+        tags = _diet_tags(it)
+        if it.get("_profile_checked"):
+            # menu.py already narrowed standing profiles to relevant ingredients; recover their closed-set tags
+            # from its legacy ``prefer_claims`` shape so natural foods remain unlabelled.
+            profiles = [tag for tag in DIETARY if DIETARY[tag][0]
+                        and set(DIETARY[tag][0]) <= set(it.get("prefer_claims") or [])]
+            tags = list(dict.fromkeys(tags + profiles))
+        else:
+            profiles = [tag for tag in profile_tags if tag in DIETARY]
+            tags = list(dict.fromkeys(tags + profiles))
+        if profiles:
             it["profile_why"] = "; ".join(why for _, why in standing)
+        item_diets[id(it)] = tags
+        item_profile_diets[id(it)] = profiles
+    risk_tags = sorted({tag for tags in item_diets.values() for tag in tags})
+    risks = await diet.at_risk([it["query"] for it in items], risk_tags)
+    risk_details = diet.risk_details([it["query"] for it in items], risk_tags)
     usual = profile.usual(buyer_id)
     progress.phase("searching")
     done = [0]
 
     async def search(it: dict):  # one event per ingredient as it finishes, so a long menu shows it is moving
-        out = await candidates(text, it, excluded)
+        out = await candidates(text, it, excluded, risks, item_diets[id(it)], item_profile_diets[id(it)])
         done[0] += 1
         if len(items) > 1:
             progress.phase("searching", f"Checking {it['query']}… {done[0]} of {len(items)}")
@@ -1044,7 +1150,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             rs, info = gate.check_line(pid, qty and qty["quantity"], q, requested, m, excluded, now)
             line = {"item": n, "product": p, "quote": q, "quantity": qty, "line_total_cents": info["line_total_cents"],
                     "why": "", "chosen": False, "confidence": None, "confidence_reason": None,
-                    "facts": {k: (p or {}).get(k) for k in FACTS}}
+                    "facts": {k: (p or {}).get(k) for k in FACTS},
+                    "diet_checks": _dietary_checks(it, p, risks, risk_details, item_diets[id(it)])}
             lines.append(line)
             checked.append((line, rs))
             blocking = [r for r in rs if gate._blocking(r)]
@@ -1158,6 +1265,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                                 and (ln["confidence"] or 0) > (best["confidence"] or 0)), None)
             best["usual"] = best["product"]["id"] in usual
             reasons += _label_reasons(it, best)
+            reasons += _dietary_reasons(it, best["product"], best["diet_checks"])
+            dietary_reason = _dietary_line_reason(best["product"], best["diet_checks"])
             if it.get("amount_assumed"):
                 assumed = f"{gate._qty(it['amount'])} {it['unit']} {it['query']}"
                 r = gate._r(C.QTY_AMBIGUOUS, ASK, f"I assumed {assumed}: {it['amount_assumption']} Nothing is ordered "
@@ -1173,7 +1282,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                            + (f"{_name(late_beaten['product'])} can't be delivered by {requested}, so this one. "
                               if late_beaten else "")
                            + best["quantity"]["explanation"] + (" " + best["why"] if best_asks else "")
-                           + _decided_by(scored) + _facts_text(best["facts"]))
+                           + _decided_by(scored) + _facts_text(best["facts"])
+                           + (" " + dietary_reason if dietary_reason else ""))
             if best["quantity"]["needs_confirmation"]:
                 reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, best["quantity"]["explanation"], best["product"]["id"],
                                        "Confirm the quantity in sales units."))
