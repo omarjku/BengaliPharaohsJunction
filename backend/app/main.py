@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import agent, auth, menu, catalogue, config, gate, mandates, orders, quantity, valio
+from . import agent, auth, menu, rules, catalogue, config, gate, mandates, orders, quantity, valio
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -304,3 +304,53 @@ async def agent_menu(req: MenuRequest, who: Agent) -> dict:
     always ASK_HUMAN (MENU_ASSUMPTIONS) and nothing is ordered here."""
     _catalogue_ready()
     return await menu.propose(req.menu_text, req.covers, req.requested_date, who.buyer_id)
+
+
+# --- The chef's rules in plain language (T09 compiler). Human acts: X-Approver-Key only; an agent key can never
+# change its own limits. Compile proposes, PUT saves; the agent and the front door read the saved mandate at once.
+class CompileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=4000, examples=[
+        "Never anything with peanuts. Auto-approve up to €1,500 per order, €6,000 a week. Prefer Finnish."])
+
+    @field_validator("text")
+    @classmethod
+    def utf8(cls, t: str) -> str:
+        return AgentRunRequest.utf8(t)
+
+
+MANDATE_CAPS = {"hard_rules": 50, "blocklist": 1000, "guidance": 50, "open_questions": 20}  # bounded stored rules
+
+
+class SaveMandateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mandate: Mandate
+    confirm_large_change: bool = False
+
+    @model_validator(mode="after")
+    def _capped(self) -> "SaveMandateRequest":
+        for field, cap in MANDATE_CAPS.items():
+            if len(getattr(self.mandate, field)) > cap:
+                raise ValueError(f"mandate.{field} may have at most {cap} entries")
+        return self
+
+
+@app.post("/api/mandate/compile")
+async def compile_mandate_route(req: CompileRequest, who: Approver) -> dict:
+    """Plain-language rules → {proposed_mandate, diff_from_current, open_questions, assumptions, used_fallback,
+    injection_flagged}. Nothing is saved. Needs X-Approver-Key."""
+    return await rules.compile_rules(req.text, who)
+
+
+@app.get("/api/mandate")
+def get_mandate(who: Approver) -> dict | None:
+    """The mandate in force for the approver's buyer (saved, else the seeded default). Needs X-Approver-Key."""
+    m = mandates.get(who.buyer_id)
+    return m.model_dump(mode="json") if m else None
+
+
+@app.put("/api/mandate")
+def save_mandate(req: SaveMandateRequest, who: Approver) -> dict:
+    """Save the confirmed mandate for the approver's buyer → {mandate, changes, audit_id}. 422 while open questions
+    remain; 409 for big loosenings unless confirm_large_change=true. Audited. Needs X-Approver-Key."""
+    return rules.save(req.mandate, req.confirm_large_change, who)
