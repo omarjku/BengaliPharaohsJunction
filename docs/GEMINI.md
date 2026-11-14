@@ -116,3 +116,33 @@ The first agent audio came 1.3 s after the chef stopped speaking; the answer sta
 - **Humans stay in charge:** prices, stock, cut-offs and limits are re-checked by Valio's front door; rules change only through the approver key; every decision is audited with its confidence.
 
 More: `docs/GEMINI-evidence.md` (every run and number, in order), `docs/VOICE.md`, `docs/codex-log/room3.md` (11 independent reviews and what we fixed), `backend/eval/`.
+
+## Calibration on the eval (from `backend/eval/results.json`)
+
+Each row buckets the 33 labelled cases by the Decisions API's P(yes), and shows how many were actually the right
+product:
+
+| P(yes) | cases | actually correct | share correct |
+|---|---|---|---|
+| 0.0–0.2 | 17 | 0 | 0 % |
+| 0.2–0.4 | 1 | 0 | 0 % |
+| 0.4–0.6 | 0 | 0 | – |
+| 0.6–0.7 | 1 | 1 | 100 % |
+| 0.7–0.8 | 3 | 3 | 100 % |
+| 0.8–0.9 | 5 | 5 | 100 % |
+| 0.9–1.0 | 6 | 6 | 100 % |
+
+Read it honestly. The scores **separate** right from wrong cleanly: every trap ≤ 0.26, every correct product ≥ 0.67.
+But 33 cases with nothing in 0.4–0.6 can't show **calibration** in the middle, where a threshold actually bites.
+More borderline cases are the next eval to write.
+
+## Where Gemini could do more (honest gaps, by value for cost)
+
+| # | Gap | Status | Value | Cost |
+|---|---|---|---|---|
+| 1 | **Cross-language catalogue search with Gemini embeddings.** Search is keyword-based on English and Finnish names, so a request in one language can miss a product named in the other (the red lentils / "linssi" miss). Embeddings would find it by meaning | not built | High: fewer "no match" questions | Medium: embed 17,546 names once and add a vector index |
+| 2 | **Evals for photo reading and spare amounts.** Photo reading has 3 hand-checked demo images (Room 2, all matched). Spare amounts have no labelled set | not built | High: these readings feed carts | Low: 20–30 labelled cases each, reusing `gemini_eval.py` |
+| 3 | **Borderline cases for calibration.** Add 20+ cases in the 0.4–0.8 band, so the 0.70 threshold is measured where it matters | not built | High for the judges' "why trust it" | Low |
+| 4 | **Ground the "why" sentence.** The chosen line's explanation is built by code from facts and scores. A Gemini-written reason would need checking against those facts first | not built (deliberately) | Medium | Medium |
+| 5 | **Calibration table** (above) | **built** (this doc) | Medium | — |
+| 6 | **Talk read-back in Finnish.** Talk speaks; the push-to-talk read-back uses the browser voice | partly | Low–medium | Low |
