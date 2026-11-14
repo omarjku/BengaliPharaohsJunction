@@ -9,8 +9,8 @@ It turns a buyer's text request into catalogue matches, quantity conversions, li
 price and availability checks, a mandate decision, and an order or human hand-off.
 Gemini parses the request and ranks catalogue matches; the Gemini Decisions API then
 gives a calibrated confidence that each chosen product and quantity really fits the
-request, and anything under the buyer's threshold (0.8 for the demo buyer) goes to the
-human. A simple parser and lexical search are the fallback. Money, stock, dates, quantities, and
+request, and anything under the buyer's threshold (0.70 for the demo buyers, set from a
+labelled evaluation; 0.80 for any other buyer) goes to the human. A simple parser and lexical search are the fallback. Money, stock, dates, quantities, and
 mandate checks stay in deterministic Python code. Every decision is auditable.
 
 The rule behind every answer (decision D6): when the data is uncertain, bring it to
@@ -64,6 +64,26 @@ Use long random values for the front-door keys. `AGENT_KEYS` authenticates
 set is empty, its protected routes return `503`; an agent key cannot approve, and a
 Valio admin key can only read the audit trail (filters: `buyer_id`, `outcome`, `limit`).
 
+## Demo buyers
+
+The mandates are stored server-side in `backend/app/mandates.py`. Each buyer gets its own keys in `AGENT_KEYS` and
+`APPROVER_KEYS`.
+
+| Buyer | Who | Rules |
+|---|---|---|
+| `lapland-kitchen` | Restaurant kitchen in Lapland: the main demo | Peanut-free; auto-approve up to EUR 1,500; EUR 2,000 per line; EUR 6,000 a week; asks below 90% on-time delivery; prefers Finnish origin; confidence threshold 0.70 |
+| `helsinki-bistro` | Bistro in central Helsinki: the urgent-pickup story | Auto-approve up to EUR 800; EUR 1,000 per line; EUR 3,000 a week; threshold 0.70 |
+| `smoke-kitchen` | Same rules as `lapland-kitchen`, for smoke tests | Keeps the demo kitchen's weekly budget untouched |
+
+**Urgent pickup.** This is for Helsinki buyers only, and only when the chef signals urgency ("ASAP", "today",
+"heti") or Valio can't deliver in time. The agent then *suggests* two options:
+- walk-in at Valio Aimo Cash & Carry Helsinki (address and opening hours);
+- Click & Collect, ready from about 4 hours after confirming.
+
+Each suggestion is marked as an assumption, because store stock and pickup aren't in the mock API. The agent never
+places a pickup order. The facts come from valioaimo.fi (`backend/app/urgent.py`). Any other buyer gets the earliest
+Valio delivery and its cut-off instead.
+
 ## API surface
 
 Public routes use the server-side Valio and Gemini keys where needed. Protected
@@ -71,6 +91,7 @@ routes derive the buyer identity from the key, not from a trusted request body.
 
 | Method and route | What it does | Header |
 | --- | --- | --- |
+| `POST /api/agent/ask` | **The one input box.** Free text, in English or Finnish: an order or a menu. It routes to run or menu, and asks back when it must ("For how many guests?", "For which delivery day?"). Urgent needs for a Helsinki buyer also get pickup suggestions. | `X-Agent-Key` |
 | `POST /api/agent/run` | Runs the buyer-agent flow end to end; the mandate is loaded server-side. | `X-Agent-Key` |
 | `POST /api/agent/menu` | Menu to cart: proposes `order_lines` for a menu and covers; always asks the chef. | `X-Agent-Key` |
 | `POST /api/orders` | Places an order through the front door. Send an `Idempotency-Key`. | `X-Agent-Key` |

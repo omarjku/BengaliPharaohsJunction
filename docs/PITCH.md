@@ -52,10 +52,15 @@ Otherwise it asks the chef, with the reason and alternatives."
    allergen-safe and in the same category."
 3. If time allows, show a split: "51 in stock, 1,000 asked: here's the same order covered by a second product,
    proposed to the chef."
-4. Or menu to cart, if it reads better on the day: paste "Sautéed reindeer with mashed potatoes; lingonberry
-   cheesecake, 80 covers". Gemini proposes ingredients with per-portion assumptions, and each one is quoted live.
-   The cart always asks the chef, because recipe amounts are guesses, and Gemini's doubts flag the lines to check
+4. **One box for everyone** (live now): the same input takes "20 kg döner kebab meat for the rotisserie" (it finds
+   Well Kebab beef kebab meat) and "100 litraa laktoositonta maitoa maanantaiksi" (Finnish, understood). Then paste a
+   menu without a guest count. The agent asks "For how many guests?"; answer "80". Gemini proposes ingredients with
+   per-portion assumptions, and each one is quoted live. The cart always asks the chef, because recipe amounts are guesses, and Gemini's doubts flag the lines to check
    (for example brown sugar *sachets* for a cheesecake).
+
+5. **Urgent, in Helsinki** (if time allows; switch to the `helsinki-bistro` keys): "5 kg butter ASAP". Delivery is
+   about 24 h on agreed days, so the agent suggests the Cash & Carry walk-in and Click & Collect (ready in about
+   4 hours). Both are clearly marked as suggestions: it never places a pickup order.
 
 **2:00 Controls and audit (20 s). J3.**
 "What the agent decides alone comes from the buyer's mandate: the €1,500 limit, the per-line cap, the weekly
@@ -74,7 +79,7 @@ under RFC 9421, AP2-style signed mandates."
 
 **2:40 Gemini and Codex (15 s).**
 "Gemini isn't decoration here.
-- It reads the chef. Its Decisions confidence decides when the agent may act alone, and below 0.8 it asks the chef.
+- It reads the chef. Its Decisions confidence decides when the agent may act alone, and below 0.70 it asks the chef.
 - If Gemini is down, the agent falls back and asks the chef instead of ordering.
 - Codex was our adversary: 9 reviews, 62 findings, 43 fixed, each with a test."
 
@@ -124,10 +129,11 @@ under RFC 9421, AP2-style signed mandates."
      Valio. The ranking and the gate are stateless and scale out as they are.
    - Valio calls are batched up to 1,000 products. We never sweep the catalogue.
 
-7. **"Why should a judge trust the 0.8 threshold?"**
+7. **"Why should a judge trust the 0.70 threshold?"**
    - It is per buyer and visible in the audit.
-   - We measured it on 30 hand-labelled cases with real Valio products: at 0.80, no wrong product was ordered, and
-     the highest-scoring trap reached 0.52 (`docs/GEMINI.md`).
+   - We chose it from 30 hand-labelled cases with real Valio products. At 0.70, no wrong product was ordered and 93%
+     of the right lines went through alone (80% at 0.80). Every trap scored at most 0.37, so there's a wide margin
+     (`docs/GEMINI.md`). Any buyer without a measured threshold keeps the stricter 0.80.
    - It is still a guess until it is calibrated against real orders. That is item 9 in `docs/NEXT-STEPS.md`.
 
 8. **"What happens if a price changes between the quote and the approval?"** Approval re-runs the gate with fresh
