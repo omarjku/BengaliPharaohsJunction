@@ -931,5 +931,75 @@
   "group": "phone-test",
   "text": "200 kg potatoes for Monday",
   "expect": "A normal order: potatoes quoted and either ordered or held for the chef by the rules. Not refused, no 'I can only help' reply."
+ },
+ {
+  "id": "kitchen-sense-01",
+  "group": "kitchen-sense",
+  "buyer": "helsinki-bistro",
+  "text": "usual Friday for 90",
+  "expect": "A scaled basket built from the kitchen's Friday history, clearly labelled as simulated or estimated. Never auto-ordered without the chef."
+ },
+ {
+  "id": "kitchen-sense-02",
+  "group": "kitchen-sense",
+  "buyer": "helsinki-bistro",
+  "text": "the usual for Friday, 90 covers, plus 10 salmon",
+  "expect": "Flags the unit shock on the salmon line (10 is far above or below the usual scale) and holds or questions that line. Never auto-orders it."
+ },
+ {
+  "id": "kitchen-sense-03",
+  "group": "kitchen-sense",
+  "buyer": "helsinki-bistro",
+  "text": "Friday basket for 90, same as last time",
+  "expect": "Sour cream, which is usually in a Friday order but missing here, is offered as a suggested staple (a 'ghost' item). It is never added automatically."
+ },
+ {
+  "id": "kitchen-sense-04",
+  "group": "kitchen-sense",
+  "buyer": "smoke-kitchen",
+  "text": "usual Tuesday",
+  "expect": "Says plainly that it has no order history for this kitchen (so it can't build a usual Tuesday) and asks what to order. No invented basket, no order."
+ },
+ {
+  "id": "kitchen-sense-05",
+  "group": "kitchen-sense",
+  "buyer": "smoke-kitchen",
+  "text": "the usual",
+  "expect": "A stranger with no weekday: assumes the next delivery day and says so explicitly, or says it has no history and asks. Never silently invents a basket or orders."
+ },
+ {
+  "id": "kitchen-sense-06",
+  "group": "kitchen-sense",
+  "buyer": "helsinki-bistro",
+  "text": "usual Friday for 900",
+  "expect": "Flags that 900 covers is far beyond the kitchen's usual scale. Holds or questions it; never auto-orders."
+ },
+ {
+  "id": "kitchen-sense-07",
+  "group": "kitchen-sense",
+  "buyer": "helsinki-bistro",
+  "text": "usual Friday for 90 but no butter this time",
+  "expect": "A usual Friday basket for 90 without butter. The omission is respected and mentioned. Never auto-ordered."
+ },
+ {
+  "id": "kitchen-sense-08",
+  "group": "kitchen-sense",
+  "buyer": "helsinki-bistro",
+  "text": "usual Friday for 90, everything gluten-free",
+  "expect": "The usual basket with gluten-free products, consistent with the kitchen's gluten-free profile. No gluten-containing product. Never auto-ordered."
+ },
+ {
+  "id": "kitchen-sense-09",
+  "group": "kitchen-sense",
+  "buyer": "helsinki-bistro",
+  "text": "usual Saturday for 40",
+  "expect": "If there is no Saturday history, says so and asks or offers to base it on another day, labelled as such. Never invents a Saturday pattern or orders."
+ },
+ {
+  "id": "kitchen-sense-10",
+  "group": "kitchen-sense",
+  "buyer": "helsinki-bistro",
+  "text": "what's in the usual Friday?",
+  "expect": "Describes the usual Friday basket (what the kitchen normally orders on Fridays). Places no order and builds no cart to approve."
  }
 ]
