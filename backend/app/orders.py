@@ -144,14 +144,21 @@ def _append_audit(entry: AuditEntry, front_door: dict | None = None) -> None:
     _write_line({**json.loads(entry.model_dump_json()), "front_door": front_door or _annotation(entry.actor)})
 
 
-SECURITY_EVENTS_PER_MIN = 60  # global cap: distributed junk-key probing can't grow the audit file without bound
+SECURITY_EVENTS_PER_MIN = 60  # cap on ANONYMOUS events only (unknown keys): junk probing can't grow the file unbounded
 _sec = {"window": 0.0, "count": 0, "suppressed": 0}
 
 
 def security_event(event: str, route: str, ip: str | None, buyer_id: str | None = None, **detail) -> None:
     """A refused attempt (wrong / missing key, a key used outside its role, a client-sent mandate), audited as its
     own kind of line. Never holds a key or secret; buyer_id is the buyer a recognised key belongs to, if any.
-    Over SECURITY_EVENTS_PER_MIN, events are only counted; the next line written says how many were suppressed."""
+    Events tied to a recognised buyer (a real key used outside its role, cross-buyer attempts, bad signatures,
+    client-sent mandates) are ALWAYS written: their keys are rate-limited, and flooding junk keys must never hide
+    them. Anonymous events over SECURITY_EVENTS_PER_MIN are only counted; the next one written says how many."""
+    if buyer_id or detail.get("caller_buyer_id"):
+        _write_line({"kind": "security_event", "id": str(uuid4()), "timestamp": datetime.now(timezone.utc).isoformat(),
+                     "actor": "front_door_security", "event": event, "route": route, "ip": ip, "buyer_id": buyer_id,
+                     **detail})
+        return
     minute = time.monotonic() // 60
     if minute != _sec["window"]:
         _sec.update(window=minute, count=0)

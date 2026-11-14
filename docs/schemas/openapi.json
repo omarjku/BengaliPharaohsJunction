@@ -296,6 +296,60 @@
             "description": "Optional. Retrying with the same key and body returns the original response instead of acting twice (24 h)."
           },
           {
+            "name": "signature-input",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\"",
+              "title": "Signature-Input"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\""
+          },
+          {
+            "name": "signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:",
+              "title": "Signature"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:"
+          },
+          {
+            "name": "content-digest",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:",
+              "title": "Content-Digest"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:"
+          },
+          {
             "name": "x-agent-key",
             "in": "header",
             "required": false,
@@ -985,6 +1039,60 @@
         "operationId": "agent_run_api_agent_run_post",
         "parameters": [
           {
+            "name": "signature-input",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\"",
+              "title": "Signature-Input"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\""
+          },
+          {
+            "name": "signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:",
+              "title": "Signature"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:"
+          },
+          {
+            "name": "content-digest",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:",
+              "title": "Content-Digest"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:"
+          },
+          {
             "name": "x-agent-key",
             "in": "header",
             "required": false,
@@ -1043,6 +1151,60 @@
         "description": "Menu + covers → a proposed cart. Needs X-Agent-Key (the buyer comes from the key; mandate server-side).\nReturns {menu, assumptions, ingredients, lines, cart_total_cents, order_lines, decision, audit_id}; the decision is\nalways ASK_HUMAN (MENU_ASSUMPTIONS) and nothing is ordered here.",
         "operationId": "agent_menu_api_agent_menu_post",
         "parameters": [
+          {
+            "name": "signature-input",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\"",
+              "title": "Signature-Input"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\""
+          },
+          {
+            "name": "signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:",
+              "title": "Signature"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:"
+          },
+          {
+            "name": "content-digest",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:",
+              "title": "Content-Digest"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:"
+          },
           {
             "name": "x-agent-key",
             "in": "header",
@@ -1292,6 +1454,60 @@
         "operationId": "agent_ask_api_agent_ask_post",
         "parameters": [
           {
+            "name": "signature-input",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\"",
+              "title": "Signature-Input"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\""
+          },
+          {
+            "name": "signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:",
+              "title": "Signature"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:"
+          },
+          {
+            "name": "content-digest",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:",
+              "title": "Content-Digest"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:"
+          },
+          {
             "name": "x-agent-key",
             "in": "header",
             "required": false,
@@ -1351,6 +1567,60 @@
         "operationId": "voice_transcribe_api_voice_transcribe_post",
         "parameters": [
           {
+            "name": "signature-input",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\"",
+              "title": "Signature-Input"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\""
+          },
+          {
+            "name": "signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:",
+              "title": "Signature"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:"
+          },
+          {
+            "name": "content-digest",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:",
+              "title": "Content-Digest"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:"
+          },
+          {
             "name": "x-agent-key",
             "in": "header",
             "required": false,
@@ -1399,6 +1669,60 @@
         "description": "POST /api/agent/ask, streamed as Server-Sent Events so the UI can show progress while it works:\n`event: phase` {phase, text} (understanding, searching, stock, judging, planning, ordering) as each step starts,\nthen one `event: result` with exactly the /api/agent/ask body, or `event: error` {status, detail}.\nNeeds X-Agent-Key.",
         "operationId": "agent_ask_stream_api_agent_ask_stream_post",
         "parameters": [
+          {
+            "name": "signature-input",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\"",
+              "title": "Signature-Input"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=(\"@method\" \"@path\" \"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\""
+          },
+          {
+            "name": "signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:",
+              "title": "Signature"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). e.g. sig1=:<base64>:"
+          },
+          {
+            "name": "content-digest",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:",
+              "title": "Content-Digest"
+            },
+            "description": "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS). sha-256=:<base64 of sha256(body)>:"
+          },
           {
             "name": "x-agent-key",
             "in": "header",

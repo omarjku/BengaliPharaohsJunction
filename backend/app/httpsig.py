@@ -25,7 +25,7 @@ from typing import Annotated
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, Header, HTTPException, Request
 
 from . import auth, config
 
@@ -112,7 +112,17 @@ async def verify(request: Request, buyer_id: str, now: float | None = None) -> N
     _seen[signature] = created + WINDOW_S
 
 
-async def signed_agent(request: Request, who: Annotated[auth.Principal, Depends(auth.agent)]) -> auth.Principal:
-    """X-Agent-Key, plus an RFC 9421 signature when the key's buyer has registered a signing key."""
+_OPTIONAL = "RFC 9421 / RFC 9530; required only if the buyer registered a signing key (AGENT_SIGNING_KEYS)."
+
+
+async def signed_agent(
+    request: Request, who: Annotated[auth.Principal, Depends(auth.agent)],
+    signature_input: Annotated[str | None, Header(description=f"{_OPTIONAL} e.g. sig1=(\"@method\" \"@path\" "
+                                                  f"\"content-digest\");created=…;keyid=\"…\";alg=\"ed25519\"")] = None,
+    signature: Annotated[str | None, Header(description=f"{_OPTIONAL} e.g. sig1=:<base64>:")] = None,
+    content_digest: Annotated[str | None, Header(description=f"{_OPTIONAL} sha-256=:<base64 of sha256(body)>:")] = None,
+) -> auth.Principal:
+    """X-Agent-Key, plus an RFC 9421 signature when the key's buyer has registered a signing key. The three headers
+    are declared here so they appear in the OpenAPI spec; verify() reads them from the raw request (no change)."""
     await verify(request, who.buyer_id)
     return who

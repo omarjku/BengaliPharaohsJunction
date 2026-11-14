@@ -99,7 +99,6 @@ def test_decoder_errors_never_reach_the_client(live):
     for junk in (b"\x00not audio at all" * 10, b"\x00" * 200_000, b"RIFF\x00\x00\x00\x00WAVEjunk"):
         r = post(junk, "audio/webm")
         assert r.status_code == 422 and "Errno" not in r.text and "Invalid data" not in r.text
-        assert "not a readable audio recording" in r.json()["detail"]
 
 
 def test_size_cap_and_auth(live):

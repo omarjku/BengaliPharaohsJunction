@@ -210,3 +210,9 @@ def test_security_events_are_capped_per_minute(shop, monkeypatch):  # Codex whol
     c.get("/api/audit", headers={"X-Approver-Key": "junk-x"})
     last = _json.loads(orders.AUDIT_FILE.read_text().splitlines()[-1])
     assert last["suppressed_before"] == 7
+    # a flood of junk keys never hides an event about a real buyer (automated security review)
+    for i in range(10):
+        c.get("/api/audit", headers={"X-Approver-Key": f"more-junk-{i}"})
+    c.post("/api/orders/00000000-0000-4000-8000-000000000000/approve", headers={"X-Approver-Key": "agent-chef"})
+    events = [_json.loads(x) for x in orders.AUDIT_FILE.read_text().splitlines()]
+    assert events[-1]["event"] == "key_used_outside_its_role" and events[-1]["buyer_id"] == "chef"
