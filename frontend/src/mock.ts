@@ -581,6 +581,15 @@ export const mockApi = {
       }
       return { intent: 'order', requested_date, request: f.request, lines: f.lines, decision: f.decision, order, audit_id }
     }
+    // The demo only has canned answers for the requests listed at the top of this file. Anything else used to fall
+    // through to a confirmed butter order, which looked like a real (and wrong) result. Say so instead.
+    if (!/stock|split|butter|drink|1[ ,]?000|cream|tomorrow|error/i.test(text)) {
+      await wait()
+      return {
+        intent: 'unclear', requested_date,
+        question: 'This is demo data with canned answers for only a few requests, so it can’t answer this one. Try “1000 L lactose-free milk for Monday”, “20 kg döner kebab meat for Friday” or “Menu for 80 guests”. For real answers, run the backend and open the app without ?mock=1.',
+      }
+    }
     const res = { intent: 'order' as const, requested_date, ...(await mockApi.run({ text, requested_date })) }
     // Helsinki bistro, in a hurry: the same suggestions the backend makes (urgent.py), never an order.
     if (/\b(asap|now|today|urgent|heti|nyt|tänään|kiire)/i.test(text)) {

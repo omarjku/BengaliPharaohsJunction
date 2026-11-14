@@ -223,6 +223,11 @@ export const UI = {
     title: 'Can’t reach the ordering service.',
     body: 'Your request will fail until it’s back. If you run it yourself, start the backend on port 8000.',
   },
+  // Shown on every screen in mock mode, so nobody mistakes a canned answer for a real one.
+  mock: {
+    title: 'Demo data, not the real service.',
+    body: 'Answers come from a few canned examples and nothing is really ordered. For real answers, run the backend and open the app without ?mock=1.',
+  },
   failed: 'That didn’t go through.',
   ask: {
     label: 'What do you need?',
