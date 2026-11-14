@@ -1,23 +1,22 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { getHealth, getKeys, MOCK, runAgent, setKeys } from './api'
+import { getHealth, getKeys, MOCK, runAgent, setKeys, type ApiKeys } from './api'
 import { AuditLog } from './AuditLog'
-import { errorText, nextMonday } from './format'
+import { EXAMPLE, RUNNING } from './copy'
+import { errorText, formatDay, nextMonday } from './format'
 import { RunResult } from './RunResult'
-import type { AgentRun, Health } from './types'
+import type { AgentRun } from './types'
 
-const EXAMPLE = 'We need 1000 L of lactose-free milk delivered by Monday.'
-type View = 'console' | 'audit'
+type View = 'order' | 'history'
 
 // "lapland-kitchen" -> "Lapland kitchen": the buyer id is all the API tells us about the buyer.
 const buyerLabel = (id: string) => id.replace(/[-_.]+/g, ' ').replace(/^./, (c) => c.toUpperCase())
 
 export default function App() {
-  const [view, setView] = useState<View>('console')
-  const [keys, setKeyDraft] = useState(getKeys) // the modal's inputs; applied on Save
+  const [view, setView] = useState<View>('order')
   const [savedKeys, setSavedKeys] = useState(getKeys)
   const keysDialog = useRef<HTMLDialogElement>(null)
-  const [buyer, setBuyer] = useState<string | null>(null) // from the audit trail the approver key can read
-  const [text, setText] = useState(EXAMPLE)
+  const [buyer, setBuyer] = useState<string | null>(null) // from the history the approver key can read
+  const [text, setText] = useState('')
   const [date, setDate] = useState(nextMonday)
   const [runDate, setRunDate] = useState(date) // the date the shown run was for (split orders reuse it)
   const [run, setRun] = useState<AgentRun | null>(null)
@@ -27,15 +26,11 @@ export default function App() {
   const [deciding, setDeciding] = useState(false) // approve/reject in flight
   const [announce, setAnnounce] = useState('')
   const refreshAudit = () => setAuditKey((k) => k + 1)
+  const offline = useBackendDown()
 
-  function openKeys() {
-    setKeyDraft(getKeys())
-    keysDialog.current?.showModal()
-  }
+  const needsSetup = !MOCK && (!savedKeys.agentKey || !savedKeys.approverKey)
 
-  function saveKeys(e: FormEvent) {
-    e.preventDefault()
-    setKeys(keys)
+  function keysSaved() {
     setSavedKeys(getKeys())
     keysDialog.current?.close()
     refreshAudit()
@@ -59,85 +54,28 @@ export default function App() {
     }
   }
 
-  const missingKeys = !MOCK && (!savedKeys.agentKey || !savedKeys.approverKey)
-
   return (
     <>
-      <header className="topbar">
-        <div className="topbar-inner">
-          <p className="wordmark">
-            Front Door<span>for Valio Aimo</span>
-          </p>
-          <nav className="tabs" role="tablist" aria-label="Views">
-            {(['console', 'audit'] as const).map((v) => (
-              <button
-                key={v}
-                type="button"
-                role="tab"
-                id={`tab-${v}`}
-                aria-controls={`view-${v}`}
-                aria-selected={view === v}
-                className="tab"
-                onClick={() => setView(v)}
-              >
-                {v === 'console' ? 'Agent console' : 'Audit log'}
-              </button>
-            ))}
-          </nav>
-          <div className="topbar-end">
-            <div className="who">
-              <strong>{buyer ? buyerLabel(buyer) : MOCK ? 'Mock buyer' : 'Buyer from your keys'}</strong>
-              <BackendStatus />
-            </div>
-            <button type="button" className="btn secondary" onClick={openKeys}>
+      <header className="top">
+        <span className="brand">Front Door</span>
+        <span className="brand-for">{buyer ? buyerLabel(buyer) : 'for Valio Aimo'}</span>
+        {!needsSetup && (
+          <nav aria-label="Main">
+            <button type="button" className="link" aria-current={view === 'order' ? 'page' : undefined} onClick={() => setView('order')}>
+              Order
+            </button>
+            <button type="button" className="link" aria-current={view === 'history' ? 'page' : undefined} onClick={() => setView('history')}>
+              History
+            </button>
+            <button type="button" className="link" onClick={() => keysDialog.current?.showModal()}>
               Keys
             </button>
-          </div>
-        </div>
+          </nav>
+        )}
       </header>
 
-      <dialog ref={keysDialog} className="modal" aria-labelledby="keys-title">
-        <form className="stack" onSubmit={saveKeys}>
-          <h2 id="keys-title" className="card-title">
-            Keys
-          </h2>
-          <div className="field">
-            <label htmlFor="agent-key">Agent key</label>
-            <p className="small muted" id="agent-key-help">
-              Lets the AI agent place orders for your kitchen.
-            </p>
-            <input
-              id="agent-key"
-              type="password"
-              autoComplete="off"
-              aria-describedby="agent-key-help"
-              value={keys.agentKey}
-              onChange={(e) => setKeyDraft({ ...keys, agentKey: e.target.value })}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="approver-key">Approver key</label>
-            <p className="small muted" id="approver-key-help">
-              Yours alone: approves or rejects orders and reads the audit log.
-            </p>
-            <input
-              id="approver-key"
-              type="password"
-              autoComplete="off"
-              aria-describedby="approver-key-help"
-              value={keys.approverKey}
-              onChange={(e) => setKeyDraft({ ...keys, approverKey: e.target.value })}
-            />
-          </div>
-          <div className="actions">
-            <button type="submit" className="btn">
-              Save keys
-            </button>
-            <button type="button" className="btn secondary" onClick={() => keysDialog.current?.close()}>
-              Cancel
-            </button>
-          </div>
-        </form>
+      <dialog ref={keysDialog} className="sheet" aria-labelledby="keys-dialog-title">
+        <KeysForm titleId="keys-dialog-title" title="Keys" onSaved={keysSaved} onCancel={() => keysDialog.current?.close()} />
       </dialog>
 
       <p className="sr-only" aria-live="polite">
@@ -145,96 +83,172 @@ export default function App() {
       </p>
 
       <main>
-        {MOCK && (
-          <p className="notice">
-            Mock mode: no backend calls. “1000” needs your OK, “cream” or “tomorrow” is refused with substitutes,
-            “stock” proposes a split order, “error” fails, anything else is ordered.
-          </p>
-        )}
-        {missingKeys && (
-          <p className="notice">
-            Add your agent key and approver key to start.{' '}
-            <button type="button" className="btn secondary" onClick={openKeys}>
-              Open keys
-            </button>
-          </p>
+        {MOCK && <p className="mock">Mock mode, no backend. Try “1000 L milk”, “200 L milk drink”, “cream for tomorrow”, “1000 butter, short on stock” or “error”.</p>}
+        {offline && (
+          <div className="problem banner" role="status">
+            <strong>Can’t reach the ordering service.</strong>
+            Your request will fail until it’s back. If you run it yourself, start the backend on port 8000.
+          </div>
         )}
 
-        <section id="view-console" role="tabpanel" aria-labelledby="tab-console" hidden={view !== 'console'} className="stack">
-          <form className="card stack" onSubmit={submit}>
-            <h1 className="card-title">What do you need?</h1>
-            <div className="field">
-              <label htmlFor="text">Request</label>
-              <textarea
-                id="text"
-                rows={3}
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="1000 L lactose-free milk for Monday"
-                required
-              />
-            </div>
-            <div className="form-row">
-              <div className="field">
-                <label htmlFor="date">Delivery date</label>
-                <input id="date" type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-              </div>
-              <div>
-                <button type="submit" className="btn" disabled={running || deciding || !text.trim()}>
-                  {running ? 'Asking the agent…' : 'Ask the agent'}
-                </button>
-              </div>
-            </div>
-            {running && <p className="small muted">Searching the catalogue and checking price and availability…</p>}
-          </form>
+        {needsSetup ? (
+          <KeysForm
+            title="Before your first order"
+            intro="Two keys connect this screen to Valio. Ask whoever set up your account; you only do this once."
+            submitLabel="Save and start"
+            onSaved={keysSaved}
+          />
+        ) : (
+          <>
+            <section hidden={view !== 'order'} aria-label="Order">
+              <form className="ask" onSubmit={submit}>
+                <label className="ask-label" htmlFor="text">
+                  What do you need?
+                </label>
+                <textarea
+                  id="text"
+                  className="ask-field"
+                  rows={3}
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder={EXAMPLE}
+                  required
+                />
+                <div className="ask-row">
+                  <label className="date-pick">
+                    Delivery <strong className="num">{formatDay(date)}</strong>
+                    <input
+                      type="date"
+                      aria-label="Delivery date"
+                      value={date}
+                      onChange={(e) => e.target.value && setDate(e.target.value)}
+                      onClick={(e) => e.currentTarget.showPicker?.()}
+                      required
+                    />
+                  </label>
+                  <button type="submit" className="btn" disabled={running || deciding || !text.trim()}>
+                    {running ? 'Asking…' : 'Ask the agent'}
+                  </button>
+                </div>
+              </form>
 
-          {error && (
-            <p className="error" role="alert">
-              {error}
-            </p>
-          )}
-          {run && (
-            <RunResult
-              key={run.audit_id}
-              run={run}
-              requestedDate={runDate}
-              onAction={refreshAudit}
-              onBusy={setDeciding}
-              onAnnounce={setAnnounce}
-            />
-          )}
-        </section>
+              {running && (
+                <div className="working">
+                  <p>{RUNNING}</p>
+                  <div className="working-bar" aria-hidden="true" />
+                </div>
+              )}
+              {error && (
+                <div className="problem" role="alert">
+                  <strong>That didn’t go through.</strong>
+                  {error}
+                </div>
+              )}
+              {run && (
+                <RunResult
+                  key={run.audit_id}
+                  run={run}
+                  requestedDate={runDate}
+                  onAction={refreshAudit}
+                  onBusy={setDeciding}
+                  onAnnounce={setAnnounce}
+                />
+              )}
+            </section>
 
-        <section id="view-audit" role="tabpanel" aria-labelledby="tab-audit" hidden={view !== 'audit'}>
-          <AuditLog refreshKey={auditKey} onBuyer={setBuyer} />
-        </section>
+            <section hidden={view !== 'history'} aria-label="History">
+              <AuditLog refreshKey={auditKey} onBuyer={setBuyer} />
+            </section>
+          </>
+        )}
       </main>
     </>
   )
 }
 
-function BackendStatus() {
-  const [health, setHealth] = useState<Health | null>(null)
-  const [error, setError] = useState<string | null>(null)
+function KeysForm({
+  title, titleId, intro, submitLabel = 'Save keys', onSaved, onCancel,
+}: { title: string; titleId?: string; intro?: string; submitLabel?: string; onSaved: () => void; onCancel?: () => void }) {
+  const [keys, setDraft] = useState<ApiKeys>(getKeys)
+  function save(e: FormEvent) {
+    e.preventDefault()
+    setKeys(keys)
+    onSaved()
+  }
+  return (
+    <form className="setup" onSubmit={save}>
+      <div className="field">
+        <h1 className="title" id={titleId}>
+          {title}
+        </h1>
+        {intro && <p className="note">{intro}</p>}
+      </div>
+      <SecretField
+        id="agent-key"
+        label="Agent key"
+        help="Lets the agent place orders for your kitchen."
+        value={keys.agentKey}
+        onChange={(v) => setDraft({ ...keys, agentKey: v })}
+      />
+      <SecretField
+        id="approver-key"
+        label="Approver key"
+        help="Yours alone. It approves orders and shows the history."
+        value={keys.approverKey}
+        onChange={(v) => setDraft({ ...keys, approverKey: v })}
+      />
+      <div className="actions">
+        <button type="submit" className="btn" disabled={!keys.agentKey.trim() || !keys.approverKey.trim()}>
+          {submitLabel}
+        </button>
+        {onCancel && (
+          <button type="button" className="btn plain" onClick={onCancel}>
+            Cancel
+          </button>
+        )}
+      </div>
+    </form>
+  )
+}
 
+function SecretField({ id, label, help, value, onChange }: { id: string; label: string; help: string; value: string; onChange: (v: string) => void }) {
+  const [shown, setShown] = useState(false)
+  return (
+    <div className="field">
+      <label htmlFor={id}>{label}</label>
+      <p className="field-help" id={`${id}-help`}>
+        {help}
+      </p>
+      <div className="field-row">
+        <input
+          id={id}
+          type={shown ? 'text' : 'password'}
+          autoComplete="off"
+          spellCheck={false}
+          aria-describedby={`${id}-help`}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <button type="button" className="btn plain" aria-pressed={shown} aria-controls={id} onClick={() => setShown((s) => !s)}>
+          {shown ? 'Hide' : 'Show'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// Only a failure is worth saying; a healthy backend stays silent.
+function useBackendDown(): boolean {
+  const [down, setDown] = useState(false)
   useEffect(() => {
     let cancelled = false
     getHealth().then(
-      (h) => !cancelled && (setHealth(h), setError(null)),
-      (e) => !cancelled && setError(errorText(e)),
+      () => !cancelled && setDown(false),
+      () => !cancelled && setDown(true),
     )
     return () => {
       cancelled = true
     }
   }, [])
-
-  if (error) return <span className="status bad">Backend offline</span>
-  if (!health) return <span className="status">Checking backend…</span>
-  const cat = health.catalogue
-  const catText = cat.ready ? `${cat.products.toLocaleString('en-US')} products` : cat.error ? 'catalogue failed' : 'catalogue loading'
-  return (
-    <span className={`status ${cat.ready ? 'good' : 'warn'}`} title={error ?? undefined}>
-      {MOCK ? 'Mock data' : 'Connected'} · {catText}
-    </span>
-  )
+  return down
 }

@@ -62,8 +62,9 @@ const decision = (
 type Fixture = {
   request: AgentRun['request']
   lines: Line[]
-  decision: Decision
-  status: OrderStatus
+  decision: Decision // the front door's decision (or the agent's, when no order is placed)
+  agent?: Decision // the agent's own decision when it differs (e.g. AUTO, then the door asks)
+  status: OrderStatus | null // null: the agent asked first, so nothing went to the door
   substitutes?: Substitute[]
   alternative_order?: AlternativeOrder | null
 }
@@ -80,11 +81,11 @@ const MILK: Fixture = {
         name_fi: 'Valio Eila® 3 % maitojuoma 1 l laktoositon', sales_unit: 'ST', delivery_reliability: 1.0,
       }),
       quote: quote({
-        product_id: '463335', price: 1.4, comparison_price: 1.4, comparison_unit: 'L', available_amount: 9999999999, // Valio's "plenty"
+        product_id: '463335', price: 1.56, comparison_price: 1.56, comparison_unit: 'L', available_amount: 9999999999, // Valio's "plenty"
         order_cutoff: '2026-11-15T13:00:00+02:00',
       }),
       quantity: qty('463335', 1000, 'L', 'ST', 1000, 1, '1,000 L ÷ 1 L per ST (1 LTR per ST) = 1,000 ST.'),
-      line_total_cents: 140000,
+      line_total_cents: 156000,
       why: 'Lactose free, 1 l cartons in stock for Monday, best delivery reliability (100 %).',
       chosen: true,
       confidence: 0.959, // floors to 0.95, as the backend does
@@ -118,14 +119,47 @@ const MILK: Fixture = {
   decision: decision(
     'ASK_HUMAN',
     [
-      reason('LINE_OVER_CAP', 'ASK_HUMAN', 'The Valio Eila® 3 % milk drink 1 l lactose free line is €1,400.00 (net of VAT), above your €300.00 per-line cap.', {
-        product_id: '463335', suggested_fix: 'Approve, or reduce the quantity.', facts: { line_total_cents: 140000, cap_cents: 30000 },
+      reason('SPEND_OVER_LIMIT', 'ASK_HUMAN', 'This order is €1,560.00 (net of VAT), above your €1,500.00 auto-approve limit.', {
+        suggested_fix: 'Approve, reduce the quantity to fit the limit, or reject.', facts: { total_cents: 156000, limit_cents: 150000 },
       }),
     ],
     [{ product_id: '462775', summary: 'Arla lactose-free milk drink 1 l is cheaper, but Gemini rates it 0.76 as a match for "milk".' }],
     0.96,
   ),
+  agent: decision('AUTO', [], [], 0.95),
   status: 'pending_approval',
+}
+
+// The demo's other moment: the cheapest match is a 'milk drink', and Gemini isn't sure that's what was meant.
+const DRINK: Fixture = {
+  request: {
+    summary: '200 L milk drink, delivered Monday 16 Nov',
+    items: [{ query: 'milk drink', amount: 200, unit: 'L', claims: [], exclude_allergens: [] }],
+  },
+  lines: [
+    {
+      product: product({ id: '462775', name_en: 'Arla Milkdrink 1L lactose free fat free UHT Suomesta', brand: 'Arla', sales_unit: 'ST' }),
+      quote: quote({ product_id: '462775', price: 1.25, comparison_price: 1.25, comparison_unit: 'L', available_amount: 2000 }),
+      quantity: qty('462775', 200, 'L', 'ST', 200, 1, '200 L ÷ 1 L per ST (1 LTR per ST) = 200 ST.'),
+      line_total_cents: 25000,
+      why: 'The closest match for "milk drink", in stock for Monday.',
+      chosen: true,
+      confidence: 0.72,
+      confidence_reason: 'A fat-free UHT drink; "milk drink" could also mean the regular Eila drink.',
+      facts: { delivery_reliability: 0.947, carbon_kg_per_kg: 1.0, origin: 'fi' },
+    },
+  ],
+  decision: decision(
+    'ASK_HUMAN',
+    [
+      reason('LOW_CONFIDENCE', 'ASK_HUMAN', 'Not sure that Arla Milkdrink 1L lactose free fat free UHT is right (0.72 vs your 0.80 threshold). A fat-free UHT drink; "milk drink" could also mean the regular Eila drink.', {
+        product_id: '462775', suggested_fix: 'Confirm the product and quantity, or pick an alternative.', facts: { confidence: 0.72, threshold: 0.8 },
+      }),
+    ],
+    [],
+    0.72,
+  ),
+  status: null,
 }
 
 const BUTTER: Fixture = {
@@ -295,10 +329,13 @@ export const mockApi = {
     const text = input.text.toLowerCase()
     if (text.includes('error')) throw new Error('Request failed (500): mock backend error')
     const f = structuredClone(
-      /stock|split/.test(text) ? SHORT : /1[ ,]?000/.test(text) ? MILK : /cream|tomorrow/.test(text) ? CREAM : BUTTER,
+      /stock|split/.test(text) ? SHORT : /drink/.test(text) ? DRINK : /1[ ,]?000/.test(text) ? MILK : /cream|tomorrow/.test(text) ? CREAM : BUTTER,
     )
     const buyer = input.buyer_id ?? 'lapland-kitchen' // the real backend takes it from the agent key
     const chosen = f.lines.filter((l) => l.chosen)
+    const agentDecision = f.agent ?? f.decision
+    const audit_id = log('buyer_agent', buyer, input.text, agentDecision) // the agent's decision is logged first
+    if (f.status === null) return { request: f.request, lines: f.lines, decision: agentDecision, order: null, audit_id }
     const order: OrderResponse = {
       order_id: f.status === 'refused' ? null : `00000000-0000-4000-8000-${String(seq + 1).padStart(12, '0')}`,
       status: f.status,
@@ -315,7 +352,7 @@ export const mockApi = {
       alternative_order: f.alternative_order ?? null,
     }
     if (order.order_id) orders.set(order.order_id, { buyer: buyer, res: order })
-    return { request: f.request, lines: f.lines, decision: f.decision, order, audit_id: log('buyer_agent', buyer, input.text, f.decision) }
+    return { request: f.request, lines: f.lines, decision: agentDecision, order, audit_id }
   },
 
   // The front door re-checks a placed order; here anything over €1,000 needs the chef's OK.
