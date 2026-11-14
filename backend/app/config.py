@@ -18,3 +18,5 @@ FRONTEND_ORIGINS = [o.strip() for o in os.getenv("FRONTEND_ORIGINS", "http://loc
 # AGENT_KEYS: purchasing agents placing orders (X-Agent-Key). APPROVER_KEYS: humans signing off (X-Approver-Key).
 AGENT_KEYS = os.getenv("AGENT_KEYS", "")
 APPROVER_KEYS = os.getenv("APPROVER_KEYS", "")
+# VALIO_ADMIN_KEYS: Valio staff reading every buyer's audit trail (X-Valio-Admin-Key), `key=valio[:name]`. Read-only.
+VALIO_ADMIN_KEYS = os.getenv("VALIO_ADMIN_KEYS", "")
