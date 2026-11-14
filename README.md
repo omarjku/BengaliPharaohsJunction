@@ -56,6 +56,7 @@ Set the variables from `.env.example`:
 | `APPROVER_KEYS` | Comma-separated `key=buyer_id[:name]` entries for human approvers. |
 | `VALIO_ADMIN_KEYS` | Comma-separated `key=valio[:name]` entries for Valio staff: read-only `GET /api/admin/audit` across all buyers (`X-Valio-Admin-Key`). |
 | `FRONT_DOOR_SIGNING_KEY` | Base64 of a 32-byte Ed25519 seed; signs every order response (public key at `/.well-known/front-door-keys.json`, check with `POST /api/verify`; see `docs/STANDARDS.md`). Unset = ephemeral key. |
+| `AGENT_SIGNING_KEYS` | Optional RFC 9421 agent signing: a comma list of `buyer:kid:base64pub` (Ed25519). A listed buyer must also sign every `POST /api/orders` and `/api/agent/*`, otherwise 401. `scripts/sign_request.py` shows how. Unset = no signing required. |
 | `DATA_DIR` | Directory for all front-door state: orders, audit trail, idempotency keys and saved mandates/rules. Default: the repo's `data/`. On Render, mount a persistent disk (e.g. `/var/data`) and set this. |
 | `TRUST_X_FORWARDED_FOR` | Set `1` behind a proxy that appends the client IP (Render, where it's set), so per-IP rate limits see real callers. Leave it unset when the API is reachable directly. |
 
@@ -92,6 +93,8 @@ routes derive the buyer identity from the key, not from a trusted request body.
 | Method and route | What it does | Header |
 | --- | --- | --- |
 | `POST /api/agent/ask` | **The one input box.** Free text, in English or Finnish: an order or a menu. It routes to run or menu, and asks back when it must ("For how many guests?", "For which delivery day?"). Urgent needs for a Helsinki buyer also get pickup suggestions. | `X-Agent-Key` |
+| `POST /api/voice/transcribe` | Push-to-talk audio (wav, webm, ogg or mp4; at most 1 MB / 30 s) → the chef's words (Gemini transcribe-live, about 1.3 s). Nothing is ordered here: the UI sends the text to `/api/agent/ask/stream`. | `X-Agent-Key` |
+| `POST /api/agent/ask/stream` | The same as `/api/agent/ask`, streamed as Server-Sent Events: progress lines, then the result. | `X-Agent-Key` |
 | `POST /api/agent/run` | Runs the buyer-agent flow end to end; the mandate is loaded server-side. | `X-Agent-Key` |
 | `POST /api/agent/menu` | Menu to cart: proposes `order_lines` for a menu and covers; always asks the chef. | `X-Agent-Key` |
 | `POST /api/orders` | Places an order through the front door. Send an `Idempotency-Key`. | `X-Agent-Key` |
@@ -133,11 +136,11 @@ show request → Gemini or fallback parse → catalogue → Valio quote → quan
 allergen exclusions, and uses Gemini to distinguish the requested product from
 keyword neighbours. `backend/app/quantity.py` converts amounts without silently
 guessing. The demo story, the same in every doc (measured live on Sun 15 Nov):
-- **1000 L lactose-free milk:** Gemini scores the cheapest option, Eila lactose-free
-  milk drink, ≈0.9. At EUR 1,400 that is within the mandate, so it is **confirmed
-  automatically**.
-- **1500 L:** EUR 2,100 is over the EUR 2,000 per-line cap and the EUR 1,500 limit,
-  so the door holds it (`pending_approval`) and the approver key confirms it.
+- **1000 L lactose-free milk:** the cheapest milk Gemini is confident about (at or
+  above the 0.70 threshold) wins. It is within the EUR 1,500 limit, so it is
+  **confirmed automatically**.
+- **1500 L:** over the EUR 1,500 limit, so the door holds it (`pending_approval`),
+  and the approver key confirms it.
 - **Gemini's doubt:** for "10 kg sugar for baking", 500 × 5 g sachets score below 0.5
   and caster sugar ≈0.9, so the agent picks the caster sugar.
 - The second path is menu to cart. Exact scores per run are in `docs/GEMINI.md`.

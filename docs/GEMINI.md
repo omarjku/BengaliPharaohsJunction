@@ -51,6 +51,13 @@ On price alone, the agent would have bought the "milk drink" (EUR 1,400, within 
 - "10 kg sugar for baking for Monday": Dansukker caster sugar 1 kg **0.94** (chosen), icing sugar 0.62, Segafredo
   brown sugar 500 × 5 g sachets **0.44**. The order is held for `ALLERGEN_DATA_MISSING`.
 
+**Live check on the deployed API, Sun 15 Nov ~09:45** (`smoke-kitchen`, same rules, threshold 0.70), "1000 L
+lactose-free milk for Monday": semi-skimmed 0.96 (EUR 1,560), whole 0.96 (EUR 1,640), Eila milk drink 0.81 (EUR 1,400),
+**Valio coffee milk lactose free 0.72 (EUR 1,300, chosen, AUTO confirmed)**. 1500 L: the same product, EUR 1,950,
+held for `SPEND_OVER_LIMIT`. The same pattern for "100 litraa laktoositonta maitoa" (coffee milk) and "10 L
+lactose-free cream" (coffee cream, 10 packs, confirmed). Kebab: "20 kg döner kebab meat" → Well Kebab kebab meat at
+0.61, below 0.70, so the agent asks.
+
 This is the one place for exact live scores. Other docs say ≈0.9 or below 0.5.
 
 **Trap, "60 L Arla lactose-free whole milk drink for Monday"**: the only match is a Terminal product whose cut-off has passed, so nothing is ordered (ASK_HUMAN). The substitutes the door's finder suggests are each judged: "Eila 3 % milk drink: 0.82 that it is an acceptable substitute", most acceptable first. Substitutes below 0.80 are marked "check before accepting".

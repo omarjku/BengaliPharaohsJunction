@@ -17,6 +17,12 @@ as the deployment). Path C is covered by `backend/tests/test_agent.py`.
 
 ## A. "1000 L lactose-free milk for Monday": confirmed automatically
 
+> **Live check, Sun 15 Nov ~09:45** (deployed API, `smoke-kitchen`, which has the same rules as the demo kitchen).
+> With the threshold now at 0.70, the cheapest confident milk is **Valio coffee milk lactose free** (Gemini just
+> above 0.70) at **EUR 1,300**. It is confirmed automatically. 1500 L costs EUR 1,950 and is held for
+> `SPEND_OVER_LIMIT` only (under the EUR 2,000 per-line cap). The table below is the earlier run at the 0.80
+> threshold. Re-measure before the demo: Room 3 may tighten the ranking.
+
 Run twice on Sun 15 Nov 2026, with the same result both times: local backend on the integration code, live Valio
 mock, live Gemini.
 
