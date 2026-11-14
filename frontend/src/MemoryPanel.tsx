@@ -8,7 +8,7 @@ import './MemoryPanel.css'
 // "What I know about your kitchen": the buyer profile (GET /api/profile, agent key). Standing dietary needs, and every
 // remembered preference with its scope ("this order only" / "always") and why it is used; Revoke forgets one
 // (DELETE /api/profile/memories/{id}, approver key: forgetting is the chef's call). Guidance, never rules.
-export function MemoryPanel({ refreshKey = 0 }: { refreshKey?: number }) {
+export function MemoryPanel({ refreshKey = 0, onUpdateKitchen }: { refreshKey?: number; onUpdateKitchen?: () => void }) {
   const c = useCopy()
   const t = c.UI.rules
   const { agentKey, approverKey } = getKeys()
@@ -78,6 +78,13 @@ export function MemoryPanel({ refreshKey = 0 }: { refreshKey?: number }) {
           {profile && profile.usual_product_ids.length > 0 && <li className="quiet">{t.knowUsual(profile.usual_product_ids.length)}</li>}
           {empty && <li className="quiet">{t.knowNothing}</li>}
           {!canRevoke && memories.length > 0 && <li className="quiet small">{t.revokeNeedsKey}</li>}
+          {onUpdateKitchen && (
+            <li>
+              <button type="button" className="btn plain accent-text" onClick={onUpdateKitchen}>
+                {t.updateKitchen}
+              </button>
+            </li>
+          )}
           {error && (
             <li className="problem" role="alert">
               {error}

@@ -457,6 +457,7 @@ export const UI = {
     scope: { always: 'aina', this_order: 'vain tämä tilaus' } as Record<string, string>,
     revoke: 'Peru',
     revoking: 'Perutaan…',
+    updateKitchen: 'Päivitä keittiöni tiedot',
     revokeNeedsKey: 'Lisää hyväksyjän avain kohdassa Avaimet, niin voit perua muistetun toiveen.',
     loadFailed: 'Sääntöjä ei saatu ladattua.',
     loading: 'Ladataan sääntöjä…',

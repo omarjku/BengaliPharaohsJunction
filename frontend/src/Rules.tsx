@@ -5,12 +5,12 @@ import { errorText } from './format'
 import { useCopy } from './i18n'
 import type { CompileResult, Mandate } from './types'
 
-type Props = { refreshKey: number; onAction: () => void; onAnnounce: (text: string) => void }
+type Props = { refreshKey: number; onAction: () => void; onAnnounce: (text: string) => void; onUpdateKitchen?: () => void }
 
 // The chef's rules: read them in plain words, rewrite them in plain words, check what changes, then save.
 // Compile never saves; saving needs every open question answered or skipped, and a second yes for anything looser.
 // Saves carry the version the chef was looking at (If-Match), so nobody silently overwrites someone else's change.
-export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
+export function Rules({ refreshKey, onAction, onAnnounce, onUpdateKitchen }: Props) {
   const c = useCopy()
   const t = c.UI.rules
   const approverKey = getKeys().approverKey
@@ -172,7 +172,7 @@ export function Rules({ refreshKey, onAction, onAnnounce }: Props) {
         </ul>
       )}
 
-      <MemoryPanel refreshKey={refreshKey} />
+      <MemoryPanel refreshKey={refreshKey} onUpdateKitchen={onUpdateKitchen} />
 
       {text !== null && (
         <form className="ask section-gap" onSubmit={submit}>
