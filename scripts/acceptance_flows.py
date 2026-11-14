@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -152,6 +154,8 @@ def approver_key(values: dict[str, str], buyer: str) -> str:
 
 
 def _body(response: HttpResponse) -> dict[str, Any]:
+    if isinstance(response.body, list):  # list routes (quotes, weekly menus) keep their rows under "items"
+        return {"items": response.body}
     return response.body if isinstance(response.body, dict) else {}
 
 
@@ -259,8 +263,11 @@ def _failure_record(kind: str, step_id: str, chef: str, reason: str) -> dict[str
 def _base_check(record: dict[str, Any]) -> tuple[bool, str]:
     if record.get("exception"):
         return False, "client exception or protocol failure"
-    if record.get("http_status") != 200:
-        return False, f"HTTP {record.get('http_status')}"
+    expected = record.get("expect_status", 200)
+    allowed = set(expected) if isinstance(expected, (list, tuple, set, frozenset)) else {expected}
+    if record.get("http_status") not in allowed:
+        wanted = "" if allowed == {200} else f" (expected {'/'.join(str(code) for code in sorted(allowed))})"
+        return False, f"HTTP {record.get('http_status')}{wanted}"
     if not isinstance(record.get("body"), dict):
         return False, "response was not JSON object"
     return True, "HTTP 200"
@@ -599,6 +606,8 @@ def check_flow_turn(flow_id: str, step_id: str, record: dict[str, Any], history:
     if record.get("kind") == "verify":
         return (True, "signed statement verifies") if (record.get("body") or {}).get("valid") is True \
             else (False, "signed statement was not valid")
+    if record.get("check") in RUNNER_CHECKS:
+        return RUNNER_CHECKS[record["check"]](record, history)
     step = next((step for flow_step in FLOWS_BY_ID.get(flow_id, {}).get("steps", [])
                  if (step := flow_step).get("id") == step_id), None)
     return _specific_check(flow_id, step.get("check") if step else step_id, record, history)
@@ -626,12 +635,26 @@ def run_flow(flow: dict[str, Any], base: str, keys: dict[str, str], transport: C
         "failures": [], "passed": True, "latency_seconds": 0.0,
     }
 
-    def observe(kind: str, step_id: str, chef: str, response: HttpResponse) -> dict[str, Any]:
+    def observe(kind: str, step_id: str, chef: str, response: HttpResponse, check: str | None = None,
+                expect: Any = 200, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         record = _record(kind, step_id, chef, response)
+        if check:
+            record["check"] = check
+            record["cart_lines"] = _measured_lines(record["body"])
+        if expect != 200:
+            record["expect_status"] = expect
+        if extra is not None:
+            record["expect"] = extra
         result["records"].append(record)
         result["latency_seconds"] += max(0.0, float(record["seconds"]))
         _add_check(result, record, flow["id"], step_id)
         return record
+
+    if flow.get("runner"):
+        flow["runner"](_Run(client, keys, observe, result))
+        result["latency_seconds"] = round(result["latency_seconds"], 3)
+        result["passed"] = not result["failures"]
+        return result
 
     setup = flow.get("setup")
     if setup:
@@ -702,13 +725,938 @@ def run_flow(flow: dict[str, Any], base: str, keys: dict[str, str], transport: C
     return result
 
 
+# --- Scripted flows F13–F22: the newest features end to end over HTTP ----------------------------------------------
+# Each runner drives a mix of chef turns and plain HTTP calls through _Run; every response is observed and checked by
+# a named function in RUNNER_CHECKS (pure: record + earlier records), so the checks are unit-testable offline.
+# Buyers: smoke-kitchen is the designated test buyer (never the demo kitchen, lapland-kitchen); F14, F19 and F20
+# mint fresh 24 h test kitchens (POST /api/sandbox, 5 per hour per IP), so their writes touch nobody else.
+HELSINKI = ZoneInfo("Europe/Helsinki")
+TEST_BUYER = "smoke-kitchen"
+TEST_PRODUCT_ID = "464411"  # Valio butter 500 g unsalted (profile seed), sold per piece
+REDACTED = "<redacted>"
+SANDBOX_BUYER = re.compile(r"^try-[0-9a-f]{8}$")
+INTERVIEW_TOPICS = ("kitchen", "delivery_days", "standing_orders", "dietary_allergens", "usual_products", "budget",
+                    "anything_else")
+INTERVIEW_ANSWERS = {
+    "kitchen": "We are a Finnish bistro with 60 seats and about 120 guests a day.",
+    "delivery_days": "Monday, Wednesday and Friday.",
+    "standing_orders": "Every Friday we order 15 litres of milk, 8 kg of unsalted butter and 3 litres of whipping cream.",
+    "dietary_allergens": "We avoid peanuts.",
+    "usual_products": "Valio butter and Valio milk.",
+    "budget": "About 600 euros per order.",
+    "anything_else": "No, nothing else.",
+}
+FAMILIES = {"milk": ("milk", "maito"), "butter": ("butter", "voi"), "cream": ("cream", "kerma"),
+            "mozzarella": ("mozzarella",), "oat": ("oat", "kaura")}
+_STOP = {"every", "litre", "litres", "liter", "liters", "kilo", "kilos", "grams", "pieces", "order", "with", "from",
+         "usual", "friday"}
+_TO_BASE = {"kg": ("kg", 1.0), "g": ("kg", 0.001), "l": ("l", 1.0), "dl": ("l", 0.1), "cl": ("l", 0.01),
+            "ml": ("l", 0.001)}
+_PACK = re.compile(r"(\d+(?:[.,]\d+)?)\s*(kg|g|l|dl|cl|ml)\b")
+
+
+def _today() -> date:
+    return datetime.now(HELSINKI).date()
+
+
+def _next_weekday(start: date, weekday: int, min_days: int = 1) -> date:
+    """The first `weekday` at least `min_days` after `start` (3 keeps Valio's day-before cut-off safe)."""
+    when = start + timedelta(days=min_days)
+    return when + timedelta(days=(weekday - when.weekday()) % 7)
+
+
+def _order_day(start: date) -> date:
+    """A Monday-to-Friday delivery day 3–5 days out, so its English weekday name means exactly that date."""
+    when = start + timedelta(days=3)
+    while when.weekday() > 4:
+        when += timedelta(days=1)
+    return when
+
+
+def _mentions(text: str, words: tuple[str, ...]) -> bool:
+    """Short words match at a word start only, so 'voi' never matches 'avoid' and 'oat' never 'goat'."""
+    low = str(text or "").casefold()
+    return any((re.search(rf"(?<![a-zà-ÿ]){re.escape(word)}", low) if len(word) < 5 else word in low)
+               for word in words)
+
+
+def _line_words(text: str) -> tuple[str, ...]:
+    """The keyword family a free-text line names (milk, butter, ...), else its significant words."""
+    for words in FAMILIES.values():
+        if _mentions(text, words):
+            return words
+    tokens = [token for token in re.findall(r"[a-zà-ÿ]{4,}", str(text or "").casefold()) if token not in _STOP]
+    return tuple(tokens)
+
+
+def _base_unit(unit: Any) -> tuple[str, float] | None:
+    return _TO_BASE.get(_normal_unit(unit) or "")
+
+
+def _measure(line: dict[str, Any], base: str) -> tuple[float, float] | None:
+    """(amount in kg or l, size of one sales unit in the same base; 0 for loose units), reading the pack size from
+    the name for per-piece lines."""
+    amount = _amount(line.get("amount"))
+    if amount is None:
+        return None
+    unit = _normal_unit(line.get("unit"))
+    direct = _TO_BASE.get(unit or "")
+    if direct and direct[0] == base:
+        return amount * direct[1], 0.0
+    if unit == "pcs":
+        pack = _PACK.search(_name(line))
+        if pack and _TO_BASE[pack.group(2)][0] == base:
+            size = float(pack.group(1).replace(",", ".")) * _TO_BASE[pack.group(2)][1]
+            return amount * size, size
+    return None
+
+
+def _base_quantity(line: dict[str, Any], base: str) -> float | None:
+    measured = _measure(line, base)
+    return measured[0] if measured else None
+
+
+def _amount_ok(line: dict[str, Any], quantity: Any, unit: Any) -> bool | None:
+    """True when the cart line carries the wanted amount, rounded up by less than one whole pack; None when the two
+    can't be compared (no amount, or an unknown pack size)."""
+    wanted, base = _amount(quantity), _base_unit(unit)
+    if wanted is None or base is None:
+        return None
+    measured = _measure(line, base[0])
+    if measured is None:
+        return None
+    (got, pack), wanted = measured, wanted * base[1]
+    return abs(got - wanted) < 1e-6 or wanted <= got < wanted + pack - 1e-9
+
+
+def _measured_lines(body: dict[str, Any]) -> list[dict[str, Any]]:
+    """speed_bench.cart_lines, but each agent line measured in what is actually ordered (sales quantity + sales unit).
+    speed_bench pairs the `delivered` amount (in the chef's unit, e.g. 3 kg) with the sales unit (ST), which reads
+    six 500 g packs as "3 ST"; the pack size in the name then gives the true 3 kg here."""
+    measures = {}
+    for line in body.get("lines") or []:
+        quantity = line.get("quantity") if isinstance(line, dict) else None
+        if isinstance(quantity, dict) and quantity.get("quantity") is not None and quantity.get("sales_unit"):
+            measures[speed_bench._line_name(line)] = (quantity["quantity"], quantity["sales_unit"])
+    return [{**line, "amount": measures[line["name"]][0], "unit": measures[line["name"]][1]}
+            if line.get("name") in measures else line for line in speed_bench.cart_lines(body)]
+
+
+def _choice_count(record: dict[str, Any]) -> int:
+    question = str(record.get("question") or "")
+    return max(len(_choices(record.get("body") or {})), len(re.findall(r"(?:^|\s)\d\)\s", question)))
+
+
+def _all_reply(record: dict[str, Any]) -> str:
+    """Every user-facing sentence, including the combined reply and per-card replies of a multi-intent answer."""
+    body = record.get("body") if isinstance(record.get("body"), dict) else {}
+    bits = [str(record.get("reply") or "")]
+    for source in [body, *[card for card in body.get("cards") or [] if isinstance(card, dict)]]:
+        for key in ("reply", "speak", "question", "answer", "message"):
+            if isinstance(source.get(key), str):
+                bits.append(source[key])
+    return " ".join(bits).casefold()
+
+
+def _all_lines(record: dict[str, Any]) -> list[dict[str, Any]]:
+    body = record.get("body") if isinstance(record.get("body"), dict) else {}
+    lines = list(record.get("cart_lines") or [])
+    for card in body.get("cards") or []:
+        if isinstance(card, dict):
+            lines.extend(line for line in _measured_lines(card) if line not in lines)
+    return lines
+
+
+def _expect(record: dict[str, Any]) -> dict[str, Any]:
+    return record.get("expect") if isinstance(record.get("expect"), dict) else {}
+
+
+def _standing_lines(body: dict[str, Any], weekday: str) -> list[dict[str, Any]] | None:
+    profile = body.get("profile") if isinstance(body.get("profile"), dict) else body
+    for order in profile.get("standing_orders") or []:
+        if isinstance(order, dict) and order.get("weekday") == weekday:
+            return [line for line in order.get("lines") or [] if isinstance(line, dict)]
+    return None
+
+
+def _day(body: dict[str, Any], when: str) -> dict[str, Any] | None:
+    return next((day for day in body.get("days") or [] if isinstance(day, dict) and day.get("date") == when), None)
+
+
+def _entries(body: dict[str, Any], when: str, kind: str) -> list[dict[str, Any]]:
+    day = _day(body, when) or {}
+    return [entry for entry in day.get("entries") or [] if isinstance(entry, dict) and entry.get("kind") == kind]
+
+
+def _delivery_ids(body: dict[str, Any], when: str) -> list[str]:
+    return sorted(str(entry.get("order_id")) for kind in ("delivery_confirmed", "delivery_pending")
+                  for entry in _entries(body, when, kind))
+
+
+def _covers_match(body: dict[str, Any], covers: dict[str, int]) -> str | None:
+    by_day, source = body.get("covers_by_weekday") or {}, body.get("covers_source") or {}
+    for key, value in covers.items():
+        if by_day.get(key) != value or source.get(key) != "own":
+            return f"{key} covers are {by_day.get(key)!r} ({source.get(key)}), not own {value}"
+    return None
+
+
+def _example_sources(body: dict[str, Any]) -> list[str]:
+    found = [f"covers {key}" for key, value in (body.get("covers_source") or {}).items() if value == "example"]
+    found += [f"standing {order.get('weekday')}" for order in body.get("standing_orders") or []
+              if isinstance(order, dict) and order.get("source") == "example"]
+    found += [f"product {item.get('product_id')}" for item in body.get("usual_products") or []
+              if isinstance(item, dict) and item.get("source") == "example"]
+    return found
+
+
+def _check_http_ok(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    return True, f"HTTP {record.get('http_status')} as expected"
+
+
+def _check_sandbox_minted(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body = record.get("body") or {}
+    agent, approver = body.get("agent_key"), body.get("approver_key")
+    if not SANDBOX_BUYER.fullmatch(str(body.get("buyer_id") or "")):
+        return False, f"buyer id {body.get('buyer_id')!r} is not a try-xxxxxxxx test kitchen"
+    if not (isinstance(agent, str) and isinstance(approver, str) and agent and approver and agent != approver):
+        return False, "mint did not return two distinct keys"
+    return (True, "test kitchen minted with separate agent and approver keys") if body.get("expires_at") \
+        else (False, "mint has no expiry")
+
+
+def _check_interview_step(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    if body.get("done") is False:
+        topic, question = body.get("topic"), body.get("question")
+        if topic not in INTERVIEW_TOPICS or not (isinstance(question, str) and question.strip()):
+            return False, f"interview step has topic {topic!r} and no usable question"
+        if topic in (expect.get("answered") or []):
+            return False, f"interview asked {topic} again after a clear answer"
+        if question.count("?") > 1:
+            return False, "interview asked more than one question in one turn"
+        return True, f"one question about {topic}"
+    if body.get("done") is True:
+        preview = body.get("preview") if isinstance(body.get("preview"), dict) else {}
+        proposed = preview.get("proposed")
+        if preview.get("stored") is not False or not isinstance(proposed, list) or not proposed:
+            return False, "finished interview did not return an unsaved preview"
+        ids = {item.get("id") for item in proposed if isinstance(item, dict)}
+        if expect.get("need_standing") and "standing_orders" not in ids:
+            return False, "preview has no standing_orders answer"
+        return True, f"interview finished with a preview of {len(ids)} answers, nothing stored"
+    return False, "interview response has no done flag"
+
+
+def _check_onboarding_saved(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    if body.get("stored") is not True:
+        return False, "preview was not stored"
+    lines = _standing_lines(body, expect.get("weekday", "friday"))
+    if not lines:
+        return False, f"profile has no saved {expect.get('weekday', 'friday')} standing order"
+    text = " ".join(str(line.get("text") or "") for line in lines)
+    missing = [family for family in expect.get("families") or [] if not _mentions(text, FAMILIES[family])]
+    return (False, f"saved standing order is missing {', '.join(missing)}") if missing \
+        else (True, "standing order saved from the interview")
+
+
+def _check_usual_uses_saved(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    if (verdict := _guard_verdict(record)) is not None:
+        return verdict
+    expect, lines = _expect(record), record.get("cart_lines") or []
+    saved = expect.get("saved") or []
+    held_before = expect.get("prior_lines") or []  # a 'which product' answer holds only that line, as its own order
+    if not saved:
+        return False, "no saved standing-order lines to compare against"
+    if not lines:
+        return False, "usual order produced no cart"
+    if record.get("status") in {"confirmed", "refused"}:
+        return False, f"usual order is {record.get('status')}; a saved order is an assumption and must be held"
+    held = record.get("status") == "pending_approval" and speed_bench._order_id(record.get("body") or {})
+    if not _has_weekday(record, 4):
+        return False, "usual Friday order is not dated a Friday"
+    lines = [*held_before, *[line for line in lines if line not in held_before]]
+    notes = []
+    question = str(record.get("question") or "")
+    asked = not expect.get("final") and _choice_count(record) >= 2
+    for item in saved:
+        words = _line_words(item.get("text") or "")
+        matches = [line for line in lines if words and _mentions(_name(line), words)]
+        if not matches and asked and words and _mentions(question, words):
+            notes.append(f"{item.get('text')}: asked which product")
+            continue
+        if not matches:
+            return False, f"cart has no line for saved {item.get('text')!r}"
+        verdicts = [_amount_ok(line, item.get("quantity"), item.get("unit")) for line in matches]
+        if False in verdicts and True not in verdicts:
+            return False, f"cart amount differs from saved {item.get('text')!r}"
+        if True not in verdicts:
+            notes.append(f"{item.get('text')}: amount not comparable")
+    for family in expect.get("forbid") or []:
+        if any(_mentions(_name(line), FAMILIES[family]) for line in lines):
+            return False, f"cart still has {family}, which the saved order no longer lists"
+    if not held and not any("asked which product" in note for note in notes):
+        return False, f"saved order is not held for one tap (status {record.get('status')!r}, no held order)"
+    return True, "cart is the saved standing order, held" + (f" ({'; '.join(notes)})" if notes else "")
+
+
+def _is_duplicate_guard(record: dict[str, Any]) -> bool:
+    """The front door's 'you ordered this N minutes ago, order again?' guard, which a rerun legitimately meets."""
+    return bool(record.get("question")) and bool(re.search(r"\bordered this\b.{0,60}\bago\b|\border again\?",
+                                                        _reply_lower(record)))
+
+
+def _guard_allowed(record: dict[str, Any]) -> bool:
+    return not _expect(record).get("past_guard") and bool(record.get("conversation_id")) and _is_duplicate_guard(record)
+
+
+def _guard_verdict(record: dict[str, Any]) -> tuple[bool, str] | None:
+    """Pass a first duplicate-order guard (the runner then says yes); fail one that repeats after that yes."""
+    if _guard_allowed(record):
+        return True, "duplicate-order guard asked first"
+    if _expect(record).get("past_guard") and _is_duplicate_guard(record):
+        return False, "duplicate-order guard repeated after the chef said yes"
+    return None
+
+
+def _needs_choice(record: dict[str, Any]) -> bool:
+    """A held line waits on one 'which product' question that a follow-up can answer."""
+    return bool(record.get("conversation_id") and record.get("question") and _choice_count(record) >= 2)
+
+
+def _check_history_example(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body = record.get("body") or {}
+    label = str((body.get("labels") or {}).get("example") or "").casefold()
+    if body.get("basis") not in {"example", "mixed"}:
+        return False, f"history basis is {body.get('basis')!r}, not example"
+    if "example" not in label and "simulated" not in label:
+        return False, "example history has no example/simulated label"
+    example_days = [key for key, value in (body.get("covers_source") or {}).items()
+                    if value == "example" and (body.get("covers_by_weekday") or {}).get(key) is not None]
+    return (True, f"example covers on {len(example_days)} weekdays, labelled") if example_days \
+        else (False, "no weekday covers are marked example")
+
+
+def _check_covers_own(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    problem = _covers_match(body, expect.get("covers") or {})
+    if problem:
+        return False, problem
+    if expect.get("example_still") and body.get("basis") != "mixed":
+        return False, f"basis is {body.get('basis')!r}; example data for other days should remain (mixed)"
+    return True, "own covers shown as own"
+
+
+def _check_example_hidden(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    left = _example_sources(body)
+    if left:
+        return False, f"example data still shown: {', '.join(left[:4])}"
+    if body.get("basis") != "own":
+        return False, f"basis is {body.get('basis')!r}, not own"
+    problem = _covers_match(body, expect.get("covers") or {})
+    return (False, problem) if problem else (True, "example hidden; own covers kept")
+
+
+def _check_standing_saved(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    saved = _standing_lines(body, expect.get("weekday", "friday"))
+    if saved is None:
+        return False, f"profile has no {expect.get('weekday', 'friday')} standing order"
+    texts = [str(line.get("text") or "").casefold() for line in saved]
+    for wanted in expect.get("lines") or []:
+        match = next((line for line in saved if str(line.get("text") or "").casefold() == wanted["text"].casefold()), None)
+        if match is None:
+            return False, f"saved order lacks {wanted['text']!r} (has {texts})"
+        if wanted.get("quantity") is not None and _amount(match.get("quantity")) != float(wanted["quantity"]):
+            return False, f"{wanted['text']!r} saved with quantity {match.get('quantity')!r}"
+    if len(saved) != len(expect.get("lines") or saved):
+        return False, f"saved order has {len(saved)} lines, not {len(expect.get('lines'))}"
+    return True, "standing order replaced with the edited lines"
+
+
+def _check_menu_saved(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    good = body.get("weekday") == expect.get("weekday") and body.get("name") == expect.get("name") \
+        and len(body.get("dishes") or []) == expect.get("dishes")
+    return (True, "weekly menu saved") if good else (False, "saved weekly menu does not match what was sent")
+
+
+def _check_calendar_menu(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    if _day(body, expect.get("date")) is None:
+        return False, f"calendar has no day {expect.get('date')}"
+    menus = _entries(body, expect["date"], "weekly_menu")
+    good = any(entry.get("name") == expect.get("name") and entry.get("covers") == expect.get("covers") for entry in menus)
+    return (True, "calendar shows the weekly menu on that Friday") if good \
+        else (False, f"calendar day has no weekly menu {expect.get('name')!r} for {expect.get('covers')} covers")
+
+
+def _check_menu_plan(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect, lines = record.get("body") or {}, _expect(record), record.get("cart_lines") or []
+    if not lines:
+        return False, "menu plan has no cart lines"
+    if body.get("order") or speed_bench._order_id(body):
+        return False, "menu plan placed an order"
+    outcome = (body.get("decision") or {}).get("outcome") if isinstance(body.get("decision"), dict) else None
+    if outcome != "ASK_HUMAN":
+        return False, f"menu plan decision is {outcome!r}, not ASK_HUMAN"
+    # A low-confidence ingredient may be left out of the order lines "until you check them": named in the reply.
+    missing = [family for family in expect.get("families") or []
+               if not any(_mentions(_name(line), FAMILIES[family]) for line in lines)
+               and not _mentions(_reply_lower(record), FAMILIES[family])]
+    return (False, f"menu cart neither has nor mentions {', '.join(missing)}") if missing \
+        else (True, f"menu cart of {len(lines)} lines, held, nothing ordered")
+
+
+def _check_calendar_unchanged(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    now = _delivery_ids(body, expect.get("date"))
+    return (True, "no delivery appeared after planning") if now == sorted(expect.get("before") or []) \
+        else (False, f"deliveries changed after planning: {now}")
+
+
+def _check_quote_ok(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    quote = next((item for item in body.get("items") or []
+                  if isinstance(item, dict) and item.get("product_id") == expect.get("product_id")), None)
+    if quote is None:
+        return False, "no quote for the test product"
+    price = quote.get("unit_price_cents")
+    if not isinstance(price, int) or price <= 0 or quote.get("orderable") is False:
+        return False, f"test product is not orderable at a price ({price!r})"
+    return True, f"test product quoted at {price} cents"
+
+
+def _check_order_status(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    wanted = expect.get("status") or ["confirmed"]
+    status = body.get("status") or (body.get("order") or {}).get("status")
+    if status not in wanted:
+        return False, f"order status is {status!r}, not {'/'.join(wanted)}"
+    return (True, f"order {status}") if speed_bench._order_id(body) else (False, "order response has no id")
+
+
+def _check_calendar_orders(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    confirmed_day, confirmed_id = expect.get("confirmed") or (None, None)
+    pending_day, pending_id = expect.get("pending") or (None, None)
+    if not any(entry.get("order_id") == confirmed_id for entry in _entries(body, confirmed_day, "delivery_confirmed")):
+        return False, f"confirmed order is not shown as a confirmed delivery on {confirmed_day}"
+    pending = [entry for entry in _entries(body, pending_day, "delivery_pending") if entry.get("order_id") == pending_id]
+    if not pending:
+        return False, f"pending order is not shown as a pending delivery on {pending_day}"
+    marked = " ".join(str(pending[0].get(key) or "") for key in ("title", "reason", "status")).casefold()
+    if not any(word in marked for word in ("waiting", "pending", "approval", "your ok")):
+        return False, "pending delivery is not marked as waiting"
+    if confirmed_id in _delivery_ids(body, pending_day) or pending_id in _delivery_ids(body, confirmed_day):
+        return False, "an order is shown on the wrong date"
+    return True, "confirmed and waiting deliveries on their own dates"
+
+
+def _check_rejected(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    status = (record.get("body") or {}).get("status")
+    return (True, "held order rejected (cleanup)") if status == "rejected" else (False, f"reject returned {status!r}")
+
+
+def _check_recurring_held(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect, lines = record.get("body") or {}, _expect(record), record.get("cart_lines") or []
+    if record.get("status") != "pending_approval":
+        return False, f"recurring order is {record.get('status')!r}, not held for approval"
+    if not speed_bench._order_id(body):
+        return False, "recurring order has no front-door order id"
+    missing = [family for family in expect.get("families") or []
+               if not any(_mentions(_name(line), FAMILIES[family]) for line in lines)]
+    if missing:
+        return False, f"recurring order is missing {', '.join(missing)}"
+    got = _date_value(body)
+    if got is not None and expect.get("date") and got.isoformat() != expect["date"]:
+        return False, f"recurring order is dated {got}, not {expect['date']}"
+    return True, "recurring order went through the front door and is held"
+
+
+def _check_calendar_recurring(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    recurring = _entries(body, expect.get("date"), "recurring_order")
+    if not recurring or not recurring[0].get("placed"):
+        return False, "calendar does not show the recurring order as placed"
+    if expect.get("order_id") not in _delivery_ids(body, expect.get("date")):
+        return False, "placed recurring order is not on the calendar"
+    return True, "calendar shows the recurring order placed and its delivery"
+
+
+def _check_skipped(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    return (True, "recurring order skipped") if body.get("skipped") is True and body.get("date") == expect.get("date") \
+        else (False, "skip was not confirmed for that date")
+
+
+def _check_calendar_skipped(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    if _day(body, expect.get("date")) is None:
+        return False, f"calendar has no day {expect.get('date')}"
+    return (False, "skipped date still shows the recurring order") if _entries(body, expect["date"], "recurring_order") \
+        else (True, "skipped date has no recurring order")
+
+
+def _check_approved_signed(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body = record.get("body") or {}
+    statement = body.get("signed_statement") if isinstance(body.get("signed_statement"), dict) else {}
+    if body.get("status") != "confirmed" or not isinstance(body.get("signature"), dict):
+        return False, f"approval returned {body.get('status')!r} without a signature"
+    return (True, "approver key confirmed and signed the order") if statement.get("signed_off_by") \
+        else (False, "signed statement does not name who signed off")
+
+
+def _check_profile_isolated(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    if body.get("buyer_id") != expect.get("buyer"):
+        return False, f"profile is for {body.get('buyer_id')!r}, not this kitchen"
+    texts = json.dumps(body.get("standing_orders") or [], ensure_ascii=False).casefold()
+    if expect.get("foreign_text", "").casefold() in texts:
+        return False, "the other test kitchen's standing order leaked into this profile"
+    if any(isinstance(order, dict) and order.get("order_id") == expect.get("foreign_order")
+           for order in body.get("recent_orders") or []):
+        return False, "the other test kitchen's order leaked into this profile"
+    return True, "profile shows nothing from the other test kitchen"
+
+
+def _check_history_isolated(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    day = expect.get("day", "fri")
+    leaked = (body.get("covers_source") or {}).get(day) == "own" \
+        and (body.get("covers_by_weekday") or {}).get(day) == expect.get("foreign")
+    return (False, "the other test kitchen's covers leaked into this history") if leaked \
+        else (True, "history shows nothing from the other test kitchen")
+
+
+def _check_profile_own(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    body, expect = record.get("body") or {}, _expect(record)
+    if body.get("buyer_id") != expect.get("buyer"):
+        return False, f"profile is for {body.get('buyer_id')!r}, not this kitchen"
+    texts = json.dumps(body.get("standing_orders") or [], ensure_ascii=False).casefold()
+    return (True, "own kitchen still sees its own standing order") if expect.get("text", "").casefold() in texts \
+        else (False, "own standing order is missing")
+
+
+def _check_order_placed_chef(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    if (verdict := _guard_verdict(record)) is not None:
+        return verdict
+    body, expect, lines = record.get("body") or {}, _expect(record), record.get("cart_lines") or []
+    if record.get("status") not in {"confirmed", "pending_approval"} or not speed_bench._order_id(body):
+        return False, f"order was not placed (status {record.get('status')!r})"
+    for words, quantity, unit in expect.get("lines") or []:
+        matches = [line for line in lines if _mentions(_name(line), FAMILIES[words])]
+        if not matches:
+            return False, f"placed order has no {words} line"
+        if False in [_amount_ok(line, quantity, unit) for line in matches] and \
+                True not in [_amount_ok(line, quantity, unit) for line in matches]:
+            return False, f"{words} is not {quantity:g} {unit}"
+    return True, f"order {record.get('status')} with {len(lines)} lines"
+
+
+def _check_order_contents(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    text, expect = _all_reply(record), _expect(record)
+    placed = expect.get("lines") or []
+    if not placed:
+        return False, "no placed lines to compare against"
+    if any(phrase in text for phrase in ("simulated", "your cart is empty", "no order", "nothing in your order",
+                                         "don't have an order", "do not have an order", "no current order")):
+        return False, "answer denies the order or calls it simulated"
+    for line in placed:
+        words = _line_words(line.get("name") or "")
+        if words and not _mentions(text, words):
+            return False, f"answer does not name {line.get('name')!r}"
+        amounts = [value for value in (_amount(line.get("amount")), _base_quantity(line, "kg"), _base_quantity(line, "l"))
+                   if value is not None]
+        if amounts and not any(re.search(rf"(?<![\d.,]){value:g}(?![\d])", text) for value in amounts):
+            return False, f"answer does not give the amount ({'/'.join(f'{v:g}' for v in amounts)}) for {line.get('name')!r}"
+    return True, "answer lists the placed lines with their amounts"
+
+
+def _check_cart_has(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    if (verdict := _guard_verdict(record)) is not None:
+        return verdict
+    lines = _all_lines(record)
+    for words, quantity, unit in _expect(record).get("lines") or []:
+        verdicts = [_amount_ok(line, quantity, unit) for line in lines if _mentions(_name(line), FAMILIES[words])]
+        if not verdicts:
+            return False, f"cart has no {words} line"
+        if True not in verdicts and False in verdicts:
+            return False, f"{words} is not {quantity:g} {unit}"
+    return True, "cart has the expected lines"
+
+
+def _check_three_intents(record: dict[str, Any], history: list[dict[str, Any]]) -> tuple[bool, str]:
+    text, expect, lines = _all_reply(record), _expect(record), _all_lines(record)
+    problems = []
+    butter = [line for line in lines if _mentions(_name(line), FAMILIES["butter"])]
+    if not any(_amount_ok(line, expect.get("butter"), "kg") for line in butter):
+        problems.append(f"order part: no {expect.get('butter')} kg butter line")
+    guest_words = r"(?:guests?|covers?|people|diners|served)"
+    if not re.search(rf"\d[\d\s,.]*\s*{guest_words}|{guest_words}\D{{0,40}}\d", text):
+        problems.append("kitchen question: no guest/cover count in the reply")
+    cream = [line for line in lines if _mentions(_name(line), FAMILIES["cream"])]
+    changed = any(_amount_ok(line, expect.get("cream"), "l") for line in cream)
+    said = re.search(rf"(?<![\d.,]){expect.get('cream')}\s*(?:l\b|litre|liter)", text)
+    if not (changed or (said and cream)):
+        problems.append(f"change part: cream is not {expect.get('cream')} L")
+    return (False, "; ".join(problems)) if problems else (True, "order, kitchen answer and change all handled in one reply")
+
+
+RUNNER_CHECKS: dict[str, Callable[[dict[str, Any], list[dict[str, Any]]], tuple[bool, str]]] = {
+    "http_ok": _check_http_ok,
+    "status_only": _check_http_ok,
+    "sandbox_minted": _check_sandbox_minted,
+    "interview_step": _check_interview_step,
+    "onboarding_saved": _check_onboarding_saved,
+    "usual_uses_saved": _check_usual_uses_saved,
+    "history_example": _check_history_example,
+    "covers_own": _check_covers_own,
+    "example_hidden": _check_example_hidden,
+    "standing_saved": _check_standing_saved,
+    "menu_saved": _check_menu_saved,
+    "calendar_menu": _check_calendar_menu,
+    "menu_plan": _check_menu_plan,
+    "calendar_unchanged": _check_calendar_unchanged,
+    "quote_ok": _check_quote_ok,
+    "order_status": _check_order_status,
+    "calendar_orders": _check_calendar_orders,
+    "rejected": _check_rejected,
+    "recurring_held": _check_recurring_held,
+    "calendar_recurring": _check_calendar_recurring,
+    "skipped": _check_skipped,
+    "calendar_skipped": _check_calendar_skipped,
+    "approved_signed": _check_approved_signed,
+    "profile_isolated": _check_profile_isolated,
+    "history_isolated": _check_history_isolated,
+    "profile_own": _check_profile_own,
+    "order_placed_chef": _check_order_placed_chef,
+    "order_contents": _check_order_contents,
+    "cart_has": _check_cart_has,
+    "three_intents": _check_three_intents,
+}
+
+
+class _Run:
+    """What a scripted flow can do. Keys only ever travel as headers; minted sandbox keys are redacted from records."""
+
+    def __init__(self, client: Any, keys: dict[str, str], observe: Callable[..., dict[str, Any]], result: dict[str, Any]):
+        self.client, self.keys, self._observe, self.result = client, keys, observe, result
+
+    def http(self, step_id: str, method: str, path: str, body: Any = None, *, role: str | None = "agent",
+             key: str | None = None, check: str = "http_ok", expect: Any = 200,
+             extra: dict[str, Any] | None = None) -> dict[str, Any]:
+        secret = key if key is not None else self.keys.get(role or "", "")
+        headers = {"X-Agent-Key": secret} if role == "agent" else {"X-Approver-Key": secret} if role == "approver" else {}
+        response = _safe_call(lambda: self.client.request(method, path, body, headers))
+        return self._observe("http", step_id, f"{method} {path}", response, check=check, expect=expect, extra=extra)
+
+    def ask(self, step_id: str, text: str, *, check: str, key: str | None = None, conversation_id: str | None = None,
+            extra: dict[str, Any] | None = None) -> dict[str, Any]:
+        secret = key if key is not None else self.keys.get("agent", "")
+        response = _safe_call(lambda: self.client.ask(secret, text, conversation_id))
+        return self._observe("chef", step_id, text, response, check=check, extra=extra)
+
+    @staticmethod
+    def ok(record: dict[str, Any]) -> bool:
+        return bool(record.get("checks")) and all(check.get("passed") for check in record["checks"])
+
+    def stop(self, step_id: str, reason: str) -> None:
+        self.result["failures"].append(f"{step_id}: {reason}")
+
+    def mint(self, step_id: str) -> dict[str, str] | None:
+        record = self.http(step_id, "POST", "/api/sandbox", {}, role=None, check="sandbox_minted")
+        body = record.get("body") or {}
+        keys = {"agent": body.get("agent_key"), "approver": body.get("approver_key"), "buyer_id": body.get("buyer_id")}
+        record["body"] = {**body, **{name: REDACTED for name in ("agent_key", "approver_key") if name in body}}
+        return keys if self.ok(record) else None
+
+    def price(self, step_id: str, when: date) -> int | None:
+        record = self.http(step_id, "POST", "/api/quotes",
+                           {"product_ids": [TEST_PRODUCT_ID], "requested_date": when.isoformat()},
+                           role=None, check="quote_ok", extra={"product_id": TEST_PRODUCT_ID})
+        if not self.ok(record):
+            return None
+        return next(item["unit_price_cents"] for item in record["body"]["items"]
+                    if item.get("product_id") == TEST_PRODUCT_ID)
+
+    def order(self, step_id: str, when: date, quantity: int, status: list[str], key: str | None = None) -> str | None:
+        record = self.http(step_id, "POST", "/api/orders",
+                           {"requested_date": when.isoformat(),
+                            "lines": [{"product_id": TEST_PRODUCT_ID, "quantity": quantity}]},
+                           key=key, check="order_status", extra={"status": status})
+        return speed_bench._order_id(record.get("body") or {}) if self.ok(record) else None
+
+
+def _ask_through_guard(run: _Run, step_id: str, text: str, check: str, extra: dict[str, Any]) -> dict[str, Any]:
+    """Ask; if a rerun meets the duplicate-order guard, say yes once and check that answer instead."""
+    record = run.ask(step_id, text, check=check, extra=extra)
+    if run.ok(record) and _is_duplicate_guard(record):
+        record = run.ask(f"{step_id}_again", "Yes, order it again.", check=check,
+                         conversation_id=record["conversation_id"], extra={**extra, "past_guard": True})
+    return record
+
+
+def _usual_order(run: _Run, step_id: str, text: str, saved: list[dict[str, Any]] | None,
+                 forbid: tuple[str, ...] = ()) -> None:
+    """Ask for the usual order; if a saved line is missing because it waits on a 'which product' question, pick the
+    first choice and require the whole saved order across the held cart and the answered line. Held orders are
+    rejected afterwards so test runs don't pile up approvals."""
+    extra = {"saved": saved, "forbid": list(forbid)}
+    record = _ask_through_guard(run, step_id, text, "usual_uses_saved", extra)
+    waiting = "asked which product" in str((record.get("checks") or [{}])[-1].get("reason"))
+    held = [record]
+    if run.ok(record) and waiting and _needs_choice(record):
+        held.append(run.ask(f"{step_id}_choice", "1", check="usual_uses_saved",
+                            conversation_id=record["conversation_id"],
+                            extra={**extra, "final": True, "past_guard": True,
+                                   "prior_lines": record.get("cart_lines") or []}))
+    for number, item in enumerate(held, 1):
+        order_id = speed_bench._order_id(item.get("body") or {})
+        if item.get("status") == "pending_approval" and order_id:
+            run.http(f"{step_id}_cleanup_{number}", "POST", f"/api/orders/{order_id}/reject", {}, role="approver",
+                     check="rejected")
+
+
+def _quantity_for(target_cents: int, price_cents: int) -> int:
+    """A piece count whose total lands just above `target_cents` (between the auto limit and the line cap)."""
+    return max(1, math.ceil(target_cents / price_cents))
+
+
+def _f13_interview(run: _Run) -> None:
+    profile = run.http("profile_before", "GET", "/api/profile")
+    for order in (profile.get("body") or {}).get("standing_orders") or []:  # so the interview asks for them again
+        run.http(f"clear_{order.get('weekday')}", "DELETE", f"/api/profile/standing-orders/{order.get('weekday')}",
+                 role="approver")
+    answers: list[dict[str, str]] = []
+    preview: dict[str, Any] | None = None
+    for turn in range(1, len(INTERVIEW_TOPICS) + 3):
+        record = run.http(f"interview_{turn}", "POST", "/api/profile/interview/next", {"answers": list(answers)},
+                          check="interview_step",
+                          extra={"answered": [answer["topic"] for answer in answers], "need_standing": True})
+        if not run.ok(record):
+            return
+        body = record["body"]
+        if body.get("done"):
+            preview = body["preview"]
+            break
+        answers.append({"topic": body["topic"], "text": INTERVIEW_ANSWERS[body["topic"]]})
+    if preview is None:
+        return run.stop("interview", "did not finish within the topic count")
+    accepted = {item["id"]: item.get("value") for item in preview["proposed"] if isinstance(item, dict) and item.get("id")}
+    confirm = run.http("confirm_preview", "POST", "/api/profile/onboarding", {"answers": accepted, "confirm": True},
+                       role="approver", check="onboarding_saved",
+                       extra={"weekday": "friday", "families": ["milk", "butter", "cream"]})
+    if not run.ok(confirm):
+        return
+    _usual_order(run, "usual_friday", "I want my usual Friday order.", _standing_lines(confirm["body"], "friday"))
+
+
+def _f14_history(run: _Run) -> None:
+    keys = run.mint("mint")
+    if not keys:
+        return
+    covers = {"fri": 87, "sat": 93}
+    if not run.ok(run.http("history_example", "GET", "/api/kitchen/history", key=keys["agent"],
+                           check="history_example")):
+        return
+    run.http("put_covers", "PUT", "/api/kitchen/history/covers", covers, role="approver", key=keys["approver"],
+             check="covers_own", extra={"covers": covers})
+    run.http("history_own", "GET", "/api/kitchen/history", key=keys["agent"], check="covers_own",
+             extra={"covers": covers, "example_still": True})
+    run.http("clear_example", "POST", "/api/kitchen/history/clear-example", {}, role="approver",
+             key=keys["approver"], check="example_hidden", extra={"covers": covers})
+    run.http("history_after_clear", "GET", "/api/kitchen/history", key=keys["agent"], check="example_hidden",
+             extra={"covers": covers})
+
+
+F15_LINES = [{"text": "7 kg unsalted butter", "quantity": 7, "unit": "kg"},
+             {"text": "9 litres whipping cream", "quantity": 9, "unit": "l"},
+             {"text": "3 kg grated mozzarella", "quantity": 3, "unit": "kg"}]
+
+
+def _f15_standing_edit(run: _Run) -> None:
+    edit = run.http("edit_friday", "PUT", "/api/profile/standing-orders/fri", {"lines": F15_LINES}, role="approver",
+                    check="standing_saved", extra={"weekday": "friday", "lines": F15_LINES})
+    if not run.ok(edit):
+        return
+    _usual_order(run, "usual_after_edit", "Our usual Friday order, please.", _standing_lines(edit["body"], "friday"),
+                 forbid=("milk",))
+
+
+F16_MENU = {"name": "Acceptance pizza night", "covers": 40, "active": True, "dishes": [
+    {"name": "Margherita pizza", "per_cover": [{"ingredient": "grated mozzarella", "amount": 80, "unit": "g"},
+                                               {"ingredient": "tomato sauce", "amount": 60, "unit": "g"}]},
+    {"name": "Mushroom pizza", "recipe": "Tomato sauce, sliced mushrooms and mozzarella on a pizza base."}]}
+
+
+def _f16_weekly_menu(run: _Run) -> None:
+    friday = _next_weekday(_today(), 4, 3).isoformat()
+    saved = run.http("put_menu", "PUT", "/api/menus/weekly/fri", F16_MENU, role="approver", check="menu_saved",
+                     extra={"weekday": "fri", "name": F16_MENU["name"], "dishes": len(F16_MENU["dishes"])})
+    if not run.ok(saved):
+        return
+    calendar = run.http("calendar_menu", "GET", f"/api/calendar?from={friday}&to={friday}", check="calendar_menu",
+                        extra={"date": friday, "name": F16_MENU["name"], "covers": F16_MENU["covers"]})
+    before = _delivery_ids(calendar.get("body") or {}, friday)
+    run.http("plan_menu", "POST", f"/api/menus/weekly/fri/plan?date={friday}", check="menu_plan",
+             extra={"families": ["mozzarella"]})
+    run.http("calendar_after_plan", "GET", f"/api/calendar?from={friday}&to={friday}", check="calendar_unchanged",
+             extra={"date": friday, "before": before})
+
+
+def _f17_calendar_orders(run: _Run) -> None:
+    first = _next_weekday(_today(), 1, 3)  # a Tuesday and the Wednesday after it
+    second = first + timedelta(days=1)
+    price = run.price("quote", first)
+    if price is None:
+        return
+    confirmed = run.order("place_small", first, 2, ["confirmed"])
+    pending = run.order("place_large", second, _quantity_for(170_000, price), ["pending_approval"])  # €1,500 < x < €2,000
+    if confirmed and pending:
+        run.http("calendar_orders", "GET", f"/api/calendar?from={first.isoformat()}&to={second.isoformat()}",
+                 check="calendar_orders",
+                 extra={"confirmed": [first.isoformat(), confirmed], "pending": [second.isoformat(), pending]})
+    if pending:
+        run.http("cleanup_reject", "POST", f"/api/orders/{pending}/reject", {}, role="approver", check="rejected")
+
+
+F18_LINES = [{"text": "6 kg unsalted butter", "quantity": 6, "unit": "kg"},
+             {"text": "4 litres whipping cream", "quantity": 4, "unit": "l"}]
+
+
+def _f18_recurring(run: _Run) -> None:
+    friday = _next_weekday(_today(), 4, 3)
+    skip_day = friday + timedelta(days=28)  # a skip is permanent, so skip a later Friday than the one placed
+    if not run.ok(run.http("standing_friday", "PUT", "/api/profile/standing-orders/fri", {"lines": F18_LINES},
+                           role="approver", check="standing_saved", extra={"weekday": "friday", "lines": F18_LINES})):
+        return
+    placed = run.http("place_recurring", "POST", f"/api/calendar/recurring/fri/place?date={friday.isoformat()}",
+                      check="recurring_held", extra={"families": ["butter", "cream"], "date": friday.isoformat()})
+    order_id = speed_bench._order_id(placed.get("body") or {})
+    if order_id:
+        run.http("calendar_recurring", "GET", f"/api/calendar?from={friday.isoformat()}&to={friday.isoformat()}",
+                 check="calendar_recurring", extra={"date": friday.isoformat(), "order_id": order_id})
+        if placed.get("status") == "pending_approval":
+            run.http("cleanup_reject", "POST", f"/api/orders/{order_id}/reject", {}, role="approver", check="rejected")
+    run.http("skip", "POST", f"/api/calendar/recurring/fri/skip?date={skip_day.isoformat()}", {}, role="approver",
+             check="skipped", extra={"date": skip_day.isoformat()})
+    run.http("calendar_skipped", "GET", f"/api/calendar?from={skip_day.isoformat()}&to={skip_day.isoformat()}",
+             check="calendar_skipped", extra={"date": skip_day.isoformat()})
+    run.http("place_skipped", "POST", f"/api/calendar/recurring/fri/place?date={skip_day.isoformat()}",
+             check="status_only", expect=409)
+
+
+def _f19_sandbox_roles(run: _Run) -> None:
+    keys = run.mint("mint")
+    if not keys:
+        return
+    when = _next_weekday(_today(), 1, 3)
+    price = run.price("quote", when)
+    if price is None:
+        return
+    # The test kitchen copies helsinki-bistro's rules: auto up to €800, €1,000 per line, so ~€900 is held.
+    record = run.http("place_held", "POST", "/api/orders",
+                      {"requested_date": when.isoformat(),
+                       "lines": [{"product_id": TEST_PRODUCT_ID, "quantity": _quantity_for(90_000, price)}]},
+                      key=keys["agent"], check="order_status", extra={"status": ["pending_approval"]})
+    order_id = speed_bench._order_id(record.get("body") or {})
+    if not run.ok(record) or not order_id:
+        return
+    decided_at = speed_bench._decided_at(record["body"])
+    run.http("agent_key_approve", "POST", f"/api/orders/{order_id}/approve",
+             {"decided_at": decided_at} if decided_at else None, role="approver", key=keys["agent"],
+             check="status_only", expect=(401, 403))
+    run.http("still_pending", "GET", f"/api/orders/{order_id}", key=keys["agent"], check="order_status",
+             extra={"status": ["pending_approval"]})
+    run.http("approver_approves", "POST", f"/api/orders/{order_id}/approve",
+             {"decided_at": decided_at} if decided_at else None, role="approver", key=keys["approver"],
+             check="approved_signed")
+
+
+def _f20_sandbox_isolation(run: _Run) -> None:
+    first, second = run.mint("mint_a"), run.mint("mint_b")
+    if not first or not second:
+        return
+    line = [{"text": "11 kg unsalted butter", "quantity": 11, "unit": "kg"}]
+    run.http("a_standing", "PUT", "/api/profile/standing-orders/fri", {"lines": line}, role="approver",
+             key=first["approver"], check="standing_saved", extra={"weekday": "friday", "lines": line})
+    run.http("a_covers", "PUT", "/api/kitchen/history/covers", {"fri": 71}, role="approver", key=first["approver"],
+             check="covers_own", extra={"covers": {"fri": 71}})
+    order_id = run.order("a_order", _next_weekday(_today(), 1, 3), 2, ["confirmed", "pending_approval"],
+                         key=first["agent"])
+    run.http("b_profile", "GET", "/api/profile", key=second["agent"], check="profile_isolated",
+             extra={"buyer": second["buyer_id"], "foreign_text": line[0]["text"], "foreign_order": order_id})
+    run.http("b_history", "GET", "/api/kitchen/history", key=second["agent"], check="history_isolated",
+             extra={"day": "fri", "foreign": 71})
+    if order_id:
+        run.http("b_reads_a_order", "GET", f"/api/orders/{order_id}", key=second["agent"], check="status_only",
+                 expect=(403, 404))
+        run.http("b_approves_a_order", "POST", f"/api/orders/{order_id}/approve", None, role="approver",
+                 key=second["approver"], check="status_only", expect=(403, 404))
+    run.http("a_profile", "GET", "/api/profile", key=first["agent"], check="profile_own",
+             extra={"buyer": first["buyer_id"], "text": line[0]["text"]})
+
+
+def _f21_order_contents(run: _Run) -> None:
+    day = _order_day(_today()).strftime("%A")
+    placed = _ask_through_guard(run, "place_order", f"Order 3 kg unsalted butter and 2 litres of whipping cream for {day}.",
+                                "order_placed_chef", {"lines": [("butter", 3, "kg"), ("cream", 2, "l")]})
+    if not run.ok(placed):
+        return
+    run.ask("whats_in_order", "What's in my order?", check="order_contents",
+            extra={"lines": placed.get("cart_lines") or []})
+    order_id = speed_bench._order_id(placed.get("body") or {})
+    if placed.get("status") == "pending_approval" and order_id:
+        run.http("cleanup_reject", "POST", f"/api/orders/{order_id}/reject", {}, role="approver", check="rejected")
+
+
+def _f22_three_intents(run: _Run) -> None:
+    day = _order_day(_today()).strftime("%A")
+    cream = {"lines": [("cream", 5, "l")]}
+    setup = _ask_through_guard(run, "cream_order", f"Order 5 litres of whipping cream for {day}.", "cart_has", cream)
+    if run.ok(setup) and _needs_choice(setup):  # pick a cream so a real cart exists before the change
+        run.ask("cream_choice", "1", check="cart_has", conversation_id=setup["conversation_id"],
+                extra={**cream, "past_guard": True})  # a failure here is recorded; the main turn still runs
+    run.ask("three_intents",
+            f"Add 4 kg of unsalted butter for {day}, how many guests did we serve last Friday, "
+            "and change the cream to 8 litres.",
+            check="three_intents", extra={"butter": 4, "cream": 8})
+
+
+FLOWS.extend([
+    {"id": "F13", "title": "text interview saves the usual Friday order", "buyer": TEST_BUYER,
+     "needs_approver": True, "runner": _f13_interview},
+    {"id": "F14", "title": "kitchen history: example labelled, own covers, clear example", "buyer": "sandbox",
+     "sandbox": True, "runner": _f14_history},
+    {"id": "F15", "title": "edited standing order drives the usual Friday order", "buyer": TEST_BUYER,
+     "needs_approver": True, "runner": _f15_standing_edit},
+    {"id": "F16", "title": "weekly menu on the calendar; plan proposes, orders nothing", "buyer": TEST_BUYER,
+     "needs_approver": True, "runner": _f16_weekly_menu},
+    {"id": "F17", "title": "calendar shows confirmed and waiting deliveries", "buyer": TEST_BUYER,
+     "needs_approver": True, "runner": _f17_calendar_orders},
+    {"id": "F18", "title": "recurring order placed through the front door; skip", "buyer": TEST_BUYER,
+     "needs_approver": True, "runner": _f18_recurring},
+    {"id": "F19", "title": "test kitchen: agent key cannot approve, approver key can", "buyer": "sandbox",
+     "sandbox": True, "runner": _f19_sandbox_roles},
+    {"id": "F20", "title": "two test kitchens are isolated", "buyer": "sandbox", "sandbox": True,
+     "runner": _f20_sandbox_isolation},
+    {"id": "F21", "title": "what's in my order returns the real lines", "buyer": TEST_BUYER,
+     "needs_approver": True, "runner": _f21_order_contents},
+    {"id": "F22", "title": "one message, three intents", "buyer": "helsinki-bistro", "runner": _f22_three_intents},
+])
+FLOWS_BY_ID.update({flow["id"]: flow for flow in FLOWS})
+
+
 def select_flows(only: str | None) -> list[dict[str, Any]]:
     wanted = {value.strip().upper() for value in (only or "").split(",") if value.strip()}
     return [flow for flow in FLOWS if not wanted or flow["id"].upper() in wanted]
 
 
 def _required_approver(flow: dict[str, Any]) -> bool:
-    return bool(flow.get("setup") or flow.get("approval"))
+    return bool(flow.get("setup") or flow.get("approval") or flow.get("needs_approver"))
 
 
 def run_selected(base: str, values: dict[str, str], flows: list[dict[str, Any]] | None = None,
@@ -717,6 +1665,9 @@ def run_selected(base: str, values: dict[str, str], flows: list[dict[str, Any]] 
     results = []
     for flow in selected:
         buyer = flow["buyer"]
+        if flow.get("sandbox"):  # mints its own test kitchens; no .env keys are needed or used
+            results.append(run_flow(flow, base, {}, transport=transport))
+            continue
         keys = {"agent": agent_key(values, buyer), "approver": approver_key(values, buyer)}
         if not keys["agent"]:
             results.append(_missing_key_result(flow, "agent"))
@@ -782,6 +1733,8 @@ def render_report(results: dict[str, Any]) -> str:
                 lines.append(f"**Action:** {_md(record.get('chef'))}")
             agent = record.get("speak") or record.get("reply") or "—"
             lines.append(f"**Agent:** {_md(_clip(agent))}")
+            if record.get("kind") == "http":  # sandbox keys are redacted from the body before this point
+                lines.append(f"**Response:** {_md(_clip(record.get('body'), 400))}")
             if record.get("question") and record.get("question") != record.get("speak"):
                 lines.append(f"**Question:** {_md(_clip(record.get('question')))}")
             cart = record.get("cart_lines") or []
