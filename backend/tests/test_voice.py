@@ -93,6 +93,15 @@ def test_bad_recordings_get_a_plain_reason(live, body, ctype, status):
     assert r.status_code == status and isinstance(r.json()["detail"], str)
 
 
+def test_decoder_errors_never_reach_the_client(live):
+    # Live probe found "[Errno 1094995529] Invalid data found when processing input" in the 422 (PyAV errors are
+    # ValueErrors, so they slipped through the pass-through for our own messages).
+    for junk in (b"\x00not audio at all" * 10, b"\x00" * 200_000, b"RIFF\x00\x00\x00\x00WAVEjunk"):
+        r = post(junk, "audio/webm")
+        assert r.status_code == 422 and "Errno" not in r.text and "Invalid data" not in r.text
+        assert "not a readable audio recording" in r.json()["detail"]
+
+
 def test_size_cap_and_auth(live):
     assert post(b"x" * (voice.MAX_BYTES + 1), "audio/webm").status_code == 413  # refused before it is read
     assert post(wav(1.0), key=None).status_code == 401

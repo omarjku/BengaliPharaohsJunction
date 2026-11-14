@@ -62,10 +62,10 @@ def to_pcm16(data: bytes, kind: str = "audio/webm") -> tuple[bytes, float]:
                 out += bytes(f.planes[0])[: f.samples * 2]
             if len(out) > cap:
                 raise ValueError(f"longer than {MAX_SECONDS} s")
+    except (av.error.FFmpegError, StopIteration, OSError) as e:  # first: PyAV errors are ValueErrors too, and their
+        raise ValueError("not a readable audio recording") from e  # messages (errno, decoder detail) stay server-side
     except ValueError:
         raise
-    except (av.error.FFmpegError, StopIteration, OSError) as e:
-        raise ValueError("not a readable audio recording") from e
     return bytes(out), len(out) / (RATE * 2)
 
 
