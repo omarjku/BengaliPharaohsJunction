@@ -33,7 +33,12 @@ def _get(url: str, token: str, accept: str) -> bytes:
         with urllib.request.urlopen(request, timeout=API_TIMEOUT_SECONDS) as response:
             return response.read()
     except urllib.error.HTTPError as exc:
-        raise CraciAPIError(f"API returned HTTP {exc.code}") from None
+        try:
+            problem = json.loads(exc.read() or b"{}")
+            detail = str(problem.get("detail") or problem.get("title") or "")[:200]
+        except (ValueError, OSError, AttributeError):
+            detail = ""
+        raise CraciAPIError(f"API returned HTTP {exc.code}" + (f": {detail}" if detail else "")) from None
     except (urllib.error.URLError, TimeoutError, OSError):
         raise CraciAPIError("API request failed") from None
 
@@ -303,6 +308,12 @@ def main() -> int:
     if not craci_token:
         warnings.append("CRACI_API_TOKEN is unavailable; CRACI evidence was not fetched")
     job_ids = _job_ids(repository, run_id, sha, github_token, warnings) if craci_token else []
+    if craci_token:
+        try:
+            active = json.loads(_get(f"{API_BASE_URL}/v1preview1/jobs?status=active", craci_token, "application/json"))
+            warnings.append(f"CRACI token check: OK, sees {len(active.get('jobs', active) if isinstance(active, dict) else active)} active job(s)")
+        except (CraciAPIError, ValueError, TypeError) as exc:
+            warnings.append(f"CRACI token check: {exc}")
     records: list[tuple[str, dict, bytes]] = []
     network_destinations: set[str] = set()
     for job_id in job_ids:
