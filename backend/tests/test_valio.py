@@ -41,3 +41,35 @@ def test_unknown_product_only_caught_by_price_error():
 def test_zero_stock_is_out_of_stock():
     q = _merge(avail(amount=0.0), PRICE, NOW)
     assert "out_of_stock" in q["flags"] and not q["orderable"]
+
+
+def test_cache_is_bounded_and_drops_expired(monkeypatch):
+    from app import valio
+    monkeypatch.setattr(valio, "CACHE_MAX", 3)
+    valio._cache.clear()
+    valio._cache[("old", "d")] = (0.0, {})                      # expired
+    for i in range(5):
+        valio._cache[(str(i), "d")] = (1000.0, {})              # fresh
+    valio._prune(1000.0 + 1)
+    assert ("old", "d") not in valio._cache and len(valio._cache) == 3
+    assert list(valio._cache) == [("2", "d"), ("3", "d"), ("4", "d")]  # oldest dropped first
+
+
+def test_quotes_route_rejects_bad_input_before_calling_valio():
+    from fastapi.testclient import TestClient
+    from app.main import app
+    c = TestClient(app)
+    assert c.post("/api/quotes", json={"product_ids": ["DROP TABLE"], "requested_date": "2026-11-16"}).status_code == 422
+    assert c.post("/api/quotes", json={"product_ids": ["463335"], "requested_date": "2030-01-01"}).status_code == 422
+    assert c.post("/api/quotes", json={"product_ids": ["463335"], "requested_date": "monday"}).status_code == 422
+
+
+def test_contract_quote_matches_t02_shapes_for_each_trap():
+    from app.valio import to_contract_quote
+    ok = to_contract_quote(_merge(avail(), PRICE, NOW))
+    assert ok.availability == "available" and ok.quantity.known and ok.quantity.value == 500 and not ok.cut_off.passed
+    terminal = to_contract_quote(_merge(avail("Terminal", 999999.0, "2026-11-12T15:00:00+02:00"), PRICE, NOW))
+    assert terminal.availability == "unavailable" and not terminal.quantity.known and terminal.quantity.value is None
+    assert terminal.cut_off.passed and terminal.valid_until is None
+    assert to_contract_quote(_merge(avail(model=None, lines=False), {"productId": "x", "error": True}, NOW)) is None
+    assert to_contract_quote(_merge(avail(model=None, lines=False), PRICE, NOW)).availability == "unavailable"
