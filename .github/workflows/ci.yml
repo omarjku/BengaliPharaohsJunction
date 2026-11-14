@@ -31,6 +31,8 @@ jobs:
         run: pip install -r requirements.txt pytest
       - name: Run backend tests
         working-directory: backend
+        env:
+          GEMINI_API_KEY: ""
         run: python -m pytest -q tests
 
   packages-tests:
@@ -58,6 +60,8 @@ jobs:
       - name: Install package dependencies
         run: pip install -e "${{ matrix.package }}[dev]" pytest
       - name: Run package tests
+        env:
+          GEMINI_API_KEY: ""
         run: python -m pytest -q ${{ matrix.package }}/tests
 
   frontend:

@@ -58,6 +58,31 @@ used as a fallback when live evidence is unavailable.
 `craci_error`, `github_error`, or `timeout`. The signing-keys document keeps
 the same object in its `build` field.
 
+## What CRACI's network trace taught us
+
+The trace included `generativelanguage.googleapis.com`. The CI workflow did not
+explicitly set `GEMINI_API_KEY`, so a runner-level key could make a backend route
+call Gemini even though the ordinary tests replace Gemini with fakes. The
+`backend-tests / Run backend tests` step is the affected surface: the backend
+has real Gemini REST clients for agent, rules, vision, and voice. The
+`packages-tests / Run package tests` step uses replay fixtures for the compiler;
+`compiler/tests/record_fixtures.py` is a manual recorder, not a pytest test, and
+the provenance step only calls GitHub and CRACI.
+
+Both test steps now set `GEMINI_API_KEY` to an explicit empty string; package
+tests also set `LLM_MODE=replay`. A real Gemini call is an explicit local/demo
+action, never an ambient CI side effect.
+
+## The door defends itself using CRACI evidence
+
+With `BUILD_TRUST_GATE=1` (the default), the front door reads only its
+unexpired in-memory CRACI evidence cache. If cached evidence has status `ok`
+and one or more non-allowlisted HIGH/CRITICAL findings, an otherwise automatic
+order becomes `pending_approval` with reason code `BUILD_NOT_TRUSTED`; a human
+can approve orders while the build is repaired. Zero findings leave automatic
+orders unchanged. Missing, expired, or refreshing evidence is `unavailable`
+and does not block ordering, and the trust check never waits for network I/O.
+
 ## What CRACI found and what we did
 
 The build at `8958ae5` reported 7 HIGH and 0 CRITICAL findings. Local audits

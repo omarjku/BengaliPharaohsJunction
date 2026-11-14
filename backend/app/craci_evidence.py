@@ -131,13 +131,30 @@ def _direct_dependencies(sbom: dict) -> list[dict]:
         for component in sbom.get("components", [])
         if isinstance(component, dict) and component.get("bom-ref")
     }
-    root = (sbom.get("metadata") or {}).get("component") or {}
-    root_ref = root.get("bom-ref")
-    direct_refs: list[str] = []
-    for dependency in sbom.get("dependencies", []):
-        if isinstance(dependency, dict) and dependency.get("ref") == root_ref:
-            direct_refs.extend(ref for ref in dependency.get("dependsOn", []) if isinstance(ref, str))
-            break
+    metadata_root = (sbom.get("metadata") or {}).get("component") or {}
+    metadata_roots = metadata_root if isinstance(metadata_root, list) else [metadata_root]
+    graph = {
+        dependency.get("ref"): dependency.get("dependsOn", [])
+        for dependency in sbom.get("dependencies", [])
+        if isinstance(dependency, dict) and isinstance(dependency.get("ref"), str)
+    }
+    root_refs = {
+        ref
+        for root in metadata_roots
+        if isinstance(root, dict)
+        for ref in (root.get("bom-ref"), root.get("purl"))
+        if isinstance(ref, str)
+    }
+    incoming = {
+        ref
+        for depends_on in graph.values()
+        if isinstance(depends_on, list)
+        for ref in depends_on
+        if isinstance(ref, str)
+    }
+    root_refs.update(ref for ref, depends_on in graph.items()
+                     if ref not in incoming and isinstance(depends_on, list) and depends_on)
+    direct_refs = [ref for root_ref in root_refs for ref in graph.get(root_ref, []) if isinstance(ref, str)]
     records = []
     for ref in direct_refs:
         component = components.get(ref)
@@ -269,6 +286,16 @@ def clear_cache() -> None:
     with _CACHE_LOCK:
         _CACHE.clear()
         _REFRESHING.clear()
+
+
+def cached_live_evidence(commit: str | None, repository: str = DEFAULT_REPOSITORY) -> dict:
+    """Return only unexpired evidence already in memory; never start or wait for network I/O."""
+    key = (repository, commit)
+    with _CACHE_LOCK:
+        cached = _CACHE.get(key)
+        if cached and cached[0] > time.monotonic():
+            return copy.deepcopy(cached[1])
+    return _unavailable(commit, "not_cached")
 
 
 def _github_headers(token: str) -> dict[str, str]:

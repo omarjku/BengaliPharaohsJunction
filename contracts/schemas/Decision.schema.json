@@ -142,7 +142,8 @@
         "COVERAGE_LOW",
         "CONFIDENCE_OK",
         "FRONT_DOOR",
-        "PROFILE_DEFAULT"
+        "PROFILE_DEFAULT",
+        "BUILD_NOT_TRUSTED"
       ],
       "title": "ReasonCode",
       "type": "string"
