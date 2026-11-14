@@ -94,7 +94,8 @@ def test_expired_sandbox_key_is_unauthorized(shop, monkeypatch, tmp_path):
 
 def test_sandbox_mints_are_limited_by_trusted_forwarded_ip(shop, monkeypatch):
     monkeypatch.setattr(config, "TRUST_X_FORWARDED_FOR", True)
-    for _ in range(5):
+    from app import ratelimit
+    for _ in range(ratelimit.LIMITS["sandbox"][0]):  # venue Wi-Fi shares one IP: room for a judging table
         assert mint(monkeypatch, "198.51.100.40").status_code == 200
     limited = mint(monkeypatch, "198.51.100.40")
     assert limited.status_code == 429
