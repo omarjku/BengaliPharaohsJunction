@@ -102,15 +102,36 @@ async def idempotent(caller: str, scope: str, fingerprint: str, run) -> tuple[di
     return resp, False
 
 
-def _append_audit(entry: AuditEntry) -> None:
+def _annotation(actor: str) -> dict:
+    """Default front_door annotation for writers that don't pass one (agent.py, menu.py, rules.py)."""
+    return {"action": "agent_proposal" if actor == "buyer_agent" else actor.split(":")[-1], "status": None}
+
+
+def _write_line(row: dict) -> None:
     with _file_lock:
         AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(AUDIT_FILE, "a", encoding="utf-8") as f:
-            f.write(entry.model_dump_json() + "\n")
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _append_audit(entry: AuditEntry, front_door: dict | None = None) -> None:
+    """One audit line = the contract AuditEntry + a `front_door` annotation (the contract has no field for it):
+    action = order | approved | approval_blocked | rejected | agent_proposal (the agent's own view, before the door
+    decides) | …, status = the order's status after this event. Drop `front_door` to get the bare contract entry."""
+    _write_line({**json.loads(entry.model_dump_json()), "front_door": front_door or _annotation(entry.actor)})
+
+
+def security_event(event: str, route: str, ip: str | None, buyer_id: str | None = None, **detail) -> None:
+    """A refused attempt (wrong / missing key, a key used outside its role, a client-sent mandate), audited as its
+    own kind of line. Never holds a key or secret; buyer_id is the buyer a recognised key belongs to, if any."""
+    _write_line({"kind": "security_event", "id": str(uuid4()), "timestamp": datetime.now(timezone.utc).isoformat(),
+                 "actor": "front_door_security", "event": event, "route": route, "ip": ip, "buyer_id": buyer_id,
+                 **detail})
 
 
 async def _audit(actor: str, order_id: str, buyer_id: str, requested_date: str, lines: list[dict], mandate: Mandate | None,
-           res: gate.GateResult | None, decision=None, now: datetime | None = None) -> str:
+           res: gate.GateResult | None, decision=None, now: datetime | None = None, action: str = "order",
+           status: str | None = None) -> str:
     """The contracts have no Order shape, so the order is recorded as the PurchaseRequest it fulfils."""
     now = now or datetime.now(timezone.utc)
     text = "Order via Valio front door: " + "; ".join(
@@ -123,7 +144,8 @@ async def _audit(actor: str, order_id: str, buyer_id: str, requested_date: str, 
         id=str(uuid4()), timestamp=now, actor=actor,
         input=AuditInput(request=request, mandate=mandate, quotes=res.quotes if res else []),
         decision=res.decision if res else decision, rejected_options=res.rejected_options if res else [])
-    await asyncio.to_thread(_append_audit, entry)
+    signer = actor.split(":")[1] if actor.startswith("human:") else None
+    await asyncio.to_thread(_append_audit, entry, {"action": action, "status": status, "signed_off_by": signer})
     return entry.id
 
 
@@ -146,7 +168,9 @@ def _response(order_id: str | None, status: str, body: dict, audit_id: str) -> d
     """Every order response carries a signed statement of what the front door decided and the quote facts it used."""
     statement = {"v": 1, "iss": signing.ISSUER, "order_id": order_id, "status": status, "audit_id": audit_id,
                  "total_cents": body["total_cents"], "decision": body["decision"],
-                 "quotes": body.get("quote_facts", [])}
+                 "quotes": body.get("quote_facts", []),
+                 "lines": [{k: li.get(k) for k in ("product_id", "quantity", "unit", "unit_price_cents", "line_total_cents")}
+                           for li in body.get("lines", [])]}
     return {"order_id": order_id, "status": status, "audit_id": audit_id, **body,
             "signed_statement": statement, "signature": signing.sign(statement)}
 
@@ -188,7 +212,7 @@ async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | N
                     "created_at": now.isoformat(), "updated_at": now.isoformat()}
                 await asyncio.to_thread(_save)
             audit_id = await _audit(FRONT_DOOR, oid, buyer_id, requested_date.isoformat(), res.lines, mandate, res,
-                                    now=now)
+                                    now=now, status=res.status)
         return _response(oid if res.status != "refused" else None, res.status, _view(res), audit_id)
     raise _busy()
 
@@ -253,7 +277,8 @@ async def approve(order_id: str, who: Principal, seen_decided_at: datetime | Non
                  signed_off_by=who.name if status == "confirmed" else None)
         await asyncio.to_thread(_save)
         audit_id = await _audit(f"human:{who.name}:approve", order_id, o["buyer_id"], o["requested_date"],
-                                res.lines, mandate, res, now=now)
+                                res.lines, mandate, res, now=now, status=status,
+                                action="approved" if status == "confirmed" else "approval_blocked")
     return _response(order_id, status, _view(res), audit_id)
 
 
@@ -267,13 +292,20 @@ async def reject(order_id: str, who: Principal) -> dict:
         await asyncio.to_thread(_save)
         decision = Decision.model_validate(o["decision"])
         audit_id = await _audit(f"human:{who.name}:reject", order_id, o["buyer_id"], o["requested_date"], o["lines"],
-                                Mandate.model_validate(o["mandate"]), None, decision=decision, now=now)
+                                Mandate.model_validate(o["mandate"]), None, decision=decision, now=now,
+                                action="rejected", status="rejected")
     return _response(order_id, "rejected", {"total_cents": o["total_cents"], "lines": o["lines"],
                                             "decision": o["decision"], "rejected_options": []}, audit_id)
 
 
-def audit_log(buyer_id: str | None, limit: int, outcome: str | None = None) -> list[dict]:
-    """Newest last. buyer_id=None = every buyer (Valio's admin view only); outcome filters on decision.outcome.
+def _buyer(r: dict) -> str | None:
+    return r.get("buyer_id") if r.get("kind") == "security_event" else r["input"]["request"]["buyer_id"]
+
+
+def audit_log(buyer_id: str | None, limit: int, outcome: str | None = None, status: str | None = None) -> list[dict]:
+    """Newest last. buyer_id=None = every buyer (Valio's admin view only); outcome filters on decision.outcome,
+    status on the order's status after the event (front_door.status: e.g. every refusal, whatever its outcome).
+    Security events show to Valio, and to the buyer whose key was involved; outcome/status filters leave them out.
     Blocking file read: call it off the event loop (the route is a sync def → threadpool).
     ponytail: reads the whole file per call; index by buyer in a DB when it grows."""
     with _file_lock:
@@ -284,10 +316,11 @@ def audit_log(buyer_id: str | None, limit: int, outcome: str | None = None) -> l
     for line in text.splitlines():
         try:
             r = json.loads(line)
-            if (buyer_id is None or r["input"]["request"]["buyer_id"] == buyer_id) and \
-                    (outcome is None or (r.get("decision") or {}).get("outcome") == outcome):
+            if (buyer_id is None or _buyer(r) == buyer_id) and \
+                    (outcome is None or (r.get("decision") or {}).get("outcome") == outcome) and \
+                    (status is None or (r.get("front_door") or {}).get("status") == status):
                 rows.append(r)
-        except (ValueError, KeyError, TypeError):  # a torn line (crash mid-write) or junk: skip, keep the rest
+        except (ValueError, KeyError, TypeError, AttributeError):  # a torn line (crash mid-write) or junk: skip, keep the rest
             if line.strip():
                 log.warning("skipping unreadable audit line")
     return rows[-limit:]

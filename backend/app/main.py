@@ -1,4 +1,5 @@
 """Valio Aimo front door: API entry point. OpenAPI spec is served at /openapi.json, docs at /docs."""
+import asyncio
 import hashlib
 import re
 import threading
@@ -61,7 +62,9 @@ class QuoteRequest(BaseModel):
 @app.post("/api/quotes")
 async def quotes(req: QuoteRequest) -> list[dict]:
     """Live price + availability from Valio for specific products, merged into one quote each,
-    with explicit trap flags (cutoff_passed, quantity_unknown, undeliverable, out_of_stock, unknown_product)."""
+    with explicit trap flags (cutoff_passed, quantity_unknown, quantity_unreported, undeliverable, out_of_stock,
+    unknown_product). Money: `unit_price_cents` (integer, net of VAT); `price` is the same in euros, kept for
+    compatibility."""
     return await valio.get_quotes(req.product_ids, req.requested_date.isoformat())
 
 
@@ -165,9 +168,14 @@ async def _once(response: Response, who: auth.Principal, scope: str, key: str | 
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
+async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
     """422 without echoing the input back: a NaN in the body can't be JSON-encoded (it was a 500), and the
-    client already has what it sent."""
+    client already has what it sent. A client trying to send its own mandate is audited as a security event."""
+    if any(e.get("type") == "extra_forbidden" and "mandate" in e.get("loc", ()) for e in exc.errors()):
+        owner = auth._owner(k) if (k := request.headers.get("x-agent-key")) else None
+        await asyncio.to_thread(orders.security_event, "client_sent_mandate", f"{request.method} {request.url.path}",
+                                ratelimit.client_ip(request), buyer_id=owner[1] if owner else None,
+                                detail="the order is judged by the buyer's stored mandate; a mandate in the body is refused")
     return JSONResponse({"detail": [{k: e[k] for k in ("type", "loc", "msg") if k in e} for e in exc.errors()]},
                         status_code=422)
 
@@ -285,10 +293,13 @@ def verify_statement(req: VerifyRequest) -> dict:
 @app.get("/api/admin/audit")
 def admin_audit(who: Annotated[auth.Principal, Depends(auth.valio_admin)], buyer_id: BuyerId | None = None,
                 outcome: Literal["AUTO", "ASK_HUMAN", "DECLINE"] | None = None,
+                status: Literal["confirmed", "pending_approval", "refused", "rejected"] | None = None,
                 limit: Annotated[int, Query(ge=1, le=1000)] = 100) -> list[dict]:
-    """Valio's side of the audit trail: every buyer's entries (contract AuditEntry objects), oldest first,
-    optionally for one buyer and/or one decision outcome. Needs X-Valio-Admin-Key; read-only."""
-    return orders.audit_log(buyer_id, limit, outcome)
+    """Valio's side of the audit trail: every buyer's entries (contract AuditEntry + `front_door` annotation:
+    action, status after the event, signed_off_by) and refused-access security events, oldest first. Filters: one
+    buyer, a decision outcome, and/or the order status (status=refused finds every refusal, whatever its outcome).
+    Needs X-Valio-Admin-Key; read-only."""
+    return orders.audit_log(buyer_id, limit, outcome, status)
 
 
 # --- Milestone 1 buyer agent: text -> catalogue -> Valio quote -> quantity -> decision -> front-door order -> audit.
