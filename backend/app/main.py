@@ -17,8 +17,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import (agent, ask, auth, catalogue, config, gate, httpsig, kitchen, live, mandates, menu, orders, profile,
-               progress, quantity, ratelimit, rules, signing, valio, vision, voice)
+from . import (agent, ask, auth, catalogue, config, gate, httpsig, interview, kitchen, live, mandates, menu, orders,
+               profile, progress, quantity, ratelimit, rules, signing, valio, vision, voice)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -540,6 +540,17 @@ class OnboardingRequest(BaseModel):
     confirm: bool = False
 
 
+class InterviewAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    topic: str = Field(min_length=1, max_length=64)
+    text: str = Field(min_length=1, max_length=6_000)
+
+
+class InterviewNextRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    answers: list[InterviewAnswer] = Field(default_factory=list, max_length=50)
+
+
 @app.get("/api/profile/onboarding")
 def get_onboarding(who: Agent) -> dict:
     """First-run questions about the kitchen → {onboarded, questions: [{id, question, input: text|choice|multi,
@@ -570,6 +581,15 @@ async def post_onboarding(req: OnboardingRequest, who: Approver) -> dict:
     return {"stored": False, "proposed": [{"id": k, "question": questions.get(k, "What else should I remember about your kitchen?"), "value": v}
                                            for k, v in proposed.items()],
             "unclear": unclear, "hints": profile.hints(proposed)}
+
+
+@app.post("/api/profile/interview/next")
+async def interview_next(req: InterviewNextRequest, who: Agent) -> dict:
+    """Advance the short, stateless kitchen interview. Agent-key access is read-only; confirmation remains on onboarding."""
+    try:
+        return await interview.next_step(who.buyer_id, [answer.model_dump() for answer in req.answers])
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e)) from None
 
 
 @app.get("/api/profile")

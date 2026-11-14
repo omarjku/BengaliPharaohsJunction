@@ -147,6 +147,41 @@ def test_tool_call_runs_the_agent_and_sends_the_result_card(talk, monkeypatch):
     assert fake.headers == {"x-goog-api-key": "test-key"}
 
 
+def test_interview_mode_records_answers_and_sends_an_unstored_preview(talk, monkeypatch):
+    captured = {}
+
+    async def fake_from_about(about):
+        captured["about"] = about
+        return {"business_type": "bistro"}, []
+
+    monkeypatch.setattr(live.profile, "from_about", fake_from_about)
+    monkeypatch.setattr(live.profile, "save_onboarding", lambda *_args: pytest.fail("voice must not save"))
+    fake = talk([
+        {"toolCall": {"functionCalls": [{"id": "a1", "name": "record_answer",
+                                            "args": {"topic": "kitchen", "text": "A 40-seat bistro."}}]}},
+        {"toolCall": {"functionCalls": [{"id": "a2", "name": "finish_interview", "args": {}}]}},
+        {"serverContent": {"outputTranscription": {"text": "Here's what I'll remember. Check it on screen and confirm."}}},
+        {"serverContent": {"turnComplete": True}},
+    ])
+    with c.websocket_connect("/api/live") as ws:
+        ws.send_json({"type": "auth", "agent_key": "agent-chef", "mode": "interview"})
+        assert ws.receive_json() == {"type": "ready"}
+        seen = until(ws, "turn_complete")
+        ws.send_json({"type": "stop"})
+
+    preview = next(m["preview"] for m in seen if m["type"] == "interview_preview")
+    assert preview["stored"] is False and preview["proposed"][0]["id"] == "business_type"
+    assert "A 40-seat bistro." in captured["about"] and len(captured["about"]) <= 6000
+    responses = [m["toolResponse"]["functionResponses"][0]
+                 for m in fake.sent if "toolResponse" in m]
+    assert responses[0]["response"] == {"recorded": True}
+    assert responses[1]["response"]["say"] == "Here's what I'll remember. Check it on screen and confirm."
+    setup = fake.sent[0]["setup"]
+    names = [f["name"] for group in setup["tools"] for f in group["functionDeclarations"]]
+    assert names == ["record_answer", "finish_interview"]
+    assert "one question at a time" in setup["systemInstruction"]["parts"][0]["text"]
+
+
 def test_barge_in_and_audio_pass_through(talk):
     fake = talk([{"serverContent": {"interrupted": True}}])
     with c.websocket_connect("/api/live") as ws:
