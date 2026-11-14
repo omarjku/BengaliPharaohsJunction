@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 from trade_contracts import Mandate
 
-from . import agent, auth, menu, catalogue, config, gate, mandates, orders, quantity, valio
+from . import agent, auth, menu, catalogue, config, gate, mandates, orders, quantity, signing, valio
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -235,6 +235,28 @@ def audit(who: Approver, buyer_id: BuyerId | None = None, limit: Annotated[int, 
     if (buyer_id or who.buyer_id) != who.buyer_id:
         raise HTTPException(403, detail="This approver key may only read its own buyer's audit trail")
     return orders.audit_log(who.buyer_id, limit)
+
+
+class VerifyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    signed_statement: dict
+    signature: dict
+
+
+@app.get("/.well-known/front-door-keys.json")
+def front_door_keys() -> dict:
+    """The front door's public signing key(s) as a JWK Set (RFC 8037, Ed25519), matched by `kid`."""
+    return signing.jwks()
+
+
+@app.post("/api/verify")
+def verify_statement(req: VerifyRequest) -> dict:
+    """Checks an order response's `signed_statement` + `signature`. valid=true proves this front door issued
+    exactly that statement (decision + quote facts as Valio's API reported them at fetched_at); it does not prove
+    the stock is physically there. Public: anyone holding a statement may check it."""
+    ok = signing.verify(req.signed_statement, req.signature)
+    return {"valid": ok, "kid": signing.KID,
+            "meaning": "Issued by this Valio front door, unchanged." if ok else "Not issued by this front door, or changed."}
 
 
 @app.get("/api/admin/audit")
