@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import sys
@@ -11,7 +10,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from urllib.parse import urlsplit
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+
+from app.craci_evidence import exit_code, summarize_network_trace, summarize_sboms
 
 API_BASE_URL = "https://api.craci.com"
 GITHUB_API_BASE_URL = "https://api.github.com"
@@ -88,160 +90,6 @@ def fetch_run_jobs(repository: str, run_id: str, token: str) -> list[dict]:
     return jobs
 
 
-def _ecosystem(component: dict) -> str | None:
-    purl = str(component.get("purl", ""))
-    if purl.startswith("pkg:pypi/"):
-        return "pip"
-    if purl.startswith("pkg:npm/"):
-        return "npm"
-    return None
-
-
-def _component_record(component: dict) -> dict | None:
-    ecosystem = _ecosystem(component)
-    if ecosystem is None:
-        return None
-    return {
-        "ecosystem": ecosystem,
-        "name": component.get("name") or component.get("purl"),
-        "version": component.get("version"),
-    }
-
-
-def _direct_dependencies(sbom: dict) -> list[dict]:
-    components = {
-        component.get("bom-ref"): component
-        for component in sbom.get("components", [])
-        if isinstance(component, dict) and component.get("bom-ref")
-    }
-    root = (sbom.get("metadata") or {}).get("component") or {}
-    root_ref = root.get("bom-ref")
-    direct_refs: list[str] = []
-    for dependency in sbom.get("dependencies", []):
-        if isinstance(dependency, dict) and dependency.get("ref") == root_ref:
-            direct_refs.extend(ref for ref in dependency.get("dependsOn", []) if isinstance(ref, str))
-            break
-    records = []
-    for ref in direct_refs:
-        component = components.get(ref)
-        if component is None:
-            continue
-        record = _component_record(component)
-        if record is not None:
-            records.append(record)
-    return records
-
-
-def _vulnerabilities(sbom: dict) -> list[dict]:
-    found: list[dict] = []
-    entries = [(vulnerability, None) for vulnerability in sbom.get("vulnerabilities", [])]
-    for component in sbom.get("components", []):
-        if isinstance(component, dict):
-            entries.extend((vulnerability, component.get("bom-ref"))
-                           for vulnerability in component.get("vulnerabilities", []))
-    for vulnerability, component_ref in entries:
-        if not isinstance(vulnerability, dict):
-            continue
-        severities = {
-            str(rating.get("severity", "")).upper()
-            for rating in vulnerability.get("ratings", [])
-            if isinstance(rating, dict)
-        }
-        if vulnerability.get("severity"):
-            severities.add(str(vulnerability["severity"]).upper())
-        severe = sorted(severities & HIGH_RISK_SEVERITIES)
-        if not severe:
-            continue
-        affected = sorted({
-            str(item.get("ref"))
-            for item in vulnerability.get("affects", [])
-            if isinstance(item, dict) and item.get("ref")
-        })
-        if component_ref and component_ref not in affected:
-            affected.append(component_ref)
-        found.append({
-            "id": str(vulnerability.get("id") or "unknown"),
-            "severity": max(severe, key=SEVERITY_RANK.__getitem__),
-            "affects": affected,
-            "source": vulnerability.get("source"),
-            "recommendation": vulnerability.get("recommendation"),
-        })
-    return found
-
-
-def summarize_network_trace(trace: dict) -> list[str]:
-    destinations: set[str] = set()
-    for observation in trace.get("observations", []):
-        if not isinstance(observation, dict):
-            continue
-        protocol = observation.get("protocol")
-        detail_key = {"ssh_git": "sshGit"}.get(protocol, protocol)
-        details = observation.get(detail_key, {}) if detail_key else {}
-        if not isinstance(details, dict):
-            continue
-        if protocol == "http":
-            hostname = urlsplit(str(details.get("originUrl", ""))).hostname
-            if hostname:
-                destinations.add(hostname)
-        elif protocol == "dns":
-            record = str(details.get("record", ""))
-            if record:
-                destinations.add(record.split()[0].rstrip("."))
-        elif protocol == "ssh_git" and details.get("host"):
-            destinations.add(str(details["host"]))
-        elif protocol == "tcp":
-            destinations.update(str(host) for host in details.get("resolvedHosts", []) if host)
-            if details.get("tlsServerName"):
-                destinations.add(str(details["tlsServerName"]))
-    return sorted(destinations)
-
-
-def summarize_sboms(
-    records: list[tuple[str, dict, bytes]],
-    allowlist: set[str],
-    warnings: list[str] | None = None,
-) -> dict:
-    counts = {"pip": 0, "npm": 0}
-    direct_dependencies: dict[tuple[str, str, str | None], dict] = {}
-    vulnerabilities: dict[tuple[str, str, tuple[str, ...]], dict] = {}
-    digest = hashlib.sha256()
-    job_ids = []
-    for job_id, sbom, raw in sorted(records, key=lambda item: item[0]):
-        job_ids.append(job_id)
-        digest.update(job_id.encode())
-        digest.update(b"\0")
-        digest.update(raw)
-        for component in sbom.get("components", []):
-            if isinstance(component, dict):
-                ecosystem = _ecosystem(component)
-                if ecosystem in counts:
-                    counts[ecosystem] += 1
-        for dependency in _direct_dependencies(sbom):
-            key = (dependency["ecosystem"], dependency["name"], dependency["version"])
-            direct_dependencies[key] = dependency
-        for vulnerability in _vulnerabilities(sbom):
-            key = (vulnerability["id"], vulnerability["severity"], tuple(vulnerability["affects"]))
-            vulnerabilities[key] = vulnerability
-    known_vulnerabilities = sorted(vulnerabilities.values(), key=lambda item: (item["severity"], item["id"]))
-    return {
-        "job_ids": job_ids,
-        "craci_build_id": ",".join(job_ids) if job_ids else None,
-        "component_counts": counts,
-        "direct_dependencies": sorted(
-            direct_dependencies.values(),
-            key=lambda item: ({"pip": 0, "npm": 1}.get(item["ecosystem"], 2), item["name"]),
-        ),
-        "vulnerabilities": known_vulnerabilities,
-        "blocking_vulnerabilities": [item for item in known_vulnerabilities if item["id"] not in allowlist],
-        "sbom_sha256": digest.hexdigest() if records else None,
-        "warnings": list(warnings or []),
-    }
-
-
-def exit_code(summary: dict) -> int:
-    return 1 if summary.get("blocking_vulnerabilities") else 0
-
-
 def _allowlist(path: Path) -> set[str]:
     try:
         data = json.loads(path.read_text())
@@ -313,16 +161,6 @@ def main() -> int:
     if not craci_token:
         warnings.append("CRACI_API_TOKEN is unavailable; CRACI evidence was not fetched")
     job_ids = _job_ids(repository, run_id, sha, github_token, warnings) if craci_token else []
-    if craci_token:
-        try:
-            active = json.loads(_get(f"{API_BASE_URL}/v1preview1/jobs?status=active", craci_token, "application/json"))
-            warnings.append(f"CRACI token check: OK, sees {len(active.get('jobs', active) if isinstance(active, dict) else active)} active job(s)")
-        except (CraciAPIError, ValueError, TypeError) as exc:
-            warnings.append(f"CRACI token check: {exc}")
-        try:  # a fake token: 401 means the API is reachable from this runner (so a 403 above is about our token)
-            _get(f"{API_BASE_URL}/v1preview1/jobs?status=active", "invalid-probe", "application/json")
-        except CraciAPIError as exc:
-            warnings.append(f"CRACI reachability probe (fake token): {exc}")
     records: list[tuple[str, dict, bytes]] = []
     network_destinations: set[str] = set()
     for job_id in job_ids:

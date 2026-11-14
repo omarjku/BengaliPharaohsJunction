@@ -69,6 +69,18 @@ def test_summary_counts_ecosystems_direct_dependencies_and_digest():
     assert summary["blocking_vulnerabilities"][0]["id"] == "CVE-2026-0001"
 
 
+def test_summary_preserves_github_job_order_for_digest():
+    assert craci_sbom.summarize_sboms.__module__ == "app.craci_evidence"
+    summary = craci_sbom.summarize_sboms([
+        ("20", {}, b"second"),
+        ("10", {}, b"first"),
+    ], allowlist=set())
+
+    expected_hash = hashlib.sha256(b"20\0second10\0first").hexdigest()
+    assert summary["job_ids"] == ["20", "10"]
+    assert summary["sbom_sha256"] == expected_hash
+
+
 def test_allowlisted_high_vulnerability_does_not_fail():
     summary = craci_sbom.summarize_sboms([("123", _sbom(), b"recorded")], allowlist={"CVE-2026-0001"})
 

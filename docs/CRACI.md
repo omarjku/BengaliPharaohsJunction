@@ -1,46 +1,80 @@
 # CRACI evidence for TRUSTED trade
 
-CRACI is part of the trust boundary behind every signed order, not just the runner label in CI. The existing test and build jobs already run on `craci`; the `provenance` job waits for them on pushes to `main`, fetches the terminal evidence for this GitHub run, and uploads `build-provenance.json` plus `craci-sbom-summary.json`.
+CRACI is part of the trust boundary behind every signed order. CI still runs on
+the `craci` runner and keeps its provenance job, but the deployed API now
+fetches the evidence for its own Render build lazily from outside the CRACI
+runner network.
 
-## What we use
+## Why the API fetch is live
 
-The script uses the CRACI API with `Authorization: Bearer $CRACI_API_TOKEN`:
+Calls to `https://api.craci.com` made inside CRACI runners receive Envoy's
+`403 Access denied`, including calls with a fake bearer token. The same API is
+reachable from outside: a fake token receives the normal `401` response. The
+runner restriction means CI cannot be the authoritative fetcher, so Render
+uses `RENDER_GIT_COMMIT` and `CRACI_API_TOKEN` to fetch the deployed commit's
+evidence on first request. The token is never returned or included in an error.
 
-- `GET /v1preview1/sbom?provider=github&repo=OWNER/REPOSITORY&job_id=...` — CycloneDX 1.7 SBOM per completed GitHub job.
-- `GET /v1preview1/network-trace?provider=github&repo=OWNER/REPOSITORY&job_id=...` — observed HTTP, DNS, TCP, and SSH destinations.
+## How it works
 
-GitHub's run-jobs API provides the terminal numeric job IDs because CRACI's documented `/v1preview1/jobs?status=active` endpoint lists active jobs only. The script selects successful jobs from the current `GITHUB_RUN_ID`, aggregates pip/npm components and direct dependencies, and hashes the ordered response bytes (job ID + raw SBOM) with SHA-256. API errors are warnings; only a known HIGH/CRITICAL vulnerability not listed in `scripts/craci_allowlist.json` fails the job.
+For the Render commit, the API calls GitHub's unauthenticated
+`GET /repos/omarjku/BengaliPharaohsJunction/actions/runs?head_sha=<sha>` (using
+`GITHUB_TOKEN` when available), selects the `CI` workflow with a successful
+push to `main` preferred, and lists its successful jobs whose labels include
+`craci`. For each job it fetches:
 
-The network trace is evidence, not a claim that every build only contacts PyPI/npm: the trace may also show GitHub, CRACI, or other observed services. The fetched OpenAPI exposes no AI-fix endpoint, so AI fixes are deliberately documented as a next step rather than guessed into CI.
+- `GET /v1preview1/sbom?provider=github&repo=OWNER/REPO&job_id=N` with CycloneDX 1.7 `Accept`;
+- `GET /v1preview1/network-trace?provider=github&repo=OWNER/REPO&job_id=N`.
 
-## Example output
+Both CRACI requests use `Authorization: Bearer $CRACI_API_TOKEN`. The total
+fetch deadline is about 10 seconds. Successful results are cached in memory
+for one hour; unavailable results are cached for five minutes. Fetching is
+lazy, so startup never waits on GitHub or CRACI. `BUILD_PROVENANCE_PATH` is
+used as a fallback when live evidence is unavailable.
 
-```text
-## CRACI supply-chain evidence
-- SBOM SHA-256: `4c8d…91af`
-- CRACI job IDs: `8012345678,8012345679,8012345680`
-- Components: pip `37`, npm `214`
-- Direct dependencies: 18
-- Network destinations: `api.github.com`, `github.com`, `pypi.org`, `registry.npmjs.org`
-```
+## Build response
 
-`build-provenance.json` has this shape:
+`GET /.well-known/front-door-build.json` returns an object with:
 
 ```json
 {
-  "commit": "<GITHUB_SHA>",
-  "ci_run": "<GITHUB_RUN_ID>",
-  "craci_build_id": "8012345678,8012345679,8012345680",
-  "sbom_sha256": "<sha256>",
-  "generated_at": "2026-11-14T12:34:56Z"
+  "commit": "<Render commit>",
+  "ci_run": "<GitHub run id>",
+  "craci_job_ids": ["<job id>"],
+  "sbom_sha256": "<digest>",
+  "component_counts": {"pip": 37, "npm": 214},
+  "direct_dependencies": [{"ecosystem": "pip", "name": "httpx", "version": "..."}],
+  "vulnerabilities": [],
+  "blocking_vulnerabilities": [],
+  "network_destinations": ["api.github.com", "pypi.org"],
+  "fetched_at": "2026-11-14T12:34:56Z",
+  "source": "craci-api-live",
+  "status": "ok"
 }
 ```
 
-## How a judge can verify it
+`direct_dependencies` is limited to the first 30. `vulnerabilities` contains
+known HIGH/CRITICAL findings; `blocking_vulnerabilities` excludes IDs in
+`scripts/craci_allowlist.json`. When unavailable, `status` is
+`"unavailable"` and `reason` is one of `no_token`, `no_ci_run`, `craci_403`,
+`craci_error`, `github_error`, or `timeout`. The signing-keys document keeps
+the same object in its `build` field.
 
-1. Download the `craci-provenance` artifact from the successful main-branch run and inspect both JSON files. Confirm `commit` is the judged commit and that `sbom_sha256` matches the summary.
-2. Fetch `https://<front-door>/.well-known/front-door-build.json`. It is read-only and falls back safely to `{ "commit": "<RENDER_GIT_COMMIT>", "sbom": "unavailable" }` when Render has no artifact mounted. On a deployed build, compare its fields with the artifact.
-3. Fetch `https://<front-door>/.well-known/front-door-keys.json`. The additive `build` field identifies the same provenance document alongside the Ed25519 JWK used to verify the signed order. Existing signature verification remains unchanged: canonicalize the `signed_statement`, verify the signature selected by `kid`, then compare the statement's deployment build to the public build document.
-4. Use each numeric ID in `craci_build_id` with the two CRACI endpoints above and the repository/run metadata. Recompute the ordered SHA-256 over `job_id`, a NUL byte, and each raw SBOM response to independently verify the recorded digest. Inspect the network trace destinations and the vulnerability list; an allowlisted finding is explicit in `scripts/craci_allowlist.json`.
+## Verifying the digest
 
-CRACI API outages do not turn `main` red. That keeps provenance honest: a missing proof is reported as unavailable, never silently presented as verified.
+Use `craci_job_ids` in the order returned. Fetch each raw CycloneDX SBOM, then
+initialize SHA-256 and, for every job, update it with the UTF-8 job ID, one NUL
+byte (`0x00`), and the exact raw SBOM response bytes. The final hexadecimal
+digest must equal `sbom_sha256`:
+
+```python
+digest = hashlib.sha256()
+for job_id in craci_job_ids:
+    digest.update(job_id.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(raw_sbom_bytes[job_id])
+assert digest.hexdigest() == build["sbom_sha256"]
+```
+
+Inspect the network trace destinations and vulnerability lists separately;
+the digest covers SBOM bytes only. A missing or failed fetch is reported as
+unavailable, never silently presented as verified.
