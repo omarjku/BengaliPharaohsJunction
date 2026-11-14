@@ -71,7 +71,8 @@ export function VoiceStatus({ voice }: { voice: ReturnType<typeof useVoice> }) {
       <div className="voice-note" role="dialog" aria-label={t.mic}>
         <p>{t.intro}</p>
         <div className="actions">
-          <button type="button" className="btn" onClick={voice.acceptIntro}>
+          {/* the note answers the mic press, so keyboard focus follows it */}
+          <button type="button" className="btn" onClick={voice.acceptIntro} autoFocus>
             {t.start}
           </button>
           <button type="button" className="btn plain" onClick={voice.dismiss}>

@@ -102,10 +102,14 @@ export function useVoice(transcribe: (audio: Blob) => Promise<string>, onText: (
   function acceptIntro() {
     store.set(INTRO_KEY, '1')
     setState('idle')
+    levelEl.current?.focus() // the note's buttons vanish; keyboard focus goes back to the mic, which now stops/sends
     void start(true) // the button press is the gesture the browser needs; tap the mic again to send
   }
 
-  return { state, mode, message, levelEl, start, stop, acceptIntro, dismiss: () => setState('idle') }
+  return { state, mode, message, levelEl, start, stop, acceptIntro, dismiss: () => {
+    setState('idle')
+    levelEl.current?.focus()
+  } }
 }
 
 // Spoken read-back of the answer's first sentence, for a request made by voice. Remembered mute.

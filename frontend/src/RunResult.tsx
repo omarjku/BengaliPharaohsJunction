@@ -94,6 +94,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
           : lead
             ? c.headline(lead)
             : status
+  const [head, more] = splitLong(text, c)
 
   const total = order?.total_cents || chosen.reduce((a, l) => a + (l.line_total_cents ?? 0), 0)
   const what = split
@@ -110,9 +111,9 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   const canDecide = MOCK || Boolean(getKeys().approverKey)
 
   useEffect(() => {
-    onAnnounce(`${status}. ${text}`)
+    onAnnounce(`${status}. ${head}`)
     heading.current?.focus() // also brings the answer into view on a phone
-  }, [status, text, result, onAnnounce])
+  }, [status, head, result, onAnnounce])
 
   async function run_(kind: Busy, go: () => Promise<OrderResponse>) {
     setBusy(kind)
@@ -148,10 +149,11 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
       <section className="answer" aria-label={t.aria}>
         <p className={`status ${tone}`}>{status}</p>
         <h2 ref={heading} tabIndex={-1} className="answer-text num">
-          {text}
+          {head}
         </h2>
         {signOff && <p className="signoff">{signOff}</p>}
         <p className="answer-sub" ref={reasonsRef}>
+          {more && <>{more} </>}
           {what && <>{what}. </>}
           {total > 0 && (
             <>
@@ -410,4 +412,11 @@ function SplitRows({ alt }: { alt: AlternativeOrder }) {
       </div>
     </section>
   )
+}
+
+// A backend sentence can run long ("…doesn't seem to stock X. Closest in the catalogue: A; B; C."): the first sentence
+// is the headline, the rest reads under it, with SHOUTED catalogue names in normal case.
+function splitLong(s: string, c: ReturnType<typeof useCopy>): [string, string | null] {
+  const m = s.length > 80 ? /^(.+?[.!?])\s+(\S.*)$/s.exec(s) : null
+  return m ? [m[1], m[2].replace(/\b[A-Z0-9][A-Z0-9 ]*[A-Z]{3}[A-Z0-9 ]*\b/g, (n) => c.tidyName(n))] : [s, null]
 }

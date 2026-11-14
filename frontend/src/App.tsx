@@ -231,6 +231,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         ) : (
           <>
             <section hidden={view !== 'order'} aria-label={u.nav.order}>
+              <h1 className="sr-only">{u.nav.order}</h1>
               {empty && waiting !== null && <p className="greeting">{u.greeting(partOfDay(), approver, waiting)}</p>}
               {collapsed && (
                 <button type="button" className="composer-summary" onClick={retry}>
@@ -289,7 +290,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                     {MOCK ? u.ask.tryDemo : u.ask.try}
                     {c.TRY.map((t, i) => (
                       <span key={t}>
-                        {i > 0 && ' · '}
+                        {i > 0 && <span className="sep"> · </span>}
                         <button type="button" className="link accent inline" onClick={() => setText(t)}>
                           {t}
                         </button>
@@ -300,9 +301,9 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
               </form>
 
               {running && (
-                <div className="working" aria-label={u.progress.aria}>
-                  {/* Re-keyed per phase, so each step fades in; screen readers get the start and the answer, not every step. */}
-                  <p key={phaseLine.phase ?? 'start'} className="phase" aria-live="off">
+                <div className="working" role="status" aria-label={u.progress.aria}>
+                  {/* Re-keyed per phase, so each step fades in; the status region reads each step out politely. */}
+                  <p key={phaseLine.phase ?? 'start'} className="phase">
                     {phaseLine.phase ?? u.progress.phases.understanding}
                   </p>
                   <div className="working-bar" aria-hidden="true" />

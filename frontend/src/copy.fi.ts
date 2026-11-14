@@ -95,7 +95,7 @@ const UNITS: Record<string, [string, string]> = {
   ST: ['pakkaus', 'pakkausta'], KPL: ['kpl', 'kpl'], KI: ['laatikko', 'laatikkoa'], CS: ['laatikko', 'laatikkoa'],
   PAK: ['pakkaus', 'pakkausta'], PKT: ['paketti', 'pakettia'], KG: ['kg', 'kg'], L: ['litra', 'litraa'],
   LTR: ['litra', 'litraa'], PS: ['pussi', 'pussia'], BAG: ['pussi', 'pussia'], RAS: ['rasia', 'rasiaa'],
-  RS: ['vuoka', 'vuokaa'], PLO: ['pullo', 'pulloa'], TLK: ['tölkki', 'tölkkiä'], KRT: ['laatikko', 'laatikkoa'],
+  RS: ['vuoka', 'vuokaa'], PLO: ['pullo', 'pulloa'], TLK: ['tölkki', 'tölkkiä'], KRT: ['laatikko', 'laatikkoa'], PRK: ['purkki', 'purkkia'],
 }
 export const unitName = (code: string | null | undefined) => (code ? (UNITS[code.toUpperCase()]?.[0] ?? code) : 'yksikkö')
 // "640 pakkausta", "1 laatikko", "27,2 kg".
@@ -216,7 +216,7 @@ const ja = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).j
 // --- Every other word on screen.
 export const UI = {
   nav: { main: 'Päävalikko', order: 'Tilaa', history: 'Historia', rules: 'Säännöt', keys: 'Avaimet' },
-  lang: { switchTo: 'In English', short: 'EN', label: 'Language: English' },
+  lang: { switchTo: 'In English', short: 'EN', label: 'EN, in English' },
   greeting: (part: 'morning' | 'afternoon' | 'evening', name: string | null, waiting: number) =>
     `${{ morning: 'Huomenta', afternoon: 'Päivää', evening: 'Iltaa' }[part]}${name ? `, ${name}` : ''}. ` +
     (waiting === 0 ? 'Mikään ei odota sinua.' : `${waiting} ${kpl(waiting, 'tilaus odottaa', 'tilausta odottaa')} hyväksyntääsi historiassa.`),

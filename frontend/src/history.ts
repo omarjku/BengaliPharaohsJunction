@@ -37,7 +37,7 @@ function outcome(steps: Step[]): [Tone, OutcomeKey] {
   return o === 'AUTO' ? ['neutral', 'sent'] : o === 'DECLINE' ? ['bad', 'notOrdered'] : ['warn', 'needed']
 }
 
-const said = (e: AuditEntry, c: Copy) => c.humanize(e.input.request.text.replace(/^Order via Valio front door:\s*/, ''))
+const said = (e: AuditEntry, c: Copy) => c.humanize(e.input.request.text.replace(/^Order via Valio front door:\s*/, '').replace(/^Menu for \d+ covers:\s*(?=menu\b)/i, ''))
 const NEAR_MS = 5 * 60_000 // the front door answers the agent within seconds; 5 minutes is generous
 
 // Entries arrive oldest first; groups come back newest first.

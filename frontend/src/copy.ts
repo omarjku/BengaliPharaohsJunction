@@ -98,7 +98,7 @@ export const HISTORY_INTRO: string = 'What was ordered, held or refused.'
 // Valio's sales-unit codes in words. Unknown codes are shown as they are.
 const UNITS: Record<string, string> = {
   ST: 'pack', KPL: 'piece', KI: 'case', CS: 'case', PAK: 'pack', PKT: 'pack', KG: 'kg', L: 'litre', LTR: 'litre',
-  PS: 'bag', BAG: 'bag', RAS: 'box', RS: 'tray', PLO: 'bottle', TLK: 'tin', KRT: 'carton',
+  PS: 'bag', BAG: 'bag', RAS: 'box', RS: 'tray', PLO: 'bottle', TLK: 'tin', KRT: 'carton', PRK: 'jar',
 }
 export const unitName = (code: string | null | undefined) => (code ? (UNITS[code.toUpperCase()] ?? code) : 'unit')
 const PLURAL: Record<string, string> = { box: 'boxes', kg: 'kg', g: 'g', L: 'L' }
@@ -202,7 +202,7 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : many)
 // --- Every other word on screen.
 export const UI = {
   nav: { main: 'Main', order: 'Order', history: 'History', rules: 'Rules', keys: 'Keys' },
-  lang: { switchTo: 'Suomeksi', short: 'FI', label: 'Kieli: suomi' }, // the switch offers the other language, in that language
+  lang: { switchTo: 'Suomeksi', short: 'FI', label: 'FI, suomeksi' }, // the switch offers the other language, in that language
   greeting: (part: 'morning' | 'afternoon' | 'evening', name: string | null, waiting: number) =>
     `${{ morning: 'Morning', afternoon: 'Afternoon', evening: 'Evening' }[part]}${name ? `, ${name}` : ''}. ` +
     (waiting === 0 ? 'Nothing waiting for you.' : `${waiting} ${plural(waiting, 'order is', 'orders are')} waiting for your OK in History.`),

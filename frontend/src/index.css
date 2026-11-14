@@ -5,7 +5,7 @@
   /* Colour roles (DESIGN.md). The accent is for the one primary action, links and focus only. */
   --ink: #1c1f23;
   --ink-2: #5d6670; /* secondary text */
-  --ink-3: #737b85; /* tertiary: times, supporting numbers (4.6:1 on white) */
+  --ink-3: #676f78; /* tertiary: times, supporting numbers (4.9:1 on paper, 4.5:1 on wash) */
   --paper: #fbfaf7; /* warm paper: the page */
   --surface: #ffffff; /* fields sit on it as white */
   --wash: #f2f0eb; /* pressed states */
@@ -72,7 +72,7 @@ button, input, textarea { font: inherit; color: inherit; }
 .brand-for { color: var(--ink-3); font: var(--t-small); }
 .top nav { margin-inline-start: auto; display: flex; gap: var(--s1); }
 .link {
-  min-height: 40px; padding: 0 var(--s2); border: 0; background: none; cursor: pointer;
+  min-height: 44px; min-width: 44px; padding: 0 var(--s2); border: 0; background: none; cursor: pointer;
   font: var(--t-small); color: var(--ink-2); border-radius: 8px; -webkit-tap-highlight-color: transparent;
 }
 .link[aria-current='page'] { color: var(--ink); font-weight: 600; }
@@ -254,7 +254,14 @@ main.roomy { padding-block-start: 96px; }
 .ask.first .ask-label { font: var(--t-answer); letter-spacing: -0.02em; margin-block-end: var(--s2); }
 .greeting { color: var(--ink-2); margin-block-end: var(--s3); }
 .try { font: var(--t-small); color: var(--ink-3); }
-.link.inline { min-height: 0; padding: 0; font: inherit; color: var(--accent); text-align: start; }
+.link.inline { display: inline; min-height: 0; min-width: 0; padding: 0; font: inherit; color: var(--accent); text-align: start; }
+/* Phone: the examples become thumb-sized rows instead of thin links inside a sentence. */
+@media (max-width: 600px) {
+  .try { display: grid; }
+  .try > span { display: contents; }
+  .try .sep { display: none; }
+  .try .link.inline { display: flex; align-items: center; min-height: 44px; }
+}
 .recent { margin-block-start: var(--s8); }
 .recent .feed-day { margin: 0; }
 .recent-row { padding-block: var(--s3); border-block-end: 1px solid var(--line); }
@@ -264,7 +271,7 @@ main.roomy { padding-block-start: 96px; }
 .status-word.bad { color: var(--bad); }
 .step { display: grid; gap: var(--s1); }
 .step + .step { padding-block-start: var(--s2); }
-.small-btn { min-height: 36px; padding: 0; font-size: 0.9375rem; justify-content: flex-start; }
+.small-btn { min-height: 44px; padding: 0; font-size: 0.9375rem; justify-content: flex-start; }
 .door { color: var(--ink); vertical-align: -2px; margin-inline-end: 2px; }
 /* Phone, after a result: the composer folds into one row; Edit opens it again. */
 .composer-summary { display: none; }
@@ -373,7 +380,7 @@ main.roomy { padding-block-start: 96px; }
 }
 .secret input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
 .secret-toggle {
-  position: absolute; inset-block: 4px; inset-inline-end: 4px; padding: 0 var(--s3); border: 0; border-radius: 8px;
+  position: absolute; inset-block: 2px; inset-inline-end: 2px; min-width: 44px; padding: 0 var(--s3); border: 0; border-radius: 8px;
   background: none; color: var(--ink-2); font: var(--t-small); font-weight: 500; cursor: pointer;
 }
 .secret-toggle:active { background: var(--wash); }
@@ -389,5 +396,7 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-property: opacity, background-color, border-color, color !important; }
   .answer, .decide, dialog.sheet { transform: none !important; }
-  .working-bar::after { animation-duration: 3s; }
+  .working-bar::after { width: 100%; animation: breathe 2s ease-in-out infinite alternate; } /* no travel, just a slow fade */
+}
+@keyframes breathe { from { opacity: 0.25; } to { opacity: 0.7; }
 }
