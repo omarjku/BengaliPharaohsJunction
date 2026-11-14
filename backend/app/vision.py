@@ -35,7 +35,9 @@ Return:
   a receipt you can't use, a blank or unreadable photo).
 - text: ONE request in the buyer's own words, in the photo's language: for a list, the items with amounts as written
   ("10 kg butter, 20 l lactose-free milk"); for a menu, "Menu for <covers> guests: <dishes>" (omit the guests part if
-  the photo doesn't say). Empty for "other".
+  the photo doesn't say). If the photo states a delivery day or date ("maanantaiksi", "Friday", "15.11."), keep it
+  in text as written ("10 kg voita, 20 l maito maanantaiksi", "Menu for 40 guests on Friday: ..."). Leave out
+  anything crossed out. Empty for "other".
 - items: each line you read, {text, amount (number or null), unit (as written, or null)}.
 - covers: the number of guests/portions if the photo states it, else null.
 - unreadable: lines or words you could not read (never guess them).
