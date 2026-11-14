@@ -17,5 +17,6 @@
 .composer-btn:active { transform: scale(0.95); }
 .composer-btn:disabled { opacity: 0.5; cursor: default; }
 .composer-btn.on { color: var(--bad); }
-.composer-voice, .composer-send { background: var(--accent); color: #fff; }
+.composer-voice { background: var(--accent); color: #fff; }
+.composer-send { background: var(--lime); color: var(--lime-ink); }
 .composer-end { background: var(--ink); color: var(--surface); }

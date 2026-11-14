@@ -7,6 +7,9 @@
   --ink-2: #5d6670; /* secondary text */
   --ink-3: #676f78; /* tertiary: times, supporting numbers (4.9:1 on paper, 4.5:1 on wash) */
   --paper: #fbfaf7; /* warm paper: the page */
+  --bubble-mine: #00607a; /* your message: Valio teal, white text (7:1) */
+  --lime: #c5e11d; /* the one primary action */
+  --lime-ink: #0b2f3a;
   --paper-clear: rgb(251 250 247 / 0); /* paper at 0%: fades to nothing without a grey fringe */
   --surface: #ffffff; /* fields sit on it as white */
   --wash: #f2f0eb; /* pressed states */
@@ -497,14 +500,14 @@ dialog.sheet::backdrop { background: rgba(28, 31, 35, 0.24); }
 }
 
 /* Valio Aimo palette: deep teal, lime for the one primary action */
-.btn:not(.plain) { background: #c5e11d; color: #0b2f3a; }
+.btn:not(.plain) { background: var(--lime); color: var(--lime-ink); }
 .btn:not(.plain):active, .btn:not(.plain):hover:not(:disabled) { background: #b3cf14; }
 .btn:disabled { background: var(--disabled); color: var(--ink-3); }
 
 /* Chat bubbles for the conversation screen: .thread holds them; .bubble.mine = you (right), .bubble.agent = the agent (left) */
 .thread { display: flex; flex-direction: column; gap: var(--s4); }
 .bubble { margin: 0; padding: var(--s3) var(--s4); max-width: min(34rem, 85%); border-radius: 18px; line-height: 1.5; overflow-wrap: anywhere; }
-.bubble.mine { align-self: flex-end; background: #00607a; color: #fff; border-bottom-right-radius: 4px; }
+.bubble.mine { align-self: flex-end; background: var(--bubble-mine); color: #fff; border-bottom-right-radius: 4px; }
 .bubble.agent { align-self: flex-start; max-width: min(40rem, 100%); background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(28,31,35,0.05); }
 
 /* Landing to app: the landing lifts away, the app settles in */

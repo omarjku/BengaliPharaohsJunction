@@ -22,10 +22,10 @@
 .conv-bar > .voice-status:empty { display: none; }
 .conv-dock { display: flex; align-items: center; gap: var(--s3); margin-block-end: var(--s2); }
 
-/* Messages: the chef's on the right in a bubble, the agent's as plain text on the left. */
+/* Messages (same look as .bubble in index.css): the chef's on the right in teal, the agent's on the left on white. */
 .msg { max-width: min(85%, 34rem); overflow-wrap: anywhere; }
-.msg-user { justify-self: end; padding: var(--s2) var(--s4); border-radius: 18px 18px 4px 18px; background: var(--wash); color: var(--ink); white-space: pre-wrap; }
-.msg-agent { justify-self: start; color: var(--ink); }
+.msg-user { justify-self: end; padding: var(--s2) var(--s4); border-radius: 18px 18px 4px 18px; background: var(--bubble-mine); color: #fff; white-space: pre-wrap; }
+.msg-agent { justify-self: start; padding: var(--s2) var(--s4); border: 1px solid var(--line); border-radius: 18px 18px 18px 4px; background: var(--surface); color: var(--ink); }
 .msg-partial { opacity: 0.7; }
 .msg-dot { display: inline-block; width: 8px; height: 8px; margin-inline-start: var(--s2); border-radius: 50%; background: var(--accent); vertical-align: 1px; animation: msg-dot 1s ease-in-out infinite alternate; }
 @keyframes msg-dot { from { opacity: 0.3; } to { opacity: 1; } }
