@@ -19,14 +19,14 @@ Message Board. Every number below can be traced to one of those.
 - After Omar's time-box rule, **Codex never blocked a push**. Branches went out once tests passed. Review findings
   landed in follow-up commits, each with a regression test that fails on the old code.
 
-**Independent agreement.** On Zoha's PR #8 (the decision step) Claude and Codex reviewed separately and both asked
-for changes. They found the same four top bugs:
+**Independent agreement.** On Zoha's PR #8 (the decision step), Claude and Codex (`gpt-6-luna`, run blind in the
+control room) reviewed separately and both asked for changes. Codex reported 4 findings, and 3 of them matched
+Claude's reviewer independently:
 1. A sales-blocked product with a normal-looking stock number was ordered automatically.
 2. The fail-closed fallback itself crashed on a timezone-naive `now`.
 3. A regex DECLINEd ordinary chef text such as "keep it within budget".
-4. Duplicate product ids silently overwrote each other.
 
-Claude found five more on its own. All of them were posted on the Message Board for Zoha (Sat 14 Nov, 03:29). At
+Its fourth finding was that duplicate product ids silently overwrote each other. Claude found five more on its own. All of them were posted on the Message Board for Zoha (Sat 14 Nov, 03:29). At
 the last board update they were still open in `decision/`, so `decide()` is not wired into the live agent until
 they land.
 
@@ -36,7 +36,7 @@ they land.
 |---|---|---|
 | `gpt-reserve` | max | Drafts and design attacks |
 | `gpt-5.6-terra` | ultra (once high) | Adversarial reviews and the docs fact-check |
-| `gpt-6-luna` | n/a | Not used: no run in any room's log |
+| `gpt-6-luna` | high | Control-room reviews: the integration branch, and a blind second opinion on PR #8 |
 
 ## Run by run
 
@@ -54,17 +54,22 @@ they land.
 | 4 UI | Draft the auth UI (keys panel, headers, errors) | reserve/max | 1 feature | Most of it | 4 parts rewritten | | `a57d7cd` |
 | 4 UI | Adversarial review of `frontend/src` | terra/ultra | 4 | 2 | 1 | 1 forwarded to backend | `a57d7cd` |
 | 4 UI | Review of the M2 UI diff | terra/high | 1 | 0 | 1 (stale branch) | | none |
-| all | PR #8 review, independent of Claude | terra | 4 | 4 agreed with Claude | 0 | open in `decision/` | none yet |
+| control room | Adversarial review of `omar/m1-integration` | luna/high | 4 (2 High) | 4 | 0 | | `7d5be18`, `a57d7cd` |
+| control room | Blind second opinion on PR #8 | luna/high | 4 | 3 matched Claude's | 0 | open in `decision/` | none yet |
+| control room | Judge-style audit against the official challenge texts | terra/high | score 8.0/10 for Valio; 3 top gaps | 2 acted on (docs reconciled, Gemini eval set) | | 1 needs Omar (CRACI sign-up) | this commit |
 
-**Totals across the eight review and fact-check runs:**
-- 58 findings: 39 kept and fixed, 11 rejected with a reason, 4 already fixed, 5 deferred to production next steps,
+**Totals across the nine review and fact-check runs** (not counting PR #8 or the judge audit):
+- 62 findings: 43 kept and fixed, 11 rejected with a reason, 4 already fixed, 5 deferred to production next steps,
   2 forwarded to another room. A finding that was partly fixed and partly deferred counts once in each.
-- 4 more findings came from the PR #8 review, and all 4 matched Claude's.
+- 4 more findings came from the PR #8 second opinion, and 3 of them matched Claude's independently.
+- The judge audit scored the Valio entry 8.0/10 and named three gaps. The first, "demo truth is inconsistent", is
+  why every doc now tells the same milk story.
 - 6 drafts: 4 docs and 1 UI feature (plus a second draft that was stopped). All were kept after Claude's
   corrections.
 
-Four more launches failed before doing anything (2 in Room 2, 2 in Room 3). The causes were `timeout` missing on macOS, and `codex exec`
-waiting on stdin when it was started from a background shell. The fix we all ended up using is `codex exec ... </dev/null`.
+Six more launches failed before doing anything: 2 in Room 2, 2 in Room 3 and 2 in the control room (one hung for over
+90 minutes). The causes were `timeout` missing on macOS, and `codex exec` waiting on stdin when it was started from a
+background shell. **What we learned: always run `codex exec ... < /dev/null`.** It is now in every room's playbook.
 
 ## Real bugs Codex caught that we fixed
 

@@ -6,7 +6,9 @@ stored mandate, the audit log. There is deliberately no approve tool: sign-off s
 Env: FRONT_DOOR_URL (default http://localhost:8000), FRONT_DOOR_AGENT_KEY (needed for place_order / get_order...).
 Run: python server.py  (stdio transport)
 """
+import asyncio
 import os
+import uuid
 
 import httpx
 from mcp.server.mcpserver import MCPServer
@@ -27,7 +29,17 @@ async def _call(method: str, path: str, *, key: bool = False, **kw) -> dict | li
             raise ToolError("FRONT_DOOR_AGENT_KEY is not set, so this MCP server can't act for a buyer")
         headers["X-Agent-Key"] = agent_key
     async with httpx.AsyncClient(base_url=URL, timeout=60, headers=headers) as http:
-        r = await http.request(method, path, **kw)
+        for attempt in range(3):  # retry rate limits and gateway errors; an Idempotency-Key makes a retry safe
+            try:
+                r = await http.request(method, path, **kw)
+            except httpx.TransportError:
+                if attempt == 2:
+                    raise ToolError("Front door unreachable; nothing confirmed, retry later") from None
+                await asyncio.sleep(2)
+                continue
+            if r.status_code not in (429, 502, 503, 504) or attempt == 2:
+                break
+            await asyncio.sleep(min(float(r.headers.get("Retry-After") or 2), 30))
     if r.status_code >= 400:  # the door's own message (422 field errors, 401/403, 503) is what the agent needs
         raise ToolError(f"Front door answered {r.status_code}: {r.text[:1000]}")
     return r.json()
@@ -66,7 +78,9 @@ async def place_order(requested_date: str, lines: list[dict]) -> dict:
     lines: [{"product_id": "463335", "quantity": 1000}], quantity in the product's sales unit (from resolve_quantity).
     The door re-quotes, checks the buyer's stored mandate and returns status confirmed, pending_approval (a human
     approver must sign off; you cannot) or refused, with reasons, suggested fixes and alternatives."""
-    return await _call("POST", "/api/orders", key=True, json={"requested_date": requested_date, "lines": lines})
+    # One fresh Idempotency-Key per call, reused by _call's retries: a retried POST can never order twice.
+    return await _call("POST", "/api/orders", key=True, json={"requested_date": requested_date, "lines": lines},
+                       headers={"Idempotency-Key": str(uuid.uuid4())})
 
 
 @mcp.tool()
