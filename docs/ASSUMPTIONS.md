@@ -302,6 +302,46 @@ put it.
 Files: `backend/app/mandates.py`, `backend/app/gate.py`, `backend/app/agent.py`,
 `docs/DECISIONS.md`.
 
+### 15. Returnable-packaging deposits are disclosed, not priced
+
+**Data / behaviour.** Product data can attach deposit material codes and
+quantities to a sales unit. The mock price endpoint does not return a usable
+price for those deposit materials.
+
+**Assumption.** The slim catalogue keeps deposit records and an order line
+shows `returnable packaging deposit charged by Valio; not priced by the mock
+API`. The order total deliberately excludes that deposit amount.
+
+Files: `backend/app/catalogue.py`, `backend/app/gate.py`, `backend/app/agent.py`.
+
+### 16. Order totals are net of VAT
+
+**Assumption.** Unit prices and line totals are integer euro cents excluding
+VAT. The agent and front door show this basis in their explanations; tax-
+inclusive prices are not included in the order total.
+
+Files: `backend/app/valio.py`, `backend/app/gate.py`, `contracts/trade_contracts/money.py`.
+
+### 17. Price validity is bounded by the shown quote
+
+**Data / behaviour.** The mock's price validity can be effectively open-ended
+(the sample returns `9999-12-31`), while the application cache is short-lived.
+
+**Assumption.** An automatic order is bound to the unit prices shown by the
+agent. A changed price becomes `PRICE_CHANGED` and waits for human review;
+the human approval path re-quotes before confirmation.
+
+Files: `backend/app/agent.py`, `backend/app/orders.py`, `backend/app/gate.py`.
+
+### 18. Currency is EUR only
+
+**Assumption.** The Junction mock is treated as euro-denominated. The current
+contracts store integer cents without a currency field, so a non-EUR upstream
+quote is outside the supported interface and must be resolved before a
+production integration.
+
+Files: `backend/app/valio.py`, `contracts/trade_contracts/quote.py`.
+
 ## Open interface and operating model
 
 Valio's mock has no order endpoint. The repository defines the order and human

@@ -36,6 +36,32 @@ def test_dispatches_propose_order_through_the_tool_registry(monkeypatch):
     }
 
 
+def test_product_search_uses_requested_date_and_safety_filters(shop, monkeypatch):
+    seen = {}
+
+    def search(query, claims, exclude_allergens, strict_may_contain, category, limit):
+        seen["search"] = (query, claims, exclude_allergens, strict_may_contain, category, limit)
+        return [shop.products["463335"]]
+
+    async def quotes(ids, requested_date, *args, **kwargs):
+        seen["quote"] = (ids, requested_date)
+        return [shop.quotes["463335"]]
+
+    monkeypatch.setattr(chat_agent.catalogue, "search", search)
+    monkeypatch.setattr(chat_agent.valio, "get_quotes", quotes)
+    result = asyncio.run(chat_agent._search_products(
+        {"query": "milk", "limit": 2, "claims": ["FREE_FROM_LACTOSE"], "exclude_allergens": ["AP"]},
+        "chef", date(2026, 11, 20)))
+
+    assert seen["search"] == ("milk", ["FREE_FROM_LACTOSE"], ["AP"], False, None, 2)
+    assert seen["quote"] == (["463335"], "2026-11-20") and result["products"][0]["product_id"] == "463335"
+
+
+def test_search_tool_declares_optional_safety_filters():
+    declaration = next(d for d in chat_agent.TOOLS[0]["functionDeclarations"] if d["name"] == "search_products")
+    assert {"claims", "exclude_allergens"} <= set(declaration["parameters"]["properties"])
+
+
 def test_approval_request_never_dispatches_an_approval_tool(monkeypatch):
     async def fake_generate(*_args, **_kwargs):
         return {"candidates": [{"content": {"parts": [{"text": "I approved the order for you."}]}}]}

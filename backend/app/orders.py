@@ -176,12 +176,14 @@ def security_event(event: str, route: str, ip: str | None, buyer_id: str | None 
 
 def _entry(actor: str, order_id: str, buyer_id: str, requested_date: str, lines: list[dict], mandate: Mandate | None,
            res: gate.GateResult | None, decision=None, now: datetime | None = None, action: str = "order",
-           status: str | None = None) -> tuple[AuditEntry, dict]:
+           status: str | None = None, delivery_date: str | None = None) -> tuple[AuditEntry, dict]:
     """The contracts have no Order shape, so the order is recorded as the PurchaseRequest it fulfils."""
     now = now or datetime.now(timezone.utc)
     text = "Order via Valio front door: " + "; ".join(
         f"{gate._qty(li['quantity'])} {li['unit'] or 'units'} x {li['product_id']} ({li['name']})" for li in lines
     ) + f", for {requested_date}"
+    if delivery_date and delivery_date != requested_date:
+        text += f"; delivery on {delivery_date}"
     request = PurchaseRequest(
         id=order_id, buyer_id=buyer_id, text=text, created_at=now, needed_by=requested_date,
         items=[RequestItem(name=li["name"], quantity=li["quantity"], unit=li["unit"]) for li in lines])
@@ -294,7 +296,13 @@ def _view(res: gate.GateResult) -> dict:
     return {"total_cents": res.total_cents, "lines": res.lines, "decision": res.decision.model_dump(mode="json"),
             "rejected_options": [r.model_dump(mode="json") for r in res.rejected_options],
             "substitutes": res.substitutes, "alternative_order": res.alternative_order, "quote_facts": _quote_facts(res),
-            "mandate_version": res.mandate_version}
+            "mandate_version": res.mandate_version, "delivery_date": _delivery_date(res)}
+
+
+def _delivery_date(res: gate.GateResult) -> str | None:
+    dates = [r.facts.get("available_date") for r in res.decision.reasons
+             if r.code is gate.C.DATE_NOT_HONOURED and r.facts.get("available_date")]
+    return max(dates) if dates else None
 
 
 def _busy() -> HTTPException:
@@ -302,7 +310,8 @@ def _busy() -> HTTPException:
 
 
 async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | None,
-                forced_reasons: list | None = None, actor: Principal | None = None) -> dict:
+                forced_reasons: list | None = None, actor: Principal | None = None,
+                approved_prices: dict[str, int] | None = None) -> dict:
     """`mandate` is the buyer's stored one (mandates.get), never the client's; None → refused (MANDATE_MISSING)."""
     oid = str(uuid4())
     for _ in range(MAX_RETRIES):
@@ -310,7 +319,7 @@ async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | N
         spent = _spent_7d(buyer_id, now)
         res = await _gate({"actor": FRONT_DOOR, "buyer_id": buyer_id, "action": "order", "status": "failed"},
                           lines, requested_date, mandate, oid, spent_7d_cents=spent, now=now,
-                          forced_reasons=forced_reasons)  # Valio calls, no lock
+                          approved_prices=approved_prices, forced_reasons=forced_reasons)  # Valio calls, no lock
         async with _order_lock:
             if _spent_7d(buyer_id, now) != spent:
                 continue  # another order of this buyer was confirmed meanwhile: decide again on the new budget
@@ -322,11 +331,12 @@ async def place(buyer_id: str, requested_date, lines: list, mandate: Mandate | N
                 "id": oid, "buyer_id": buyer_id, "status": res.status, "requested_date": requested_date.isoformat(),
                 "lines": res.lines, "total_cents": res.total_cents, "mandate": mandate.model_dump(mode="json"),
                 "mandate_version": res.mandate_version,
+                "delivery_date": _delivery_date(res),
                 "decision": res.decision.model_dump(mode="json"), "signed_off_by": None,
                 "created_at": now.isoformat(), "updated_at": now.isoformat(),
                 "agent_key_id": creator.key_id if creator and creator.buyer_id == buyer_id else None}
             entry, fd = _entry(FRONT_DOOR, oid, buyer_id, requested_date.isoformat(), res.lines, mandate, res,
-                               now=now, status=res.status)
+                               now=now, status=res.status, delivery_date=_delivery_date(res))
             out = _signed(fd, _response(oid if res.status != "refused" else None, res.status, _view(res), entry.id))
             await _commit((lambda: _store().__setitem__(oid, record)) if record else None,
                           lambda: _store().pop(oid, None), entry, fd)
@@ -400,15 +410,18 @@ async def approve(order_id: str, who: Principal, seen_decided_at: datetime | Non
             raise HTTPException(409, detail="The order or the buyer's spend changed while it was being re-checked; "
                                             "review it and approve again.")
         status = _approval_status(o, res)
+        delivery_date = _delivery_date(res) or o.get("delivery_date")
         changes = dict(status=status, lines=res.lines, total_cents=res.total_cents, updated_at=now.isoformat(),
                        decision=res.decision.model_dump(mode="json"),
-                       signed_off_by=who.name if status == "confirmed" else None)
+                       signed_off_by=who.name if status == "confirmed" else None, delivery_date=delivery_date)
         if mandate:  # judged under these (no mandate left = refused, keep the last snapshot for the record)
             changes.update(mandate=mandate.model_dump(mode="json"), mandate_version=res.mandate_version)
         entry, fd = _entry(f"human:{who.name}:approve", order_id, o["buyer_id"], o["requested_date"],
                            res.lines, mandate, res, now=now, status=status,
-                           action="approved" if status == "confirmed" else "approval_blocked")
-        out = _signed(fd, _response(order_id, status, {**_view(res), "signed_off_by": changes["signed_off_by"]},
+                           action="approved" if status == "confirmed" else "approval_blocked",
+                           delivery_date=delivery_date)
+        out = _signed(fd, _response(order_id, status, {**_view(res), "signed_off_by": changes["signed_off_by"],
+                                                       "delivery_date": delivery_date},
                                     entry.id))
         await _commit(*_changing(o, changes), entry, fd)
     if status != "confirmed":  # QA round 2 N3: an approve that didn't approve is never a 200

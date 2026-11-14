@@ -8,13 +8,15 @@ RAW = {
     "id": "463335", "salesUnit": "ST", "baseUnit": "ST", "category": "C1", "allowedLotSize": 0.01, "deleted": False,
     "vendorName": "VALIO OY", "countryOfOrigin": "fi", "temperatureCondition": 2,
     "units": [{"unitId": "ST", "sizeInBaseUnits": 1.0}, {"unitId": "KI", "sizeInBaseUnits": 5.0}],
+    "deposits": [{"material": "4", "unit": "ST", "quantity": 5.0}],
     "substitutions": [{"product": "463335", "substituteProduct": "476240"}],
     "synkkaData": {
         "names": [{"language": "en", "value": "Valio Eila 3 % milk drink 1 l lactose free"},
                   {"language": "fi", "value": "Valio Eila 3 % maitojuoma 1 l laktoositon"}],
         "brand": "Valio",
         "classifications": [
-            {"name": "allergen", "type": "ENUM", "values": [{"id": "AM", "unit": "CONTAINS"}, {"id": "AN", "unit": "MAY_CONTAIN"}]},
+            {"name": "allergen", "type": "ENUM", "values": [{"id": "AM", "unit": "CONTAINS"}, {"id": "AN", "unit": "MAY_CONTAIN"}, {"id": "AP", "unit": "UNDECLARED"}]},
+            {"name": "nonAllergen", "type": "ENUM", "values": [{"id": "AE", "unit": "FREE_FROM"}]},
             {"name": "nutritionalClaim", "type": "ENUM", "values": [{"id": "FREE_FROM_LACTOSE"}]},
         ],
         "unitConversions": [{"synkkaPackagingType": "BASE_UNIT_OR_EACH", "volume": {"unit": "LTR", "value": 1.0},
@@ -36,9 +38,32 @@ def loaded(monkeypatch):
 
 def test_slim_extracts_claims_allergens_units_and_volume(loaded):
     assert loaded["claims"] == ["FREE_FROM_LACTOSE"]
-    assert loaded["allergens"] == {"contains": ["AM"], "may_contain": ["AN"], "free_from": []}
+    assert loaded["allergens"] == {"contains": ["AM"], "may_contain": ["AN"], "free_from": ["AE"], "undeclared": ["AP"]}
     assert loaded["units"] == {"ST": 1.0, "KI": 5.0} and loaded["volume"] == {"unit": "LTR", "value": 1.0}
     assert loaded["substitutes"] == ["476240"] and loaded["name_fi"].endswith("laktoositon")
+    assert loaded["deposits"] == [{"material": "4", "unit": "ST", "quantity": 5.0}]
+
+
+def test_load_rebuilds_slim_when_version_is_stale(monkeypatch, tmp_path):
+    import json
+    import threading
+
+    slim_path = tmp_path / "catalogue_slim.json"
+    slim_path.write_text('{"version": "old", "products": [{"id": "stale"}]}')
+    rebuilt = []
+
+    def rebuild():
+        rebuilt.append(True)
+        slim_path.write_text(json.dumps({"version": catalogue.SLIM_VERSION, "products": [{"id": "fresh"}]}))
+
+    monkeypatch.setattr(catalogue, "SLIM", slim_path)
+    monkeypatch.setattr(catalogue, "build_slim", rebuild)
+    monkeypatch.setattr(catalogue, "_products", {})
+    monkeypatch.setattr(catalogue, "_ready", threading.Event())
+
+    catalogue.load()
+
+    assert rebuilt == [True] and set(catalogue._products) == {"fresh"}
 
 
 def test_search_filters(loaded):

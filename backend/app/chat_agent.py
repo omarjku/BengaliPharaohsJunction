@@ -44,7 +44,9 @@ def _decl(name: str, description: str, properties: dict | None = None, required:
 
 TOOLS = [{"functionDeclarations": [
     _decl("search_products", "Read-only product/price/availability lookup. Use only when the chef asks what exists or asks to compare; for any request with an amount or order intent, call propose_order instead. This never orders.", {
-        "query": {"type": "STRING"}, "limit": {"type": "INTEGER"}}, ["query"]),
+        "query": {"type": "STRING"}, "limit": {"type": "INTEGER"},
+        "claims": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "exclude_allergens": {"type": "ARRAY", "items": {"type": "STRING"}}}, ["query"]),
     _decl("propose_order", "Use immediately for an order request, even when the product needs matching. Run the existing order engine for these items. It may place or hold an order; it never approves one.", {
         "items": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
             "text": {"type": "STRING"}, "product_id": {"type": "STRING"}, "amount": {"type": "NUMBER"},
@@ -314,9 +316,11 @@ async def _search_products(args: dict, _buyer_id: str, _requested_date: date | N
     limit = min(max(int(args.get("limit") or 5), 1), 5)
     if not query:
         return {"query": query, "products": [], "message": "Tell me which product to search for."}
-    hits = catalogue.search(query, [], [], False, None, limit)
-    tomorrow = datetime.now(HELSINKI).date() + timedelta(days=1)
-    quotes = {q["product_id"]: q for q in await valio.get_quotes([p["id"] for p in hits], tomorrow.isoformat())} if hits else {}
+    claims = [str(value).strip().upper() for value in args.get("claims") or [] if str(value).strip()][:20]
+    exclude_allergens = [str(value).strip().upper() for value in args.get("exclude_allergens") or [] if str(value).strip()][:20]
+    hits = catalogue.search(query, claims, exclude_allergens, False, None, limit)
+    requested = _requested_date or (datetime.now(HELSINKI).date() + timedelta(days=1))
+    quotes = {q["product_id"]: q for q in await valio.get_quotes([p["id"] for p in hits], requested.isoformat())} if hits else {}
     products = []
     for product in hits:
         quote = quotes.get(product["id"]) or {}

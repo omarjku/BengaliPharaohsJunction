@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app import catalogue
 from app.quantity import resolve
+from app import agent
 
 
 def product(**kw) -> dict:
@@ -127,3 +128,20 @@ def test_missing_lot_size_refuses(lot):
 def test_lot_size_on_case_of_kg_is_flagged():
     r = resolve(product(sales_unit="KI", base_unit="KG", lot_size=2.0, units={"KG": 1.0, "KI": 6.0}), 12, "kg")  # 464997
     assert r["quantity"] == 2 and r["needs_confirmation"] and "lot size 2 is in KI, not KG" in r["explanation"]
+
+
+@pytest.mark.parametrize("pid, name, size, expected", [
+    ("462921", "Valio Eila Luomu semi skimmed milk drink 1 l", 1.0, 200),
+    ("464198", "Valio Eila semi skimmed milk drink 5 dl", 0.5, 400),
+])
+def test_agent_name_pack_fallback_counts_case_contents(pid, name, size, expected):
+    p = {"id": pid, "name_en": name, "sales_unit": "KI", "base_unit": "ST", "lot_size": 1,
+         "units": {"ST": 1.0, "KI": 5.0}, "volume": None, "net_weight": None}
+    result = agent.resolve(p, 1000, "L")
+    assert result["quantity"] == expected and result["per_sales_unit"] == size * 5 and not result["needs_confirmation"]
+
+
+def test_agent_name_pack_fallback_asks_when_case_size_is_unknown():
+    p = {"id": "unknown", "name_en": "Milk drink 1 l", "sales_unit": "KI", "base_unit": "ST", "lot_size": 1,
+         "units": {"ST": 1.0}, "volume": None, "net_weight": None}
+    assert agent.resolve(p, 1000, "L")["needs_confirmation"]
