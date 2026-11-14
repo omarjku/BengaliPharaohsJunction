@@ -14,6 +14,7 @@ import { useVoice, voiceSupported } from './useVoice'
 import { usePhaseLine } from './usePhaseLine'
 import { DictationMic, MicButton, VoiceStatus } from './Voice'
 import { HeaderMenu } from './HeaderMenu'
+import './Keys.css'
 import { PhotoButton } from './PhotoButton'
 import { Composer } from './Composer'
 import { Onboarding } from './Onboarding'
@@ -804,36 +805,63 @@ function DoorGlyph() {
   )
 }
 
+function KeyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="15" r="4" />
+      <path d="M11 12l9-9M16 7l3 3M14 9l2 2" />
+    </svg>
+  )
+}
+
+function EyeIcon({ off }: { off: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+      {off && <path d="M4 4l16 16" />}
+    </svg>
+  )
+}
+
+// Two keys in one nested card: a soft outer shell, a white card inside. Keys are trimmed on save (pasted spaces and newlines break requests).
 function KeysForm({
   title, titleId, intro, submitLabel, onSaved, onCancel,
 }: { title: string; titleId?: string; intro?: string; submitLabel?: string; onSaved: () => void; onCancel?: () => void }) {
   const k = useCopy().UI.keys
   const [keys, setDraft] = useState<ApiKeys>(getKeys)
+  const ready = !!keys.agentKey.trim() && !!keys.approverKey.trim()
   function save(e: FormEvent) {
     e.preventDefault()
-    setKeys(keys)
+    if (!ready) return
+    setKeys({ ...keys, agentKey: keys.agentKey.trim(), approverKey: keys.approverKey.trim() })
     onSaved()
   }
   return (
-    <form className="setup" onSubmit={save}>
-      <div className="field">
-        <h1 className="title" id={titleId}>
-          {title}
-        </h1>
-        {intro && <p className="note">{intro}</p>}
-        <p className="note small">{k.tip}</p>
-      </div>
-      <SecretField id="agent-key" label={k.agent} help={k.agentHelp} value={keys.agentKey} onChange={(v) => setDraft({ ...keys, agentKey: v })} />
-      <SecretField id="approver-key" label={k.approver} help={k.approverHelp} value={keys.approverKey} onChange={(v) => setDraft({ ...keys, approverKey: v })} />
-      <div className="actions">
-        <button type="submit" className="btn" disabled={!keys.agentKey.trim() || !keys.approverKey.trim()}>
-          {submitLabel ?? k.save}
-        </button>
-        {onCancel && (
-          <button type="button" className="btn plain" onClick={onCancel}>
-            {k.cancel}
+    <form className="setup keys-shell" onSubmit={save}>
+      <div className="keys-card">
+        <div className="keys-head">
+          <span className="keys-badge">
+            <KeyIcon />
+          </span>
+          <h1 className="title" id={titleId}>
+            {title}
+          </h1>
+          {intro && <p className="note">{intro}</p>}
+          <p className="note small">{k.tip}</p>
+        </div>
+        <SecretField id="agent-key" label={k.agent} help={k.agentHelp} value={keys.agentKey} onChange={(v) => setDraft({ ...keys, agentKey: v })} />
+        <SecretField id="approver-key" label={k.approver} help={k.approverHelp} value={keys.approverKey} onChange={(v) => setDraft({ ...keys, approverKey: v })} />
+        <div className="keys-actions">
+          <button type="submit" className="btn" disabled={!ready}>
+            {submitLabel ?? k.save}
           </button>
-        )}
+          {onCancel && (
+            <button type="button" className="btn plain" onClick={onCancel}>
+              {k.cancel}
+            </button>
+          )}
+        </div>
       </div>
     </form>
   )
@@ -843,25 +871,30 @@ function SecretField({ id, label, help, value, onChange }: { id: string; label: 
   const k = useCopy().UI.keys
   const [shown, setShown] = useState(false)
   return (
-    <div className="field">
+    <div className="field keys-field">
       <label htmlFor={id}>{label}</label>
-      <p className="field-help" id={`${id}-help`}>
-        {help}
-      </p>
-      <div className="secret">
+      <div className="secret keys-secret">
+        <span className="keys-lead">
+          <KeyIcon />
+        </span>
         <input
           id={id}
           type={shown ? 'text' : 'password'}
           autoComplete="off"
+          autoCapitalize="off"
+          autoCorrect="off"
           spellCheck={false}
           aria-describedby={`${id}-help`}
           value={value}
           onChange={(e) => onChange(e.target.value)}
         />
-        <button type="button" className="secret-toggle" aria-pressed={shown} aria-controls={id} onClick={() => setShown((s) => !s)}>
-          {shown ? k.hide : k.show}
+        <button type="button" className="secret-toggle" aria-pressed={shown} aria-controls={id} aria-label={shown ? k.hide : k.show} title={shown ? k.hide : k.show} onClick={() => setShown((s) => !s)}>
+          <EyeIcon off={shown} />
         </button>
       </div>
+      <p className="field-help" id={`${id}-help`}>
+        {help}
+      </p>
     </div>
   )
 }
