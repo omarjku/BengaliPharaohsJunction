@@ -243,3 +243,10 @@ def test_idempotency_store_holds_no_trace_of_the_secret(shop):
     import hashlib
     text = orders.IDEM_FILE.read_text()
     assert "agent-chef" not in text and hashlib.sha256(b"agent-chef").hexdigest()[:16] not in text
+
+
+def test_health_reports_the_deployed_commit(monkeypatch):
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "54ad847abc")
+    assert c.get("/api/health").json()["commit"] == "54ad847abc"
+    monkeypatch.delenv("RENDER_GIT_COMMIT")
+    assert c.get("/api/health").json()["commit"] is None

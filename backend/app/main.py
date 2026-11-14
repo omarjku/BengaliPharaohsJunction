@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import threading
 from contextlib import asynccontextmanager
@@ -37,9 +38,11 @@ app.add_middleware(CORSMiddleware, allow_origins=config.FRONTEND_ORIGINS, allow_
 
 @app.get("/api/health")
 def health() -> dict:
-    """Liveness check; reports which keys are configured (never their values)."""
+    """Liveness check; reports which keys are configured (never their values) and the deployed git commit
+    (RENDER_GIT_COMMIT, set by Render on every deploy), so a release check knows exactly what is live."""
     return {
         "status": "ok",
+        "commit": os.getenv("RENDER_GIT_COMMIT") or None,
         "valio_key_configured": bool(config.VALIO_API_KEY),
         "gemini_key_configured": bool(config.GEMINI_API_KEY),
         "catalogue": catalogue.status(),
