@@ -391,7 +391,7 @@
     "/api/orders/{order_id}/approve": {
       "post": {
         "summary": "Approve Order",
-        "description": "Human sign-off as the key's owner; re-runs the gate first (cut-offs pass, prices and stock change).\nNeeds X-Approver-Key; a request body is ignored.",
+        "description": "Human sign-off as the key's owner; re-runs the gate first (cut-offs pass, prices and stock change).\nNeeds X-Approver-Key. The approver's name comes from the key, never the body.",
         "operationId": "approve_order_api_orders__order_id__approve_post",
         "parameters": [
           {
@@ -421,6 +421,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SignOff"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -645,6 +662,65 @@
           }
         }
       }
+    },
+    "/api/agent/menu": {
+      "post": {
+        "summary": "Agent Menu",
+        "description": "Menu + covers → a proposed cart. Needs X-Agent-Key (the buyer comes from the key; mandate server-side).\nReturns {menu, assumptions, ingredients, lines, cart_total_cents, order_lines, decision, audit_id}; the decision is\nalways ASK_HUMAN (MENU_ASSUMPTIONS) and nothing is ordered here.",
+        "operationId": "agent_menu_api_agent_menu_post",
+        "parameters": [
+          {
+            "name": "x-agent-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Agent-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MenuRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Agent Menu Api Agent Menu Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -705,6 +781,44 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "MenuRequest": {
+        "properties": {
+          "menu_text": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Menu Text",
+            "examples": [
+              "Reindeer stew with mashed potatoes; lingonberry cheesecake"
+            ]
+          },
+          "covers": {
+            "type": "integer",
+            "maximum": 2000.0,
+            "minimum": 1.0,
+            "title": "Covers",
+            "examples": [
+              80
+            ]
+          },
+          "requested_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Requested Date",
+            "examples": [
+              "2026-11-16"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "menu_text",
+          "covers",
+          "requested_date"
+        ],
+        "title": "MenuRequest"
       },
       "OrderLine": {
         "properties": {
@@ -839,6 +953,25 @@
           "requested_date"
         ],
         "title": "QuoteRequest"
+      },
+      "SignOff": {
+        "properties": {
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          }
+        },
+        "type": "object",
+        "title": "SignOff",
+        "description": "Optional approve body. decided_at = the decision.decided_at the human was shown; send it so a click can\nonly ever sign off that decision (409 if the order was re-decided since). Other fields are ignored."
       },
       "ValidationError": {
         "properties": {

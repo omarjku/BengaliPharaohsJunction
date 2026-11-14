@@ -90,3 +90,9 @@
   chosen-product check).
 - One clause could ground several parsed items ("1 L lactose-free milk" → "milk" + "lactose-free milk", two products).
   Each clause now grounds at most one item (`overgrounded`); any item left over → ASK, nothing ordered.
+
+## 7. Automated security review of 656b1e6 (T15 menu): 1 MEDIUM, kept
+- Menu dietary words could be dropped: if Gemini omitted "lactose-free" for a dish, the ingredient was priced
+  unconstrained. Now `menu.apply_dietary` reads the dietary words on the dish's own menu line. Allergen exclusions
+  ("nut-free") go on every ingredient of that dish; a claim ("lactose-free") that no ingredient of the dish carries
+  → ASK; a dietary word no dish line owns → ASK.
