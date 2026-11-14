@@ -10,6 +10,16 @@ import { RunResult } from './RunResult'
 import type { AskResponse, AuditEntry, MenuRun, Reason } from './types'
 import { UrgentOptions } from './Urgent'
 import { ValioView } from './Valio'
+
+const ICO = { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' } as const
+/** Icon per kind of example request: liquid (drop), meat (box), menu (list). */
+function suggestIcon(t: string, i: number) {
+  const s = t.toLowerCase()
+  const kind = /\b(l|litra|litr\w*|maito|milk)\b/.test(s) ? 'drop' : /kg|kebab|meat|liha/.test(s) ? 'box' : /menu|menu|guest|vieras|ruokal/.test(s) ? 'list' : (['drop', 'box', 'list'] as const)[i % 3]
+  if (kind === 'drop') return <svg {...ICO}><path d="M12 3c3.5 4.2 6 7.2 6 10.5a6 6 0 0 1-12 0C6 10.2 8.5 7.2 12 3z" /></svg>
+  if (kind === 'box') return <svg {...ICO}><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z" /><path d="M3 7.5 12 12l9-4.5M12 12v9" /></svg>
+  return <svg {...ICO}><path d="M9 6h11M9 12h11M9 18h11" /><circle cx="4.5" cy="6" r="1" /><circle cx="4.5" cy="12" r="1" /><circle cx="4.5" cy="18" r="1" /></svg>
+}
 import { useVoice, voiceSupported } from './useVoice'
 import { usePhaseLine } from './usePhaseLine'
 import { DictationMic, MicButton, VoiceStatus } from './Voice'
@@ -20,7 +30,6 @@ import { Composer } from './Composer'
 import { Onboarding } from './Onboarding'
 import { useOnboarded } from './onboardingApi'
 import { Kitchen } from './Kitchen'
-import { KitchenChip } from './KitchenChip'
 import { onboardingSkippedFor, skipOnboardingFor, useKitchen } from './useKitchen'
 import { Conversation, type VoiceLayout } from './Conversation'
 import { Calendar } from './Calendar'
@@ -598,8 +607,6 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
           <>
             <section hidden={view !== 'order'} aria-label={u.nav.order}>
               <h1 className="sr-only">{u.nav.order}</h1>
-              {/* HOOK: which kitchen this device is signed in as (KitchenChip.tsx, useKitchen.ts) */}
-              <KitchenChip kitchen={kitchen} onSwitch={() => keysDialog.current?.showModal()} />
               {/* HOOK: the calendar opens from the chat screen and returns planned menus to this thread. */}
               {!onboardingOpen && <Calendar onPrefill={prefillCalendar} onMenuPlanned={showPlannedCalendarMenu} />}
               {onboardingOpen ? (
@@ -630,9 +637,11 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                           {waiting !== null && <p className="greeting">{u.greeting(partOfDay(), approver, waiting)}</p>}
                           <p className="try">{MOCK ? u.ask.tryDemo : u.ask.try}</p>
                           <div className="conv-suggest">
-                            {c.TRY.map((t) => (
-                              <button key={t} type="button" className="chip" onClick={() => setText(t)}>
-                                {t}
+                            {c.TRY.map((t, i) => (
+                              <button key={t} type="button" className="suggest" style={{ animationDelay: `${i * 40}ms` }} onClick={() => setText(t)}>
+                                <span className="suggest-ico" aria-hidden="true">{suggestIcon(t, i)}</span>
+                                <span className="suggest-text">{t}</span>
+                                <svg className="suggest-go" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
                               </button>
                             ))}
                           </div>
@@ -717,6 +726,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                 refreshKey={auditKey}
                 onAction={refreshAudit}
                 onAnnounce={setAnnounce}
+                kitchen={kitchen}
+                onSwitch={() => keysDialog.current?.showModal()}
               />
             </section>
 
@@ -885,9 +896,8 @@ function GuestsQuestion({ question, onAnswer, busy }: { question: string; onAnsw
 // A door, drawn in two strokes: the product's name, not decoration.
 function DoorGlyph() {
   return (
-    <svg className="door" viewBox="0 0 16 20" width="14" height="18" aria-hidden="true">
-      <path d="M2 19V2.5A1.5 1.5 0 0 1 3.5 1h9A1.5 1.5 0 0 1 14 2.5V19M1 19h14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      <circle cx="11" cy="10.5" r="1" fill="currentColor" />
+    <svg className="brand-door" viewBox="0 0 60 100" width="22" height="36" shapeRendering="crispEdges" aria-hidden="true" focusable="false">
+      <path fill="currentColor" fillRule="evenodd" d="M0 100V30h2V22h2V16h2V12h4V8h4V6h4V4h4V2h4V0h8v2h4v2h4v2h4v2h4v4h4v4h2v6h2v8h2v70zM8 40h18v22H8zM34 40h18v22H34zM8 68h18v22H8zM34 68h18v22H34z" />
     </svg>
   )
 }
