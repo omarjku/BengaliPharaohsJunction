@@ -90,3 +90,49 @@ def test_pieces_from_the_product_name():
     q = agent.resolve(p, 30, "pcs")
     assert q["quantity"] == 1 and q["delivered"] == 36 and "from the product name" in q["explanation"]
     assert agent.resolve(p, 80, "pcs")["quantity"] == 3
+
+
+# --- Urgent pickup (suggestions only; facts from valioaimo.fi, never invented stock)
+from datetime import datetime  # noqa: E402
+
+from app import config, urgent  # noqa: E402
+
+SAT_10 = datetime(2026, 11, 14, 10, 0, tzinfo=ask.TZ)  # Saturday 10:00, Helsinki
+
+
+def _q(avail="2026-11-16", flags=()):
+    return {"quote": {"available_date": avail, "order_cutoff": "2026-11-15T17:00:00+0200", "flags": list(flags)}}
+
+
+def test_helsinki_urgency_suggests_walk_in_and_click_and_collect_never_orders():
+    opts = urgent.urgent_options("20 kg butter ASAP", "helsinki-bistro", SAT_10.date(), SAT_10, [_q()])
+    kinds = [o["kind"] for o in opts]
+    assert kinds == ["walk_in", "click_and_collect", "next_delivery"]
+    walk, cc = opts[0], opts[1]
+    assert walk["assumption"] and "Vanha Talvitie 2" in walk["address"] and walk["phone"] == "010 381 7645"
+    assert walk["hours"] == "today 08:00–17:00 (open now)" and "not confirmed via the API" in walk["text"]
+    assert cc["assumption"] and "about 4 hours" in cc["text"] and "around 14:00" in cc["text"]
+    assert "agent doesn't place pickup orders" in cc["text"]
+
+
+def test_lapland_urgency_gets_the_honest_next_delivery():
+    [opt] = urgent.urgent_options("20 kg butter right now", "lapland-kitchen", SAT_10.date(), SAT_10, [_q()])
+    assert opt["kind"] == "next_delivery" and "2026-11-16 if ordered before 2026-11-15T17:00:00+0200" in opt["text"]
+
+
+def test_not_urgent_and_on_time_means_no_suggestions_but_late_delivery_triggers_them():
+    monday = datetime(2026, 11, 16).date()
+    assert urgent.urgent_options("20 kg butter for Monday", "helsinki-bistro", monday, SAT_10, [_q()]) is None
+    late = [_q(avail="2026-11-18")]  # Valio's earliest is after the day needed
+    assert urgent.urgent_options("20 kg butter for Monday", "helsinki-bistro", monday, SAT_10, late)[0]["kind"] == "walk_in"
+    sun_20 = datetime(2026, 11, 15, 20, 0, tzinfo=ask.TZ)
+    assert "(closed now)" in urgent.urgent_options("butter now", "helsinki-bistro", sun_20.date(), sun_20, [])[0]["hours"]
+
+
+def test_ask_route_asap_means_today_with_urgent_options(shop1, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(config, "AGENT_KEYS", config.AGENT_KEYS + ",agent-hb=helsinki-bistro")
+    route(monkeypatch, "order", items=[dict(ITEM[0], amount=20)])
+    r = c.post("/api/agent/ask", json={"text": "20 L lactose-free milk ASAP"}, headers={"X-Agent-Key": "agent-hb"})
+    body = r.json()
+    assert body["requested_date"] == datetime.now(ask.TZ).date().isoformat() and body["date_source"] == "text"
+    assert [o["kind"] for o in body["urgent_options"]][:2] == ["walk_in", "click_and_collect"]

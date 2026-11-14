@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from trade_contracts import ReasonCode as C
 
-from . import agent, gate, menu
+from . import agent, gate, menu, urgent
 
 TZ = ZoneInfo("Europe/Helsinki")
 INTENT_PROMPT = agent.UNTRUSTED + """
@@ -93,6 +93,8 @@ async def ask(text: str, requested: date | None, buyer_id: str) -> dict:
         return _ask(intent, covers, requested, "request", f"Which delivery day: {stated:%A %d %B} (as written) or "
                     f"{requested:%A %d %B} (as selected)?", C.LOW_CONFIDENCE, "Pick one delivery date.")
     when, source = (requested, "request") if requested else (stated, "text") if stated else (None, None)
+    if when is None and urgent.URGENT.search(text):  # "ASAP" / "now": the earliest day is today
+        when, source = today, "text"
     if when is None:
         return _ask(intent, covers, None, None, "For which delivery day?", C.DATA_MISSING,
                     "Say the day, e.g. 'for Monday' or 'tomorrow'.")
@@ -100,7 +102,7 @@ async def ask(text: str, requested: date | None, buyer_id: str) -> dict:
         return _ask(intent, covers, when, source, f"{when:%A %d %B %Y} is outside the 60-day ordering window. Which "
                     "delivery day?", C.DATA_MISSING, "Pick a date from today to 60 days ahead.")
     meta = {"intent": intent, "covers": covers, "requested_date": when.isoformat(), "date_source": source,
-            "question": None}
+            "question": None, "urgent_options": None}
     if intent == "unclear":
         return _ask(intent, covers, when, source, "What would you like to order? Name the products and amounts, or "
                     "paste a menu with the number of guests.", C.QTY_AMBIGUOUS, "e.g. '20 kg butter' or "
@@ -109,5 +111,9 @@ async def ask(text: str, requested: date | None, buyer_id: str) -> dict:
         if covers is None:  # never guessed: portions decide every quantity in the cart
             return _ask(intent, None, when, source, "For how many guests?", C.QTY_AMBIGUOUS,
                         "Add the number of guests, e.g. 'for 80 guests'.")
-        return meta | await menu.propose(text, covers, when, buyer_id)
-    return meta | await agent.run(text, when, buyer_id)
+        body = await menu.propose(text, covers, when, buyer_id)
+    else:
+        body = await agent.run(text, when, buyer_id)
+    # Suggestions only (walk-in, Click & Collect, next delivery): never an order the agent places.
+    meta["urgent_options"] = urgent.urgent_options(text, buyer_id, when, datetime.now(TZ), body.get("lines", []))
+    return meta | body

@@ -49,3 +49,18 @@ transcript ~0.9 s + `/ask` (today 8–12 s, mostly Valio quotes and the Gemini p
 1. `GET /api/voice` websocket (auth, the 30 s cap, the relay to the transcription model, then `ask.ask`, then `readback()`, then speaking): about 150 lines, with tests faking the Live socket.
 2. `readback(decision, body)`: a pure function with templates for confirmed / pending approval / refused / asked, and tests.
 3. Frontend (Room 4): a hold-to-talk button, an AudioWorklet for 16 kHz PCM16, playback of 24 kHz PCM, and showing the transcript and the "said" text.
+
+## Urgent pickup (built in `/api/agent/ask`, used by voice too)
+
+When the chef signals urgency ("ASAP", "now", "today", "in 30 minutes", "heti", "tänään"), or orders for today, or Valio's earliest delivery is later than the day needed, the `/ask` response adds `urgent_options`. These are **suggestions, each marked `assumption`; the agent never places them**:
+- **Helsinki buyers** (location beside the mandate; demo buyer `helsinki-bistro`):
+  - `walk_in`: Valio Aimo Cash & Carry Helsinki, Vanha Talvitie 2 (Sörnäinen, Tukkutori), today's opening hours with "open now" / "closed now" (Mon–Fri 7–18, Sat 8–17, Sun 9–16), and "Store stock is not confirmed via the API: call 010 381 7645 before you go".
+  - `click_and_collect`: "ready from about 4 hours after it is confirmed", Helsinki only, placed on Valio's own site.
+  - plus the next delivery.
+- **Everyone else** (e.g. `lapland-kitchen`): only the honest `next_delivery`, i.e. the earliest delivery day and its cut-off from the live quotes.
+
+"ASAP" or "now" with no date means today. Facts are only what valioaimo.fi publishes; store stock and pickup are not in the mock API, and every suggestion says so. Voice read-back example: "Valio can deliver Monday. For today: Cash & Carry Helsinki is open until 17:00, call first."
+
+Live (Sat 05:47), "20 kg unsalted butter ASAP":
+- `helsinki-bistro`: held for the chef (Valio delivers Monday, not today), with walk-in (closed now, opens 08:00), Click & Collect (around 09:47) and Monday's delivery;
+- `lapland-kitchen`: only "The earliest Valio delivery for these products is 2026-11-16 if ordered before 2026-11-15 17:00".
