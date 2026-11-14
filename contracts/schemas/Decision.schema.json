@@ -1,0 +1,144 @@
+{
+  "$defs": {
+    "Alternative": {
+      "additionalProperties": false,
+      "properties": {
+        "product_id": {
+          "minLength": 1,
+          "title": "Product Id",
+          "type": "string"
+        },
+        "summary": {
+          "description": "Why this is offered instead.",
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "product_id",
+        "summary"
+      ],
+      "title": "Alternative",
+      "type": "object"
+    },
+    "Outcome": {
+      "enum": [
+        "AUTO",
+        "ASK_HUMAN",
+        "DECLINE"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "Reason": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ReasonCode"
+        },
+        "message": {
+          "description": "Plain language, shown to the chef.",
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "product_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Product Id"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "Reason",
+      "type": "object"
+    },
+    "ReasonCode": {
+      "enum": [
+        "CUT_OFF_PASSED",
+        "QUANTITY_UNKNOWN",
+        "PARTIAL_STOCK",
+        "UNAVAILABLE",
+        "NOT_DELIVERABLE",
+        "UNIT_MISMATCH",
+        "OVER_SPEND_LIMIT",
+        "LOW_CONFIDENCE",
+        "SUBSTITUTION_OUTSIDE_PREFERENCES",
+        "HARD_RULE_VIOLATED",
+        "ALLERGEN_CONFLICT",
+        "WITHIN_MANDATE"
+      ],
+      "title": "ReasonCode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "request_id": {
+      "minLength": 1,
+      "title": "Request Id",
+      "type": "string"
+    },
+    "outcome": {
+      "$ref": "#/$defs/Outcome"
+    },
+    "reasons": {
+      "items": {
+        "$ref": "#/$defs/Reason"
+      },
+      "minItems": 1,
+      "title": "Reasons",
+      "type": "array"
+    },
+    "confidence": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confidence"
+    },
+    "alternatives": {
+      "items": {
+        "$ref": "#/$defs/Alternative"
+      },
+      "title": "Alternatives",
+      "type": "array"
+    },
+    "decided_at": {
+      "format": "date-time",
+      "title": "Decided At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "outcome",
+    "reasons",
+    "decided_at"
+  ],
+  "title": "Decision",
+  "type": "object"
+}

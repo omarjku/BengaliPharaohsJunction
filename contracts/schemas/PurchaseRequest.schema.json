@@ -1,0 +1,118 @@
+{
+  "$defs": {
+    "Channel": {
+      "enum": [
+        "text",
+        "voice",
+        "photo",
+        "menu"
+      ],
+      "title": "Channel",
+      "type": "string"
+    },
+    "RequestItem": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "What the buyer called it, e.g. 'lactose-free milk'.",
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "quantity": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantity"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "e.g. 'L', 'KG', 'PCS'.",
+          "title": "Unit"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "RequestItem",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "buyer_id": {
+      "minLength": 1,
+      "title": "Buyer Id",
+      "type": "string"
+    },
+    "text": {
+      "description": "The original words, kept for the audit trail.",
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+    },
+    "channel": {
+      "$ref": "#/$defs/Channel",
+      "default": "text"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/RequestItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "needed_by": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Needed By"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "buyer_id",
+    "text",
+    "created_at"
+  ],
+  "title": "PurchaseRequest",
+  "type": "object"
+}

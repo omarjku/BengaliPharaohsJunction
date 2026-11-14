@@ -1,0 +1,72 @@
+{
+  "contract_version": "0.1",
+  "id": "audit-001",
+  "timestamp": "2026-11-14T09:00:07+02:00",
+  "actor": "buyer_agent",
+  "input": {
+    "request": {
+      "contract_version": "0.1",
+      "id": "req-001",
+      "buyer_id": "hotel-demo",
+      "text": "I need 1,000 litres of lactose-free milk by Monday. Find an option that meets our requirements based on price and availability.",
+      "channel": "text",
+      "items": [{ "name": "lactose-free milk", "quantity": 1000, "unit": "L" }],
+      "needed_by": "2026-11-16",
+      "created_at": "2026-11-14T09:00:00+02:00"
+    },
+    "mandate": null,
+    "quotes": [
+      {
+        "contract_version": "0.1",
+        "product_id": "463335",
+        "product_name": "Valio Eila 3% milk drink 1 L",
+        "unit_price_eur": 1.4,
+        "unit": "1 L carton",
+        "availability": "available",
+        "quantity": { "known": true, "value": 5000 },
+        "available_date": "2026-11-16",
+        "source": "valio_api",
+        "fetched_at": "2026-11-14T09:00:05+02:00",
+        "valid_until": "2026-11-14T09:15:05+02:00",
+        "cut_off": { "closing_time": "2026-11-15T17:00:00+02:00", "passed": false }
+      }
+    ]
+  },
+  "decision": {
+    "contract_version": "0.1",
+    "request_id": "req-001",
+    "outcome": "ASK_HUMAN",
+    "reasons": [
+      {
+        "code": "OVER_SPEND_LIMIT",
+        "message": "1,000 x 1.40 EUR = 1,400 EUR is above your 500 EUR auto-approve limit, so a person must approve.",
+        "product_id": "463335"
+      }
+    ],
+    "confidence": 0.93,
+    "alternatives": [],
+    "decided_at": "2026-11-14T09:00:07+02:00"
+  },
+  "rejected_options": [
+    {
+      "product_id": "463038",
+      "reasons": [
+        {
+          "code": "CUT_OFF_PASSED",
+          "message": "Order cut-off Thu 12 Nov 15:00 has passed, and its stock is unknown (999999), so it cannot be ordered for Monday.",
+          "product_id": "463038"
+        }
+      ]
+    },
+    {
+      "product_id": "462775",
+      "reasons": [
+        {
+          "code": "PARTIAL_STOCK",
+          "message": "Only 51 units are available of the 1,000 needed.",
+          "product_id": "462775"
+        }
+      ]
+    }
+  ]
+}
