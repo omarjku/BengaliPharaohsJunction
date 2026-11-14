@@ -34,10 +34,15 @@ def _get(url: str, token: str, accept: str) -> bytes:
             return response.read()
     except urllib.error.HTTPError as exc:
         try:
-            problem = json.loads(exc.read() or b"{}")
+            body = exc.read() or b""
+        except OSError:
+            body = b""
+        try:
+            problem = json.loads(body or b"{}")
             detail = str(problem.get("detail") or problem.get("title") or "")[:200]
-        except (ValueError, OSError, AttributeError):
-            detail = ""
+        except (ValueError, AttributeError):
+            detail = body.decode("utf-8", "replace").strip()[:160]
+        detail += f" [server={exc.headers.get('server', '?')}]" if exc.headers else ""
         raise CraciAPIError(f"API returned HTTP {exc.code}" + (f": {detail}" if detail else "")) from None
     except (urllib.error.URLError, TimeoutError, OSError):
         raise CraciAPIError("API request failed") from None
