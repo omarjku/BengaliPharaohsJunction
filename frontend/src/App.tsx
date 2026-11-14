@@ -23,6 +23,7 @@ import { Kitchen } from './Kitchen'
 import { KitchenChip } from './KitchenChip'
 import { onboardingSkippedFor, skipOnboardingFor, useKitchen } from './useKitchen'
 import { Conversation, type VoiceLayout } from './Conversation'
+import { Calendar } from './Calendar'
 import { Orb } from './Orb'
 import { useLive } from './useLive'
 import { useLiveWarm } from './liveWarm'
@@ -318,6 +319,27 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     setAnnounce(u.question.leftAlone)
   }
 
+  function prefillCalendar(words: string) {
+    setView('order')
+    setText(words)
+    requestAnimationFrame(() => {
+      const f = field.current
+      if (!f) return
+      f.focus()
+      f.setSelectionRange(f.value.length, f.value.length)
+    })
+  }
+
+  function showPlannedCalendarMenu(plan: MenuRun, requestedDate: string, covers: number) {
+    const planned: AskResponse = { ...plan, intent: 'menu', requested_date: requestedDate, date_source: 'request', covers }
+    setView('order')
+    setResult(planned)
+    push({ kind: 'agent', text: c.UI.conv.cartNow(c.money(plan.cart_total_cents)) })
+    push({ kind: 'res', res: planned, date: requestedDate, asked: plan.menu.dishes.map((dish) => dish.name).join(', ') })
+    setAnnounce(c.UI.conv.cartNow(c.money(plan.cart_total_cents)))
+    refreshAudit()
+  }
+
   // The cart was re-planned: the agent's line above the card said the old total, so it is rewritten.
   function replanned(id: number, p: MenuRun) {
     setThread((t) => {
@@ -518,6 +540,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
               <h1 className="sr-only">{u.nav.order}</h1>
               {/* HOOK: which kitchen this device is signed in as (KitchenChip.tsx, useKitchen.ts) */}
               <KitchenChip kitchen={kitchen} onSwitch={() => keysDialog.current?.showModal()} />
+              {/* HOOK: the calendar opens from the chat screen and returns planned menus to this thread. */}
+              {!onboardingOpen && <Calendar onPrefill={prefillCalendar} onMenuPlanned={showPlannedCalendarMenu} />}
               {onboardingOpen ? (
                 <Onboarding
                   onDone={() => {

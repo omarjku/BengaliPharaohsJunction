@@ -10,6 +10,7 @@ import type {
   AdminFilter, AdminRow, BuyerProfile, KitchenContext, LiveEvent, LiveSocket, PhotoRead, SecurityEvent, AgentRun, Alternative, AlternativeOrder, AuditEntry, Decision, Health, Line, OrderInput, OrderResponse, OrderStatus,
   AskInput, AskResponse, CompileResult, Mandate, MenuInput, MenuRun, Product, RuleChange, SaveResult, Quote, QuantityResolution, Reason, RunInput, Substitute,
 } from './types'
+import type { CalendarDay, CalendarEntry, CalendarLine, CalendarResponse, Weekday, WeeklyMenu } from './calendarApi'
 
 const NOW = '2026-11-14T10:00:00+00:00'
 
@@ -353,6 +354,84 @@ function log(actor: string, buyer_id: string, text: string, d: Decision): string
 
 const orders = new Map<string, { buyer: string; res: OrderResponse; signedOffBy?: string }>()
 
+const CALENDAR_TODAY = '2026-11-14'
+const CALENDAR_PENDING_ID = 'mock-calendar-pending'
+const calendarRecurringPlaced = new Set<string>(['2026-11-06', '2026-11-13'])
+const calendarRecurringSkipped = new Set<string>()
+
+const CALENDAR_MENU: WeeklyMenu = {
+  weekday: 'fri',
+  name: 'Example: Lapland special — salmon soup and blueberry pie',
+  covers: 80,
+  active: true,
+  dishes: [
+    {
+      name: 'Creamy salmon soup',
+      recipe: 'Sweat onion and leek in butter. Add potatoes and fish stock, then simmer until tender. Add salmon and cream; cook gently until just done. Season with dill, salt and lemon.',
+    },
+    {
+      name: 'Blueberry quark pie',
+      recipe: 'Press the butter crust into a tin. Whisk quark, sugar and eggs until smooth, fold in blueberries, and bake until the centre is set. Cool before slicing.',
+    },
+  ],
+}
+let mockWeeklyMenus: WeeklyMenu[] = [structuredClone(CALENDAR_MENU)]
+
+const calendarLine = (name: string, quantity: number, unit: string): CalendarLine => ({ name, quantity, unit })
+
+function ensureCalendarPendingOrder() {
+  if (orders.has(CALENDAR_PENDING_ID)) return
+  const d = structuredClone(MILK.decision)
+  orders.set(CALENDAR_PENDING_ID, {
+    buyer: 'lapland-kitchen',
+    res: {
+      order_id: CALENDAR_PENDING_ID,
+      status: 'pending_approval',
+      audit_id: 'aud-calendar-pending',
+      total_cents: 156000,
+      lines: [{ product_id: '463335', name: 'Valio Eila 3 % milk drink 1 L lactose free', quantity: 1000, unit: 'ST', unit_price_cents: 156, line_total_cents: 156000 }],
+      decision: d,
+      rejected_options: [],
+      substitutes: [],
+      alternative_order: null,
+    },
+  })
+}
+
+function calendarDays(from: string, to: string): CalendarDay[] {
+  ensureCalendarPendingOrder()
+  const fridayMenu = mockWeeklyMenus.find((menu) => menu.weekday === 'fri' && menu.active)
+  const start = new Date(`${from}T12:00:00Z`)
+  const end = new Date(`${to}T12:00:00Z`)
+  const days: CalendarDay[] = []
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    const date = cursor.toISOString().slice(0, 10)
+    const entries: CalendarEntry[] = []
+    if (date === '2026-11-02') entries.push({ kind: 'delivery_confirmed', order_id: 'mock-calendar-1102', title: 'Monday pantry restock', lines: [calendarLine('Unsalted butter', 20, 'ST')], total_cents: 9700, status: 'confirmed' })
+    if (date === '2026-11-06') entries.push({ kind: 'delivery_confirmed', order_id: 'mock-calendar-1106', title: 'Friday service delivery', lines: [calendarLine('Whipping cream', 7, 'ST'), calendarLine('Milk', 12, 'ST')], total_cents: 5220, status: 'confirmed' })
+    if (date === '2026-11-09') entries.push({ kind: 'delivery_confirmed', order_id: 'mock-calendar-1109', title: 'Monday dairy delivery', lines: [calendarLine('Soft quark', 2, 'KI'), calendarLine('Unsalted butter', 4, 'ST')], total_cents: 3900, status: 'confirmed' })
+    if (date === '2026-11-13') entries.push({ kind: 'delivery_confirmed', order_id: 'mock-calendar-1113', title: 'Friday service delivery', lines: [calendarLine('Salmon', 12, 'kg')], total_cents: 18600, status: 'confirmed' })
+    if (date === '2026-11-16') {
+      const pending = orders.get(CALENDAR_PENDING_ID)?.res
+      const confirmed = pending?.status === 'confirmed'
+      entries.push(confirmed
+        ? { kind: 'delivery_confirmed', order_id: CALENDAR_PENDING_ID, title: 'Lactose-free milk delivery', lines: [calendarLine('Lactose-free milk', 1000, 'L')], total_cents: 156000, status: 'confirmed' }
+        : { kind: 'delivery_pending', order_id: CALENDAR_PENDING_ID, title: 'Lactose-free milk delivery', lines: [calendarLine('Lactose-free milk', 1000, 'L')], total_cents: 156000, status: 'pending_approval', reason: 'Waiting for your OK before the order is sent.' })
+    }
+    if (date === '2026-11-23') entries.push({ kind: 'delivery_confirmed', order_id: 'mock-calendar-1123', title: 'Monday pantry restock', lines: [calendarLine('Unsalted butter', 20, 'ST'), calendarLine('Milk', 12, 'ST')], total_cents: 28300, status: 'confirmed' })
+    if (date === '2026-11-30') entries.push({ kind: 'delivery_confirmed', order_id: 'mock-calendar-1130', title: 'Monday pantry restock', lines: [calendarLine('Whipping cream', 8, 'ST')], total_cents: 34800, status: 'confirmed' })
+    if (date === '2026-11-16' || date === '2026-11-17' || date === '2026-11-18') entries.push({ kind: 'guests_expected', value: 84, simulated: true })
+    if (date === CALENDAR_TODAY) entries.push({ kind: 'guests_expected', value: 84, simulated: true })
+    if (cursor.getUTCDay() === 5) {
+      if (!calendarRecurringSkipped.has(date)) entries.push({ kind: 'recurring_order', weekday: 'fri', lines: [calendarLine('Döner kebab meat', 20, 'kg'), calendarLine('Unsalted butter', 10, 'kg')], source: 'Friday rotisserie standing order', placed: calendarRecurringPlaced.has(date) })
+      if (fridayMenu) entries.push({ kind: 'weekly_menu', name: fridayMenu.name, dishes: fridayMenu.dishes.map((dish) => ({ name: dish.name, has_recipe: Boolean(dish.recipe?.trim()) })), covers: fridayMenu.covers })
+    }
+    const cutoff = date === '2026-11-16' ? { closing_time: '2026-11-15T13:00:00+02:00', passed: false } : undefined
+    days.push({ date, today: date === CALENDAR_TODAY, ...(cutoff ? { cutoff } : {}), entries })
+  }
+  return days
+}
+
 let mockProfile: BuyerProfile = {
   buyer_id: 'lapland-kitchen',
   dietary: [{ tag: 'gluten_free', label: 'Gluten-free kitchen', because: 'You told me during onboarding.' }],
@@ -590,6 +669,52 @@ export const mockApi = {
   async kitchenContext(): Promise<KitchenContext> {
     await wait()
     return structuredClone(MOCK_KITCHEN_CONTEXT)
+  },
+
+  async calendar(from: string, to: string): Promise<CalendarResponse> {
+    await wait()
+    return {
+      days: calendarDays(from, to),
+      legend: { delivery: 'delivery', pending: 'waiting for your OK', recurring: 'recurring order', menu: 'weekly menu', guests: 'guests expected' },
+    }
+  },
+
+  async weeklyMenus(): Promise<WeeklyMenu[]> {
+    await wait()
+    return structuredClone(mockWeeklyMenus)
+  },
+
+  async saveWeeklyMenu(weekday: Weekday, menu: WeeklyMenu): Promise<WeeklyMenu> {
+    await wait()
+    const next = { ...structuredClone(menu), weekday, active: true }
+    mockWeeklyMenus = [...mockWeeklyMenus.filter((item) => item.weekday !== weekday), next]
+    return structuredClone(next)
+  },
+
+  async deleteWeeklyMenu(weekday: Weekday): Promise<void> {
+    await wait()
+    mockWeeklyMenus = mockWeeklyMenus.filter((item) => item.weekday !== weekday)
+  },
+
+  async planWeeklyMenu(weekday: Weekday, date: string): Promise<MenuRun> {
+    await wait()
+    const menu = mockWeeklyMenus.find((item) => item.weekday === weekday) ?? CALENDAR_MENU
+    return mockApi.menu({ menu_text: menu.name, covers: menu.covers ?? 80, requested_date: date })
+  },
+
+  async placeRecurring(weekday: Weekday, date: string): Promise<AskResponse> {
+    await wait()
+    if (weekday !== 'fri') throw new Error('This mock only has a Friday standing order.')
+    calendarRecurringPlaced.add(date)
+    calendarRecurringSkipped.delete(date)
+    return mockApi.ask({ text: '20 kg döner kebab meat for Friday', requested_date: date })
+  },
+
+  async skipRecurring(_weekday: Weekday, date: string): Promise<{ skipped: boolean }> {
+    await wait()
+    calendarRecurringSkipped.add(date)
+    calendarRecurringPlaced.delete(date)
+    return { skipped: true }
   },
 
   // Pretend speech-to-text: the demo's example sentences, in turn.
