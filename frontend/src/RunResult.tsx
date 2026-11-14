@@ -5,6 +5,7 @@ import { errorText, type Tone } from './format'
 import { useCopy, type Copy } from './i18n'
 import type { AgentRun, AlternativeOrder, Line, OrderInput, OrderResponse, Substitute } from './types'
 import './RunResult.css'
+import { Compare } from './Compare'
 
 type Props = {
   run: AgentRun
@@ -59,6 +60,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   const [selected, setSelected] = useState<string | null>(null) // the option card picked (default: the agent's pick)
   const [changing, setChanging] = useState(false) // "Change quantity" open
   const [amount, setAmount] = useState('')
+  const [comparing, setComparing] = useState(false) // the compare view is open
   const heading = useRef<HTMLHeadingElement>(null)
   const [reasonsRef, reasonsSeen] = useSeen<HTMLParagraphElement>()
   const c = useCopy()
@@ -208,7 +210,8 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
       held?.line_total_cents != null && l !== held && l.line_total_cents != null && l.line_total_cents < held.line_total_cents && t.tagCheaper,
       l.facts?.origin?.toUpperCase() === 'FI' && t.tagLocal,
     ].filter((x): x is string => !!x)
-  function approveSelected() {
+  function approveSelected(target: Line | null = sel) {
+    const sel = target
     if (!sel) return
     if (awaitingApproval && sel === held) return decide('approve')
     if (awaitingApproval) {
@@ -230,6 +233,24 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
     onAskFor(`${n} ${asked?.unit ?? ''} ${query ?? productName(held)}`.replace(/\s+/g, ' ').trim())
   }
   const decline = awaitingApproval ? () => decide('reject') : onRetry
+
+  // Compare: the agent's pick and the deliverable alternatives (up to 4). Choosing works while something can still
+  // be chosen: the held order or best guess (as Approve selected does), or after a refusal or rejection.
+  const comparable = [...chosen.filter(orderable), ...others.filter(orderable)].slice(0, 4)
+  const chooseFromCompare = held
+    ? (l: Line) => {
+        setSelected(l.product.id)
+        void approveSelected(l)
+      }
+    : canChoose
+      ? (l: Line) => place([lineOrder(l)], l.product.id)
+      : null
+  const compareTags = (l: Line) =>
+    [
+      l.chosen && t.tagBest,
+      chosen[0]?.line_total_cents != null && !l.chosen && l.line_total_cents != null && l.line_total_cents < chosen[0].line_total_cents && t.tagCheaper,
+      l.facts?.origin?.toUpperCase() === 'FI' && t.tagLocal,
+    ].filter((x): x is string => !!x)
   const query = run.request.items.length === 1 ? run.request.items[0].query : null
 
   return (
@@ -425,6 +446,14 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
             </div>
           )}
 
+          {comparable.length >= 2 && (
+            <div>
+              <button type="button" className="btn plain accent-text" aria-expanded={comparing} onClick={() => setComparing((v) => !v)}>
+                {t.compare(comparable.length)}
+              </button>
+            </div>
+          )}
+
           {changing && held && onAskFor && (
             <form className="dc-qty" onSubmit={changeQuantity}>
               <label htmlFor={`qty-${run.audit_id}`}>{t.newAmount}</label>
@@ -458,6 +487,17 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
         </div>
       </section>
 
+      {comparing && comparable.length >= 2 && (
+        <Compare
+          lines={comparable}
+          tags={compareTags}
+          onChoose={chooseFromCompare}
+          chooseLabel={(l) => (awaitingApproval && l === held ? t.approveThis : t.choose)}
+          busy={busy !== null}
+          placing={placing}
+          onClose={() => setComparing(false)}
+        />
+      )}
       {after}
       {split && <SplitRows alt={split} />}
       {subs.length > 0 && (

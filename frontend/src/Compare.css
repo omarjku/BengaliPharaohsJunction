@@ -1,0 +1,24 @@
+/* Compare options: one card per option; rows line up across cards (subgrid). Side by side when they fit, swipeable
+   (scroll-snap) when they don't, e.g. on a phone. Shared tokens only. */
+.cmp { margin-block-start: var(--s6); display: grid; gap: var(--s3); }
+.cmp-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); }
+.cmp-grid {
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(min(14rem, 82%), 1fr);
+  grid-template-rows: repeat(var(--cmp-rows), auto); column-gap: var(--s3);
+  overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; padding-block-end: var(--s2);
+}
+.cmp-card {
+  grid-row: span var(--cmp-rows); display: grid; grid-template-rows: subgrid; scroll-snap-align: start;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: var(--s3) var(--s4);
+}
+.cmp-card-head { display: grid; gap: var(--s1); align-content: start; padding-block-end: var(--s2); border-block-end: 1px solid var(--line); }
+.cmp-name { font-weight: 600; }
+.cmp-tags { display: flex; flex-wrap: wrap; gap: var(--s1); }
+.cmp-tag { font: var(--t-tiny); font-weight: 600; padding: 1px var(--s2); border-radius: 999px; background: var(--wash); color: var(--ink-2); }
+.cmp-row { margin: 0; padding-block: var(--s2); border-block-end: 1px solid var(--line); display: grid; gap: 2px; align-content: start; }
+.cmp-row dt { font: var(--t-tiny); color: var(--ink-3); }
+.cmp-row dd { margin: 0; font: var(--t-small); }
+.cmp-row.best dd { font-weight: 600; color: var(--good); }
+.cmp-missing { color: var(--ink-3); font-style: italic; }
+.cmp-choose { padding-block-start: var(--s2); }
+.cmp-choose .btn { width: 100%; }
