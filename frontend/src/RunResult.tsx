@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { decideOrder, getKeys, MOCK } from './api'
+import { decideOrder, getKeys, MOCK, placeOrder } from './api'
 import { errorText, flagLabel, formatCents, formatDateTime, formatDay, formatEuro, outcomeView, resultView } from './format'
-import type { AgentRun, Line, OrderResponse } from './types'
+import type { AgentRun, AlternativeOrder, Line, OrderResponse, Substitute } from './types'
 
 type Props = {
   run: AgentRun
+  requestedDate: string // the delivery date the run was for; a split order is placed for the same date
   onAction: () => void // an approve/reject finished (refresh the audit log)
   onBusy: (busy: boolean) => void
   onAnnounce: (headline: string) => void
@@ -74,6 +75,7 @@ function LineItem({ line }: { line: Line }) {
       <p className="line-name">
         <strong>{p.name_en ?? p.name_fi ?? p.id}</strong> <span className="muted">#{p.id}</span>
       </p>
+      <Confidence value={line.confidence ?? null} reason={line.confidence_reason ?? null} />
       <p>{line.why}</p>
       <dl>
         <dt>Quantity</dt>
@@ -114,6 +116,24 @@ function LineItem({ line }: { line: Line }) {
             <dd>{q.available_amount.toLocaleString('en-US')}</dd>
           </>
         )}
+        {line.facts?.delivery_reliability != null && (
+          <>
+            <dt>On time</dt>
+            <dd>{percent(line.facts.delivery_reliability)}</dd>
+          </>
+        )}
+        {line.facts?.carbon_kg_per_kg != null && (
+          <>
+            <dt>CO₂</dt>
+            <dd>{line.facts.carbon_kg_per_kg.toLocaleString('en-US')} kg CO₂e per kg</dd>
+          </>
+        )}
+        {line.facts?.origin && (
+          <>
+            <dt>Origin</dt>
+            <dd>{originLabel(line.facts.origin)}</dd>
+          </>
+        )}
       </dl>
       {((q?.flags.length ?? 0) > 0 || quantity?.needs_confirmation) && (
         <ul className="warnings">
@@ -127,8 +147,93 @@ function LineItem({ line }: { line: Line }) {
   )
 }
 
-function DecisionCard({ run, onAction, onBusy, onAnnounce }: Omit<Props, 'run'> & { run: AgentRun }) {
-  const [busy, setBusy] = useState<'approve' | 'reject' | null>(null)
+const percent = (x: number) => `${Math.round(x * 100)} %`
+const originLabel = (o: string) => (o.toLowerCase() === 'fi' ? '🇫🇮 Finland' : o.toUpperCase())
+
+// Gemini Decisions API: how sure it is that this product is what the buyer asked for. Tap/hover for the reason.
+function Confidence({ value, reason }: { value: number | null; reason: string | null }) {
+  if (value === null) return null
+  const low = value < 0.8
+  const label = (
+    <>
+      Gemini confidence {value.toFixed(2)}
+      {low && <> · Gemini isn’t sure this is what you asked for</>}
+    </>
+  )
+  if (!reason) return <p className={`confidence${low ? ' low' : ''}`}>{label}</p>
+  return (
+    <details className={`confidence${low ? ' low' : ''}`}>
+      <summary title={reason}>{label}</summary>
+      <p>{reason}</p>
+    </details>
+  )
+}
+
+const TIER_LABEL: Record<string, string> = { best: 'Best', better: 'Better', good: 'Good' }
+
+// Up to 3 allergen-safe substitutes per refused line, best first (the backend's order is kept).
+function Substitutes({ subs, nameOf }: { subs: Substitute[]; nameOf: (id: string) => string }) {
+  const groups = [...new Set(subs.map((s) => s.replaces))]
+  return (
+    <>
+      {groups.map((id) => (
+        <div key={id} className="subs">
+          <h3>Instead of {nameOf(id)}</h3>
+          <ul>
+            {subs
+              .filter((s) => s.replaces === id)
+              .map((s) => (
+                <li key={s.product_id}>
+                  <p>
+                    <span className={`badge tier-${s.tier}`}>{TIER_LABEL[s.tier] ?? s.tier}</span> <strong>{s.name}</strong>{' '}
+                    <span className="muted">#{s.product_id}</span>
+                  </p>
+                  <p>{s.why_safe}</p>
+                  <p className="muted">
+                    {s.unit_price_cents !== null ? `${formatCents(s.unit_price_cents)} / ${s.unit ?? 'unit'}` : 'price unknown'}
+                    {' · '}
+                    {s.reliability !== null ? `on time ${percent(s.reliability)}` : 'no delivery record'}
+                    {' · '}
+                    {s.available !== null ? `${s.available.toLocaleString('en-US')} available` : 'stock unknown'}
+                    {s.origin && <> · {originLabel(s.origin)}</>}
+                  </p>
+                </li>
+              ))}
+          </ul>
+        </div>
+      ))}
+    </>
+  )
+}
+
+function SplitProposal({ alt, busy, onUse }: { alt: AlternativeOrder; busy: boolean; onUse: () => void }) {
+  return (
+    <div className="subs">
+      <h3>Split order proposal</h3>
+      <p>{alt.summary}</p>
+      <ul>
+        {alt.lines.map((l) => (
+          <li key={l.product_id}>
+            {l.quantity?.toLocaleString('en-US')} × {l.unit ?? 'units'} {l.name}
+            {l.line_total_cents !== null && <span className="muted"> · {formatCents(l.line_total_cents)}</span>}
+            {l.replaces && <span className="muted"> · substitute</span>}
+          </li>
+        ))}
+      </ul>
+      <p>
+        Total <strong>{formatCents(alt.total_cents)}</strong> <span className="muted">(net of VAT)</span>
+      </p>
+      <div className="actions">
+        <button type="button" onClick={onUse} disabled={busy}>
+          {busy ? 'Placing…' : 'Use this order'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function DecisionCard({ run, requestedDate, onAction, onBusy, onAnnounce }: Props) {
+  const [busy, setBusy] = useState<'approve' | 'reject' | 'place' | null>(null)
   const [result, setResult] = useState<OrderResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
@@ -144,13 +249,20 @@ function DecisionCard({ run, onAction, onBusy, onAnnounce }: Omit<Props, 'run'> 
     heading.current?.focus()
   }, [title, result, onAnnounce])
 
-  async function act(action: 'approve' | 'reject') {
-    if (!order?.order_id) return
+  async function act(action: 'approve' | 'reject' | 'place') {
+    if (action !== 'place' && !order?.order_id) return
     setBusy(action)
     onBusy(true)
     setError(null)
     try {
-      setResult(await decideOrder(order.order_id, action))
+      setResult(
+        action === 'place'
+          ? await placeOrder({
+              requested_date: requestedDate,
+              lines: (order?.alternative_order?.lines ?? []).map((l) => ({ product_id: l.product_id, quantity: l.quantity ?? 0 })),
+            })
+          : await decideOrder(order!.order_id!, action),
+      )
       onAction()
     } catch (err) {
       setError(errorText(err))
@@ -161,12 +273,18 @@ function DecisionCard({ run, onAction, onBusy, onAnnounce }: Omit<Props, 'run'> 
   }
 
   const canDecide = MOCK || Boolean(getKeys().approverKey)
+  const subs = order?.substitutes ?? []
+  const nameOf = (id: string) =>
+    order?.lines.find((l) => l.product_id === id)?.name ??
+    run.lines.find((l) => l.product.id === id)?.product.name_en ??
+    id
 
   return (
     <div className={`card decision ${tone}`}>
       <h2 ref={heading} tabIndex={-1}>
         {title}
       </h2>
+      {run.decision.confidence != null && <p className="muted">Gemini confidence {run.decision.confidence.toFixed(2)}</p>}
       {order?.order_id && (tone === 'good' || awaitingApproval) && (
         <p>
           Order <code>{order.order_id}</code>
@@ -186,7 +304,11 @@ function DecisionCard({ run, onAction, onBusy, onAnnounce }: Omit<Props, 'run'> 
           </ul>
         </>
       )}
-      {decision.alternatives.length > 0 && (
+      {subs.length > 0 && <Substitutes subs={subs} nameOf={nameOf} />}
+      {order?.alternative_order && (
+        <SplitProposal alt={order.alternative_order} busy={busy === 'place'} onUse={() => act('place')} />
+      )}
+      {subs.length === 0 && decision.alternatives.length > 0 && (
         <>
           <h3>Alternatives</h3>
           <ul>
