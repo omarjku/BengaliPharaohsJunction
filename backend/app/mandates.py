@@ -12,6 +12,8 @@ from pathlib import Path
 from trade_contracts import HardRule, Mandate, Preference
 from trade_contracts.common import PreferenceScope, RuleKind
 
+from . import config
+
 _MANDATES = {m.buyer_id: m for m in [
     # Demo persona: a restaurant kitchen in Lapland. Money is net-of-VAT cents.
     Mandate(
@@ -34,7 +36,7 @@ _MANDATES = {m.buyer_id: m for m in [
 ]}
 
 
-STORE = Path(__file__).resolve().parents[2] / "data" / "mandates.json"
+STORE = config.DATA_DIR / "mandates.json"  # all front-door state lives under DATA_DIR
 _lock = threading.Lock()
 
 

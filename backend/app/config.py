@@ -25,3 +25,6 @@ FRONT_DOOR_SIGNING_KEY = os.getenv("FRONT_DOOR_SIGNING_KEY", "")
 # Where the front door keeps its state (orders, audit trail, idempotency keys; stored mandates once they leave the
 # code). Default: the repo's data/. Point it at a mounted persistent disk (e.g. Render's /var/data) to keep state.
 DATA_DIR = Path(os.getenv("DATA_DIR") or Path(__file__).resolve().parents[2] / "data")
+# Set to 1 only behind a proxy that appends the client address to X-Forwarded-For (Render does): the rate limiter
+# then uses that last hop as the caller's IP. Unset: the TCP peer address (a direct caller can't spoof it).
+TRUST_X_FORWARDED_FOR = os.getenv("TRUST_X_FORWARDED_FOR", "").lower() in ("1", "true", "yes")
