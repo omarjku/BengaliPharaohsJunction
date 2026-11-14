@@ -1,0 +1,339 @@
+{
+ "summary": {
+  "cases": 30,
+  "answered": 30,
+  "accuracy_at_0.5": 0.9333333333333333,
+  "auto": [
+   {
+    "threshold": 0.6,
+    "auto": 13,
+    "false_auto": 0,
+    "precision": 1.0,
+    "recall": 0.8666666666666667
+   },
+   {
+    "threshold": 0.7,
+    "auto": 11,
+    "false_auto": 0,
+    "precision": 1.0,
+    "recall": 0.7333333333333333
+   },
+   {
+    "threshold": 0.8,
+    "auto": 11,
+    "false_auto": 0,
+    "precision": 1.0,
+    "recall": 0.7333333333333333
+   },
+   {
+    "threshold": 0.9,
+    "auto": 8,
+    "false_auto": 0,
+    "precision": 1.0,
+    "recall": 0.5333333333333333
+   }
+  ]
+ },
+ "rows": [
+  {
+   "request": "1000 L lactose-free milk",
+   "product_id": "464073",
+   "product": "Valio whole milk 1 l lactose free UHT",
+   "kind": "meets",
+   "correct": true,
+   "label_why": "lactose-free whole milk",
+   "p_yes": 0.9534489241650826,
+   "judge": "Gemini Decisions: 0.96 that the product matches the request, 0.95 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+  },
+  {
+   "request": "200 L whole milk",
+   "product_id": "463810",
+   "product": "Valio Luomu™ whole milk 1 l organic",
+   "kind": "meets",
+   "correct": true,
+   "label_why": "organic whole milk",
+   "p_yes": 0.8994688787694136,
+   "judge": "Gemini Decisions: 0.89 that the product matches the request (weakest: the product matches the request)."
+  },
+  {
+   "request": "20 L whipping cream",
+   "product_id": "464194",
+   "product": "Valio whipping cream 1 l UHT lactose free",
+   "kind": "meets",
+   "correct": true,
+   "label_why": "whipping cream 1 l",
+   "p_yes": 0.9595049392211747,
+   "judge": "Gemini Decisions: 0.96 that the product matches the request, 0.95 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+  },
+  {
+   "request": "5 kg unsalted butter",
+   "product_id": "464411",
+   "product": "Valio butter 500 g unsalted",
+   "kind": "meets",
+   "correct": true,
+   "label_why": "unsalted butter 500 g",
+   "p_yes": 0.9653181411229687,
+   "judge": "Gemini Decisions: 0.96 that the product matches the request, 0.96 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+  },
+  {
+   "request": "6 kg cream cheese for a cheesecake",
+   "product_id": "462876",
+   "product": "Philadelphia Original cream cheese 1,65 kg",
+   "kind": "meets",
+   "correct": true,
+   "label_why": "Philadelphia original cream cheese",
+   "p_yes": 0.8605160667593249,
+   "judge": "Gemini Decisions: 0.96 that the product matches the request, 0.86 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+  },
+  {
+   "request": "10 kg caster sugar",
+   "product_id": "460325",
+   "product": "Dansukker Caster Sugar 1kg",
+   "kind": "meets",
+   "correct": true,
+   "label_why": "caster sugar 1 kg",
+   "p_yes": 0.9633328475963953,
+   "judge": "Gemini Decisions: 0.97 that the product matches the request, 0.96 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+  },
+  {
+   "request": "12 kg reindeer meat for sautéed reindeer",
+   "product_id": "462959",
+   "product": "Rönkä Reindeer top loin frozen",
+   "kind": "meets",
+   "correct": true,
+   "label_why": "reindeer top loin",
+   "p_yes": 0.30282614080941567,
+   "judge": "Gemini Decisions: 0.30 that the product matches the request, 0.96 that the quantity is what the chef meant (weakest: the product matches the request)."
+  },
+  {
+   "request": "10 kg salmon fillet",
+   "product_id": "461885",
+   "product": "Kalavapriikki salmon fillet B, ASC, apx. 10 kg",
+   "kind": "meets",
+   "correct": true,
+   "label_why": "salmon fillet ~10 kg",
+   "p_yes": 0.8092793906418131,
+   "judge": "Gemini Decisions: 0.96 that the product matches the request, 0.80 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+  },
+  {
+   "request": "6 kg lingonberry jam",
+   "product_id": "460748",
+   "product": "Saarioinen Lingonberry jam 6kg",
+   "kind": "meets",
+   "correct": true,
+   "label_why": "lingonberry jam 6 kg",
+   "p_yes": 0.9554843512334681,
+   "judge": "Gemini Decisions: 0.95 that the product matches the request, 0.95 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+  },
+  {
+   "request": "20 L oat drink for vegan guests",
+   "product_id": "460825",
+   "product": "Oatly Oat Drink Organic 1L",
+   "kind": "meets",
+   "correct": true,
+   "label_why": "Oatly organic oat drink, vegan",
+   "p_yes": 0.9405000451897639,
+   "judge": "Gemini Decisions: 0.94 that the product matches the request, 0.96 that the quantity is what the chef meant (weakest: the product matches the request)."
+  },
+  {
+   "request": "5 L lactose-free coffee milk",
+   "product_id": "464237",
+   "product": "Valio coffee milk 1 l lactose free UHT",
+   "kind": "meets",
+   "correct": true,
+   "label_why": "lactose-free coffee milk 1 l",
+   "p_yes": 0.9573545618984192,
+   "judge": "Gemini Decisions: 0.98 that the product matches the request, 0.95 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+  },
+  {
+   "request": "3 kg lactose-free cream cheese",
+   "product_id": "463200",
+   "product": "Valio Viola® 3,5 kg natural cream cheese lactose free",
+   "kind": "meets",
+   "correct": true,
+   "label_why": "Valio Viola lactose free 3.5 kg",
+   "p_yes": 0.6410571375295456,
+   "judge": "Gemini Decisions: 0.96 that the product matches the request, 0.64 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+  },
+  {
+   "request": "1000 L lactose-free milk",
+   "product_id": "460448",
+   "product": "Valio Play® milk chocolate drink 1 l lactose free",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "chocolate milk drink, not milk",
+   "p_yes": 0.06482722025972923,
+   "judge": "Gemini Decisions: 0.06 that the product matches the request (weakest: the product matches the request)."
+  },
+  {
+   "request": "200 L whole milk",
+   "product_id": "462921",
+   "product": "Valio Eila®  Luomu™ semi skimmed milk drink 1 l lactose free, organic",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "semi-skimmed milk drink, not whole milk",
+   "p_yes": 0.025513412039078906,
+   "judge": "Gemini Decisions: 0.02 that the product matches the request (weakest: the product matches the request)."
+  },
+  {
+   "request": "10 kg sugar for baking",
+   "product_id": "465354",
+   "product": "Segafredo brown sugar 500x5g",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "500 x 5 g brown sugar sachets, not bulk baking sugar",
+   "p_yes": 0.5157571021129735,
+   "judge": "Gemini Decisions: 0.51 that the product matches the request, 0.80 that the quantity is what the chef meant (weakest: the product matches the request)."
+  },
+  {
+   "request": "20 L dairy-free milk for a guest with a milk allergy",
+   "product_id": "464073",
+   "product": "Valio whole milk 1 l lactose free UHT",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "lactose-free milk still contains milk protein",
+   "p_yes": 0.01,
+   "judge": "Gemini Decisions: 0.01 that the product matches the request, 0.78 that the quantity is what the chef meant (weakest: the product matches the request)."
+  },
+  {
+   "request": "5 kg unsalted butter",
+   "product_id": "463437",
+   "product": "Valio Eila® butter 500 g salted lactose free",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "salted butter",
+   "p_yes": 0.031323005578282694,
+   "judge": "Gemini Decisions: 0.03 that the product matches the request, 0.66 that the quantity is what the chef meant (weakest: the product matches the request)."
+  },
+  {
+   "request": "5 kg butter",
+   "product_id": "464315",
+   "product": "PCD 500G PEANUT BUTTER",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "peanut butter",
+   "p_yes": 0.020180715974790858,
+   "judge": "Gemini Decisions: 0.02 that the product matches the request (weakest: the product matches the request)."
+  },
+  {
+   "request": "10 L cream",
+   "product_id": "461050",
+   "product": "GelatoLAB-Espoo 5L ice cream Whisky Cream",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "whisky-cream ice cream",
+   "p_yes": 0.11627092314585127,
+   "judge": "Gemini Decisions: 0.28 that the product matches the request, 0.11 that the quantity is what the chef meant (weakest: the quantity is what the chef meant)."
+  },
+  {
+   "request": "12 kg reindeer meat for a stew",
+   "product_id": "462253",
+   "product": "3 x Saarioinen Sautéed reindeer with mashed potatoes and lingonberry jam 350g",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "ready meal with reindeer",
+   "p_yes": 0.01,
+   "judge": "Gemini Decisions: 0.01 that the product matches the request (weakest: the product matches the request)."
+  },
+  {
+   "request": "10 kg salmon fillet",
+   "product_id": "460608",
+   "product": "4 x Saarioinen Salmon and potato casserole 300g",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "salmon-potato casserole",
+   "p_yes": 0.010777507325750984,
+   "judge": "Gemini Decisions: 0.01 that the product matches the request (weakest: the product matches the request)."
+  },
+  {
+   "request": "gluten-free bread for 40 guests",
+   "product_id": "461578",
+   "product": "Vaasan Rye bread 45x85g",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "rye bread contains gluten",
+   "p_yes": 0.01,
+   "judge": "Gemini Decisions: 0.01 that the product matches the request (weakest: the product matches the request)."
+  },
+  {
+   "request": "3 kg lactose-free cream cheese",
+   "product_id": "462876",
+   "product": "Philadelphia Original cream cheese 1,65 kg",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "regular cream cheese, not lactose-free",
+   "p_yes": 0.01757043554834528,
+   "judge": "Gemini Decisions: 0.01 that the product matches the request, 0.42 that the quantity is what the chef meant (weakest: the product matches the request)."
+  },
+  {
+   "request": "10 L unsweetened oat drink for cooking",
+   "product_id": "464226",
+   "product": "18x Oatly Oat Drink Chocolate 2,5dl",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "chocolate oat drink in 2.5 dl packs",
+   "p_yes": 0.024090608794169615,
+   "judge": "Gemini Decisions: 0.02 that the product matches the request (weakest: the product matches the request)."
+  },
+  {
+   "request": "5 L coffee milk",
+   "product_id": "465761",
+   "product": "10 x Starbucks Skinny Latte no added sugar lactose free coffee milk drink 220 ml",
+   "kind": "meets",
+   "correct": false,
+   "label_why": "Starbucks skinny latte drink",
+   "p_yes": 0.0979510419320061,
+   "judge": "Gemini Decisions: 0.09 that the product matches the request (weakest: the product matches the request)."
+  },
+  {
+   "request": "1000 L lactose-free milk",
+   "product_id": "462921",
+   "product": "Valio Eila®  Luomu™ semi skimmed milk drink 1 l lactose free, organic",
+   "kind": "sub",
+   "correct": true,
+   "label_why": "lactose-free milk drink: fine for a lactose-free need",
+   "p_yes": 0.9212658740083873,
+   "judge": "Gemini Decisions: 0.92 that the substitute is acceptable (weakest: the substitute is acceptable)."
+  },
+  {
+   "request": "20 L whipping cream",
+   "product_id": "463366",
+   "product": "Valio whipping cream 38 % 10 l UHT lactose free",
+   "kind": "sub",
+   "correct": true,
+   "label_why": "38 % whipping cream 10 l",
+   "p_yes": 0.55925706624495,
+   "judge": "Gemini Decisions: 0.55 that the substitute is acceptable (weakest: the substitute is acceptable)."
+  },
+  {
+   "request": "20 L dairy-free milk for a guest with a milk allergy",
+   "product_id": "460825",
+   "product": "Oatly Oat Drink Organic 1L",
+   "kind": "sub",
+   "correct": true,
+   "label_why": "oat drink is milk-free",
+   "p_yes": 0.6030698724316755,
+   "judge": "Gemini Decisions: 0.60 that the substitute is acceptable (weakest: the substitute is acceptable)."
+  },
+  {
+   "request": "100 L lactose-free whole milk",
+   "product_id": "463810",
+   "product": "Valio Luomu™ whole milk 1 l organic",
+   "kind": "sub",
+   "correct": false,
+   "label_why": "regular whole milk is not lactose-free",
+   "p_yes": 0.01741864718872617,
+   "judge": "Gemini Decisions: 0.01 that the substitute is acceptable (weakest: the substitute is acceptable)."
+  },
+  {
+   "request": "10 kg caster sugar",
+   "product_id": "460270",
+   "product": "Dansukker Finnish Jam Sugar 1kg",
+   "kind": "sub",
+   "correct": false,
+   "label_why": "jam sugar contains pectin",
+   "p_yes": 0.045067248422792194,
+   "judge": "Gemini Decisions: 0.04 that the substitute is acceptable (weakest: the substitute is acceptable)."
+  }
+ ]
+}
