@@ -43,6 +43,38 @@ _MENU_SCHEMA = {"type": "object", "required": ["dishes"], "properties": {"dishes
                            "dietary": {"type": "array", "items": {"type": "string", "enum": list(agent.DIETARY)}}}}}}}}}}
 
 
+def dish_tags(menu_text: str, dish: str) -> list[str]:
+    """Dietary words written in the dish's own line of the menu (lines split on ; . and newlines, not 'and': dish
+    names contain it). Deterministic, so a parse that drops 'lactose-free' can't make it disappear."""
+    words = re.findall(r"[\wäöå]+", dish.lower())
+    return list(dict.fromkeys(tag for line in re.split(r"[;\n]|\.\s", menu_text) if agent._words_in(words, line)
+                              for word, tag in agent._WORDS.items() if word in line.lower()))
+
+
+def apply_dietary(menu_text: str, dishes: list[dict]) -> list[Reason]:
+    """Security guard (sibling of the request flow's): stated dietary needs are enforced or asked, never dropped.
+    Allergen exclusions ('nut-free') go on every ingredient of that dish; a claim ('lactose-free') that no ingredient
+    of the dish carries is asked (putting it on the potatoes would just find nothing)."""
+    problems, owned = [], set()
+    for d in dishes:
+        tags = dish_tags(menu_text, d["name"])
+        owned |= set(tags)
+        for t in (t for t in tags if agent.DIETARY[t][1]):  # allergen exclusions: enforce on every ingredient
+            for ing in d["ingredients"]:
+                ing["dietary"] = list(dict.fromkeys(list(ing.get("dietary") or []) + [t]))
+        for t in (t for t in tags if agent.DIETARY[t][0]):  # claims: some ingredient must carry it
+            if not any(t in (ing.get("dietary") or []) for ing in d["ingredients"]):
+                problems.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The menu says {t.replace('_', '-')} for "
+                                        f"{d['name']}, but no ingredient in the cart carries that need.", None,
+                                        "Check which ingredients must be " + t.replace("_", "-") + "."))
+    lost = sorted({tag for word, tag in agent._WORDS.items() if word in menu_text.lower()} - owned)
+    if lost:
+        problems.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The menu says {', '.join(t.replace('_', '-') for t in lost)}"
+                                " but it isn't clear which dish that applies to.", None,
+                                "Put the dietary word on the dish's own line."))
+    return problems
+
+
 def _key(name: str) -> str:
     """'Potatoes' and 'potato', 'cheeses' and 'cheese' merge; word order doesn't matter."""
     return " ".join(sorted({re.sub(r"(es|s)$", "", w) for w in re.findall(r"[\wäöå]+", name.lower())}))
@@ -89,7 +121,7 @@ async def parse_menu(menu_text: str) -> list[dict] | None:
     out = await agent._gemini(MENU_PROMPT, agent._wrap(menu_text), _MENU_SCHEMA)
     if not out or not isinstance(out.get("dishes"), list):
         return None
-    return [{"name": str(d.get("name") or "").strip(), "ingredients": [i for i in d.get("ingredients") or []
+    return [{"name": str(d.get("name") or "").strip(), "ingredients": [dict(i) for i in d.get("ingredients") or []
                                                                          if isinstance(i, dict)]}
             for d in out["dishes"] if isinstance(d, dict) and str(d.get("name") or "").strip()]
 
@@ -123,6 +155,7 @@ async def propose(menu_text: str, covers: int, requested: date, buyer_id: str) -
         else:
             reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The dish '{d['name']}' isn't on the menu you sent; its "
                                    "ingredients were left out.", None, "Check the menu text."))
+    reasons += apply_dietary(menu_text, kept)
     ingredients, assumptions, problems = scale(kept, covers)
     reasons += problems
     if len(ingredients) > MAX_INGREDIENTS:

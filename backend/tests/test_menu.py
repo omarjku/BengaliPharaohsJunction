@@ -120,3 +120,18 @@ def test_scale_merges_plurals_and_units():
     ], 3)
     assert [(i["query"], i["amount"], i["unit"], i["dishes"]) for i in ings] == [("Potatoes", 0.9, "kg", ["A", "B"])]
     assert len(assumptions) == 2 and problems == []
+
+
+def test_menu_dietary_words_are_enforced_or_asked(shop1, monkeypatch):
+    """Security review: a parse that drops the menu's dietary words must not drop the constraint."""
+    cake = {"name": "Cheesecake", "ingredients": [
+        {"name": "milk", "per_cover": 0.1, "unit": "L", "assumption": "x", "dietary": []},
+        {"name": "sugar", "per_cover": 20, "unit": "g", "assumption": "x", "dietary": []}]}
+    fake_gemini(monkeypatch, [cake])
+    body = post("Nut-free, lactose-free cheesecake").json()
+    msgs = " ".join(r["message"] for r in body["decision"]["reasons"])
+    assert "lactose-free for Cheesecake, but no ingredient" in msgs  # claim nobody carries → ask
+    assert all(i["exclude_allergens"] == ["AN", "AP"] for i in body["ingredients"])  # exclusion → every ingredient
+    fake_gemini(monkeypatch, [PORRIDGE])
+    body = post("Porridge with milk; everything vegan").json()  # a word no dish line owns
+    assert any("isn't clear which dish" in r["message"] for r in body["decision"]["reasons"])
