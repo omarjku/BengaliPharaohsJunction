@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { ApiError, askAgentStream, DROPPED, getAdminKey, getHealth, getKeys, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
+import { ApiError, askAgentStream, PHOTO_READY, TALK_READY, DROPPED, getAdminKey, getHealth, getKeys, setAdminKey, getOrder, MOCK, setKeys, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
 import { buyerLabel, errorText, nextMonday } from './format'
 import { groupHistory } from './history'
@@ -13,6 +13,8 @@ import { ValioView } from './Valio'
 import { languageOf, useReadBack, useVoice, voiceSupported } from './useVoice'
 import { usePhaseLine } from './usePhaseLine'
 import { MicButton, VoiceStatus } from './Voice'
+import { PhotoButton } from './PhotoButton'
+import { Talk } from './Talk'
 
 type View = 'order' | 'rules' | 'history' | 'valio'
 
@@ -95,6 +97,38 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   const phaseLine = usePhaseLine(400)
   const refreshAudit = () => setAuditKey((k) => k + 1)
   const offline = useBackendDown()
+  // Talk and the photo button: on by default, hidden when the backend's health says it can't do them.
+  const [caps, setCaps] = useState({ talk: TALK_READY, photo: PHOTO_READY })
+  useEffect(() => {
+    let cancelled = false
+    getHealth().then(
+      (h) => !cancelled && setCaps({ talk: TALK_READY && h.talk !== false, photo: PHOTO_READY && h.vision !== false }),
+      () => {},
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  const [talk, setTalk] = useState<{ ctx: AudioContext; mic: Promise<MediaStream> } | null>(null)
+  // Started inside the tap: iOS only lets audio play and the mic open from a user gesture.
+  function openTalk() {
+    const ctx = new AudioContext()
+    void ctx.resume()
+    const mic = navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+    mic.catch(() => {}) // Talk shows the error
+    setTalk({ ctx, mic })
+  }
+  const talkResult = (r: AskResponse) =>
+    r.question ? (
+      <section className="answer" aria-label={u.question.status}>
+        <p className="status neutral">{u.question.status}</p>
+        <h2 className="answer-text">{c.question(r.question, r.decision?.reasons[0])}</h2>
+      </section>
+    ) : r.intent === 'menu' && 'lines' in r ? (
+      <MenuResult key={r.audit_id} plan={r} covers={r.covers ?? null} requestedDate={r.requested_date ?? date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} />
+    ) : 'lines' in r ? (
+      <RunResult key={r.audit_id} run={r} requestedDate={r.requested_date ?? date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} />
+    ) : null
   const onEntries = useCallback((e: AuditEntry[]) => setEntries(e), [])
 
   const needsSetup = !MOCK && (!savedKeys.agentKey || !savedKeys.approverKey)
@@ -284,6 +318,19 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         <AdminKeyForm onSaved={adminSaved} onCancel={() => adminDialog.current?.close()} />
       </dialog>
 
+      {talk && (
+        <Talk
+          ctx={talk.ctx}
+          mic={talk.mic}
+          onEnd={() => {
+            void talk.mic.then((s) => s.getTracks().forEach((tr) => tr.stop()), () => {})
+            void talk.ctx.close()
+            setTalk(null)
+          }}
+          renderResult={talkResult}
+        />
+      )}
+
       <p className="sr-only" aria-live="polite">
         {announce}
       </p>
@@ -347,6 +394,26 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                 <p className="sr-only" id="text-help">
                   {u.ask.help(c.EXAMPLES)}
                 </p>
+                {(caps.photo || (caps.talk && voiceSupported())) && (
+                  <div className="ask-tools">
+                    {caps.talk && voiceSupported() && (
+                      <button type="button" className="link talk-btn" onClick={openTalk} disabled={running}>
+                        <span className="talk-dot" aria-hidden="true" />
+                        {u.talk.open}
+                      </button>
+                    )}
+                    {caps.photo && (
+                      <PhotoButton
+                        disabled={running || deciding}
+                        onRead={(words) => {
+                          setText(words)
+                          setByVoice(false)
+                          void ask(words)
+                        }}
+                      />
+                    )}
+                  </div>
+                )}
                 <div className="ask-row">
                   <label className="date-pick">
                     {u.ask.delivery} <strong className="num">{c.day(date)}</strong>
