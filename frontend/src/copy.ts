@@ -510,6 +510,10 @@ export const UI = {
       sent: 'Sent to Valio', needed: 'Needed your OK',
     },
   },
+  kitchen: {
+    signedIn: (name: string) => `Signed in as ${name}`,
+    switch: 'Switch kitchen',
+  },
   conv: {
     field: 'Message the agent',
     placeholder: 'Ask for an order, or paste a menu',

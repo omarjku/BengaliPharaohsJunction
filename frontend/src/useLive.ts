@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { openLive } from './api'
 import { errorText } from './format'
+import { takeLive } from './liveWarm'
 import type { AskResponse, LiveEvent, LiveSocket } from './types'
 
 // The voice conversation (WebSocket /api/live), as a hook: the conversation screen shows its words in the thread and
@@ -144,7 +144,7 @@ export function useLive(
     ;(async () => {
       try {
         if (ctx.state === 'suspended') await ctx.resume()
-        const socket = await openLive({ onEvent, onClose: () => !ended && (h.current.onError(m.current.closed), setState('error')) })
+        const socket = await takeLive({ onEvent, onClose: () => !ended && (h.current.onError(m.current.closed), setState('error')) })
         if (ended) return socket.close() // stopped while connecting
         socketRef.current = socket
         const stream = await mic

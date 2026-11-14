@@ -17,9 +17,12 @@ import { PhotoButton } from './PhotoButton'
 import { Composer } from './Composer'
 import { Onboarding } from './Onboarding'
 import { useOnboarded } from './onboardingApi'
+import { KitchenChip } from './KitchenChip'
+import { onboardingSkippedFor, skipOnboardingFor, useKitchen } from './useKitchen'
 import { Conversation, type VoiceLayout } from './Conversation'
 import { Orb } from './Orb'
 import { useLive } from './useLive'
+import { useLiveWarm } from './liveWarm'
 import { useTalk, useTalkPhotoAvailable } from './useTalk'
 
 type View = 'order' | 'rules' | 'history' | 'valio'
@@ -123,27 +126,22 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   // and Talk never hold the mic at once: starting Talk cancels dictation, and the mic button is gone while Talk is on.
   // First run: Room 2's onboarding (Onboarding.tsx) asks about the kitchen once keys are set; skippable (remembered on
   // this device), and reachable later from the memory panel ("Update my kitchen").
+  // Skipped / done is remembered per KITCHEN (the key's buyer id), not per device: another kitchen on the same phone
+  // (a setup link) still gets asked. Until the kitchen is known it isn't opened (no flicker).
+  const kitchen = useKitchen(savedKeys.agentKey)
   const onboarding = useOnboarded()
-  const [onboardingSkipped, setOnboardingSkipped] = useState(() => {
-    try {
-      return localStorage.getItem('valio-aimo-onboarding-skipped') === '1'
-    } catch {
-      return false
-    }
-  })
+  const [, bumpSkip] = useState(0)
+  const onboardingSkipped = kitchen ? onboardingSkippedFor(kitchen) : true
   const [onboardingAsked, setOnboardingAsked] = useState(false) // opened from the memory panel
   const onboardingOpen = onboardingAsked || (onboarding.onboarded === false && !onboardingSkipped)
   function closeOnboarding() {
     setOnboardingAsked(false)
-    setOnboardingSkipped(true)
-    try {
-      localStorage.setItem('valio-aimo-onboarding-skipped', '1')
-    } catch {
-      // storage blocked: skipped for this page only
-    }
+    if (kitchen) skipOnboardingFor(kitchen)
+    bumpSkip((n) => n + 1)
   }
   const caps = useTalkPhotoAvailable()
   const talk = useTalk()
+  useLiveWarm(caps.talk && !talk.session && view === 'order' && !!savedKeys.agentKey) // HOOK: the idle /api/live socket, ready before the tap
   const orbRef = useRef<HTMLButtonElement>(null)
   const [layout, setLayout] = useState<VoiceLayout>(() => {
     try {
@@ -510,6 +508,8 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
           <>
             <section hidden={view !== 'order'} aria-label={u.nav.order}>
               <h1 className="sr-only">{u.nav.order}</h1>
+              {/* HOOK: which kitchen this device is signed in as (KitchenChip.tsx, useKitchen.ts) */}
+              <KitchenChip kitchen={kitchen} onSwitch={() => keysDialog.current?.showModal()} />
               {onboardingOpen ? (
                 <Onboarding
                   onDone={() => {
