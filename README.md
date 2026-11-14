@@ -99,8 +99,13 @@ guessing. The milk request and chosen alternatives are shown in
 
 ### J3 — Autonomy and controls
 
-`backend/app/mandates.py` defines the demo buyer's rules. `backend/app/gate.py`
-checks hard rules, spend limits, budgets, stock, cut-offs, and prices.
+`backend/app/mandates.py` defines the demo buyer's rules, and `backend/app/gate.py`
+checks them with fresh quotes. Two kinds of rule:
+- **Hard rules refuse** the order: an excluded allergen the product contains, a
+  missing required claim, a unit price over the maximum, a passed cut-off.
+- **Sign-off rules hold it for the chef** (`pending_approval`): the auto-approve
+  limit, the per-line cap and weekly budget, and the delivery-reliability floor
+  (decision D13: a kitchen may knowingly accept a less reliable supplier).
 `backend/app/orders.py` separates automatic orders from pending approval and
 re-checks fresh data at approval. `backend/app/auth.py`, `/api/audit`, and the
 `AuditEntry` contract scope and record the actors, reasons, quotes, and rejected

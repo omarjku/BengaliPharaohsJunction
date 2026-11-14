@@ -266,6 +266,29 @@ stale. A database transaction is the documented next step before scaling.
 Files: `backend/app/main.py`, `backend/app/orders.py`, `dev.sh`,
 `docs/DECISIONS.md`.
 
+### 14. The reliability floor is a sign-off rule, not a hard rule
+
+**Data / behaviour.** Valio's reliability file covers 4,425 of 17,546 products
+(0–1, the share delivered on time). The demo mandate sets
+`MIN_DELIVERY_RELIABILITY` 0.9 because Lapland deliveries are fragile.
+
+**Assumption (decision D13).** Falling below the floor is a question for the
+chef, never a refusal: a kitchen may knowingly accept a less reliable supplier.
+It is a **sign-off rule**, like the auto-approve limit, per-line cap and weekly
+budget. **Hard rules** refuse: an excluded allergen the product contains, a
+missing required claim, a unit price over the maximum, a passed cut-off.
+
+**Code / human path.** `backend/app/gate.py` returns `LOW_RELIABILITY` with
+`ASK_HUMAN` below the floor. With no reliability record it returns
+`DATA_MISSING` under the mandate's uncertainty policy (ask by default). The
+front door holds the order as `pending_approval`. The agent prefers a product
+without that concern, and says so in the chosen line's `why`. The rule is still
+stored in `Mandate.hard_rules`, because the v0.2 contract has nowhere else to
+put it.
+
+Files: `backend/app/mandates.py`, `backend/app/gate.py`, `backend/app/agent.py`,
+`docs/DECISIONS.md`.
+
 ## Open interface and operating model
 
 Valio's mock has no order endpoint. The repository defines the order and human
