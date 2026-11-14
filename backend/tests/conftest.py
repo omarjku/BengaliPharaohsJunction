@@ -95,3 +95,13 @@ def fresh_rate_limits():
     ratelimit._buckets.clear()
     yield
     ratelimit._buckets.clear()
+
+
+def outcome(r) -> dict:
+    """An approve response's body: 200 when it confirmed, else the 409 detail (QA round 2 N3: an approve that
+    didn't approve is never a 200), which carries the same fields plus `error`."""
+    if r.status_code == 200:
+        assert r.json()["status"] == "confirmed"
+        return r.json()
+    assert r.status_code == 409 and r.json()["detail"]["status"] in ("pending_approval", "refused"), r.text
+    return r.json()["detail"]

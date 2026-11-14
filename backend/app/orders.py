@@ -177,7 +177,7 @@ def _response(order_id: str | None, status: str, body: dict, audit_id: str) -> d
     """Every order response carries a signed statement of what the front door decided and the quote facts it used."""
     statement = {"v": 1, "iss": signing.ISSUER, "order_id": order_id, "status": status, "audit_id": audit_id,
                  "total_cents": body["total_cents"], "decision": body["decision"],
-                 "mandate_version": body.get("mandate_version"),
+                 "mandate_version": body.get("mandate_version"), "signed_off_by": body.get("signed_off_by"),
                  "quotes": body.get("quote_facts", []),
                  "lines": [{k: li.get(k) for k in ("product_id", "quantity", "unit", "unit_price_cents", "line_total_cents")}
                            for li in body.get("lines", [])]}
@@ -296,7 +296,14 @@ async def approve(order_id: str, who: Principal, seen_decided_at: datetime | Non
         audit_id = await _audit(f"human:{who.name}:approve", order_id, o["buyer_id"], o["requested_date"],
                                 res.lines, mandate, res, now=now, status=status,
                                 action="approved" if status == "confirmed" else "approval_blocked")
-    return _response(order_id, status, _view(res), audit_id)
+    out = _response(order_id, status, {**_view(res), "signed_off_by": o["signed_off_by"]}, audit_id)
+    if status != "confirmed":  # QA round 2 N3: an approve that didn't approve is never a 200
+        raise HTTPException(409, detail={
+            "error": "Not approved: the re-check changed the decision (new price, stock, rules or budget). Review the "
+                     "new decision below; approve again with its decided_at if it is still right." if status ==
+                     "pending_approval" else "Not approved: the re-check refused the order (see the decision below).",
+            **out})
+    return out
 
 
 async def reject(order_id: str, who: Principal) -> dict:
@@ -313,7 +320,8 @@ async def reject(order_id: str, who: Principal) -> dict:
                                 action="rejected", status="rejected")
     return _response(order_id, "rejected", {"total_cents": o["total_cents"], "lines": o["lines"],
                                             "decision": o["decision"], "rejected_options": [],
-                                            "mandate_version": o.get("mandate_version")}, audit_id)
+                                            "mandate_version": o.get("mandate_version"),
+                                            "signed_off_by": who.name}, audit_id)
 
 
 def _buyer(r: dict) -> str | None:

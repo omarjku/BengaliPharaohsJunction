@@ -5,7 +5,7 @@ import json
 
 import httpx
 import pytest
-from conftest import REQ, quote, store_mandate
+from conftest import REQ, quote, store_mandate, outcome
 from fastapi.testclient import TestClient
 
 from app import agent, mandates, orders, valio
@@ -125,7 +125,7 @@ def test_valio_failure_on_approve_leaves_the_order_pending_and_audited(shop, mon
     last = orders.audit_log("chef", 10)[-1]
     assert last["front_door"]["action"] == "approval_failed" and last["front_door"]["status"] == "pending_approval"
     monkeypatch.setattr(valio, "get_quotes", shop.get_quotes)  # Valio back: the approval goes through
-    assert c.post(f"/api/orders/{oid}/approve", headers=AP).json()["status"] == "confirmed"
+    assert outcome(c.post(f"/api/orders/{oid}/approve", headers=AP))["status"] == "confirmed"
 
 
 @pytest.fixture
@@ -230,7 +230,7 @@ def test_higher_price_at_approval_goes_back_to_pending_with_the_new_total(shop):
     held = post(1000).json()
     assert held["status"] == "pending_approval" and held["total_cents"] == 140000
     shop.quotes["463335"] = quote("463335", price=1.6)
-    r = c.post(f"/api/orders/{held['order_id']}/approve", headers=AP).json()
+    r = outcome(c.post(f"/api/orders/{held['order_id']}/approve", headers=AP))
     assert r["status"] == "pending_approval" and r["total_cents"] == 160000
     changed = next(x for x in r["decision"]["reasons"] if x["code"] == "PRICE_CHANGED")
     assert changed["facts"] == {"old_unit_price_cents": 140, "unit_price_cents": 160}
@@ -240,7 +240,7 @@ def test_higher_price_at_approval_goes_back_to_pending_with_the_new_total(shop):
 def test_stock_dropping_below_the_quantity_refuses_with_a_split(shop):
     held = post(1000).json()
     shop.quotes["463335"] = quote("463335", amount=400.0)  # sold out to 400 while the chef decided
-    r = c.post(f"/api/orders/{held['order_id']}/approve", headers=AP).json()
+    r = outcome(c.post(f"/api/orders/{held['order_id']}/approve", headers=AP))
     assert r["status"] == "refused" and "STOCK_PARTIAL" in [x["code"] for x in r["decision"]["reasons"]]
     split = r["alternative_order"]
     assert split["order_lines"][0] == {"product_id": "463335", "quantity": 400.0}

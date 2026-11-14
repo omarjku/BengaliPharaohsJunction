@@ -6,7 +6,7 @@ from types import SimpleNamespace as L
 
 import httpx
 import pytest
-from conftest import NOW, REQ, product, quote, store_mandate
+from conftest import NOW, REQ, product, quote, store_mandate, outcome
 from fastapi.testclient import TestClient
 from trade_contracts import Mandate
 
@@ -122,11 +122,11 @@ def test_approve_uses_the_current_stored_mandate(shop, monkeypatch):
     m = dict(MANDATE, hard_rules=[{"kind": "auto_approve_limit_cents", "value": 100}])
     oid = order([("463335", 1000)], m).json()["order_id"]
     store_mandate(dict(m, hard_rules=m["hard_rules"] + [{"kind": "required_claim", "value": "VEGAN"}]))  # tightened
-    assert c.post(f"/api/orders/{oid}/approve", headers=AP).json()["status"] == "refused"
+    assert outcome(c.post(f"/api/orders/{oid}/approve", headers=AP))["status"] == "refused"
     oid = order([("463335", 1000)], m).json()["order_id"]
     from app import mandates
     del mandates._MANDATES["chef"]  # mandate withdrawn while the order waited
-    body = c.post(f"/api/orders/{oid}/approve", headers=AP).json()
+    body = outcome(c.post(f"/api/orders/{oid}/approve", headers=AP))
     assert body["status"] == "refused" and body["decision"]["reasons"][0]["code"] == "MANDATE_MISSING"
 
 
@@ -151,11 +151,11 @@ def test_a_bigger_overrun_than_was_shown_goes_back_to_the_human(shop):
     b = order([("463335", 10)], m).json()  # 2800 > 2000: shown spent 1400
     cc = order([("463335", 5)], m).json()  # 2100 > 2000
     assert b["status"] == cc["status"] == "pending_approval"
-    assert c.post(f"/api/orders/{cc['order_id']}/approve", headers=AP).json()["status"] == "confirmed"
-    r = c.post(f"/api/orders/{b['order_id']}/approve", headers=AP).json()  # same code + product, bigger overrun
+    assert outcome(c.post(f"/api/orders/{cc['order_id']}/approve", headers=AP))["status"] == "confirmed"
+    r = outcome(c.post(f"/api/orders/{b['order_id']}/approve", headers=AP))  # same code + product, bigger overrun
     assert r["status"] == "pending_approval"
     assert r["decision"]["reasons"][0]["facts"]["spent_7d_cents"] == 2100
-    assert c.post(f"/api/orders/{b['order_id']}/approve", headers=AP).json()["status"] == "confirmed"  # now seen
+    assert outcome(c.post(f"/api/orders/{b['order_id']}/approve", headers=AP))["status"] == "confirmed"  # now seen
 
 
 def test_approval_status_compares_total():
@@ -314,7 +314,7 @@ def test_approve_is_bound_to_the_decision_the_human_saw(shop):
     body = order([("463335", 1000)], m).json()
     oid, seen = body["order_id"], body["decision"]["decided_at"]
     shop.quotes["463335"] = quote("463335", price=1.5)
-    first = c.post(f"/api/orders/{oid}/approve", headers=AP, json={"decided_at": seen}).json()  # approver A
+    first = outcome(c.post(f"/api/orders/{oid}/approve", headers=AP, json={"decided_at": seen}))  # approver A
     assert first["status"] == "pending_approval"  # new price: back to the humans
     stale = c.post(f"/api/orders/{oid}/approve", headers=AP, json={"decided_at": seen})  # approver B, old screen
     assert stale.status_code == 409 and orders._store()[oid]["status"] == "pending_approval"
