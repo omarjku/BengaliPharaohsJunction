@@ -38,9 +38,10 @@ export const setKeys = (next: ApiKeys) => {
 // One-tap setup link: <site>/#agent=<key>&approver=<key> (either part optional), read when the page loads, before any
 // API call. The hash never reaches a server, is never logged, and is removed from the address bar at once, so it
 // isn't left in history or screenshots. A part missing from the link keeps the saved key.
-// On a device with no saved keys the link fills them in ('saved'). If keys are already saved and the link's differ,
-// nothing changes until the chef confirms (a crafted link must never silently swap a kitchen's keys): 'confirm',
-// with the keys held in memory for applyLinkKeys().
+// On a device with no saved keys the link fills them in ('saved'). The same keys as saved: nothing to say (null).
+// If other keys are saved, nothing changes until the chef confirms (a crafted link must never silently swap a
+// kitchen's keys): 'confirm', with the keys held in memory only, checked by checkLinkKeys() and applied by
+// applyLinkKeys().
 let linkKeys: ApiKeys | null = null
 export const KEYS_FROM_LINK: 'saved' | 'confirm' | null = (() => {
   if (typeof window === 'undefined' || !window.location.hash) return null
@@ -50,7 +51,7 @@ export const KEYS_FROM_LINK: 'saved' | 'confirm' | null = (() => {
   if (!agentKey && !approverKey) return null
   window.history.replaceState(null, '', window.location.pathname + window.location.search)
   const next = { agentKey: agentKey || keys.agentKey, approverKey: approverKey || keys.approverKey }
-  if (next.agentKey === keys.agentKey && next.approverKey === keys.approverKey) return 'saved' // the same keys
+  if (next.agentKey === keys.agentKey && next.approverKey === keys.approverKey) return null // the same keys
   if (!keys.agentKey && !keys.approverKey) {
     setKeys(next)
     return 'saved'
@@ -58,7 +59,32 @@ export const KEYS_FROM_LINK: 'saved' | 'confirm' | null = (() => {
   linkKeys = next
   return 'confirm'
 })()
-// The chef's answer to "Replace the saved keys with the ones from this link?".
+// Before asking "Switch this device to <kitchen>?": are the link's new keys real, and whose are they? The new agent
+// key reads its own buyer (GET /api/profile); a new approver key alone is checked with GET /api/audit (no name).
+// Called with the link's keys only; nothing is saved here.
+export async function checkLinkKeys(): Promise<{ valid: boolean; kitchen: string | null }> {
+  if (!linkKeys) return { valid: false, kitchen: null }
+  if (MOCK) return { valid: true, kitchen: 'lapland-kitchen' }
+  const check = async (path: string, header: string, key: string) => {
+    try {
+      const r = await fetch(`${BASE}${path}`, { headers: { [header]: key } })
+      return r.ok ? r : null
+    } catch {
+      return null
+    }
+  }
+  let kitchen: string | null = null
+  if (linkKeys.agentKey !== keys.agentKey) {
+    const r = await check('/api/profile', 'X-Agent-Key', linkKeys.agentKey)
+    if (!r) return { valid: false, kitchen: null }
+    kitchen = ((await r.json().catch(() => ({}))) as { buyer_id?: string }).buyer_id ?? null
+  }
+  if (linkKeys.approverKey !== keys.approverKey && !(await check('/api/audit', 'X-Approver-Key', linkKeys.approverKey)))
+    return { valid: false, kitchen: null }
+  return { valid: true, kitchen }
+}
+
+// The chef's answer to "Switch this device to <kitchen>?" (or the link wasn't valid: replace = false).
 export function applyLinkKeys(replace: boolean) {
   if (replace && linkKeys) setKeys(linkKeys)
   linkKeys = null
