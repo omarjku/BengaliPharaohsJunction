@@ -101,6 +101,11 @@ async def ask(text: str, requested: date | None, buyer_id: str) -> dict:
         classify(text), agent.parse(text), agent.steering(text),
         agent.date_intent(text, guess, today) if guess else agent.none())
     t1 = time.monotonic()
+    if intent == "unclear":  # off-topic first: "what's the weather like?" isn't a date question (QA round 2)
+        return _ask(intent, covers, requested or stated, "request" if requested else "text" if stated else None,
+                    "I can only help with ordering from Valio. What do you need?", C.QTY_AMBIGUOUS,
+                    "Name the products and amounts, e.g. '20 kg butter for Monday', or paste a menu with the number "
+                    "of guests.")
     if requested and stated and requested != stated:
         return _ask(intent, covers, requested, "request", f"Which delivery day: {stated:%A %d %B} (as written) or "
                     f"{requested:%A %d %B} (as selected)?", C.LOW_CONFIDENCE, "Pick one delivery date.")
@@ -110,15 +115,14 @@ async def ask(text: str, requested: date | None, buyer_id: str) -> dict:
     if when is None:
         return _ask(intent, covers, None, None, "For which delivery day?", C.DATA_MISSING,
                     "Say the day, e.g. 'for Monday' or 'tomorrow'.")
-    if when < today or (when - today).days > 60:
+    if when < today:
+        return _ask(intent, covers, when, source, f"{when:%A %d %B %Y} is in the past. Which delivery day?",
+                    C.DATA_MISSING, "Pick a date from today on.")
+    if (when - today).days > 60:
         return _ask(intent, covers, when, source, f"{when:%A %d %B %Y} is outside the 60-day ordering window. Which "
                     "delivery day?", C.DATA_MISSING, "Pick a date from today to 60 days ahead.")
     meta = {"intent": intent, "covers": covers, "requested_date": when.isoformat(), "date_source": source,
             "question": None, "urgent_options": None}
-    if intent == "unclear":
-        return _ask(intent, covers, when, source, "What would you like to order? Name the products and amounts, or "
-                    "paste a menu with the number of guests.", C.QTY_AMBIGUOUS, "e.g. '20 kg butter' or "
-                    "'Menu for 80 guests: …'")
     if intent == "menu":
         if covers is None:  # never guessed: portions decide every quantity in the cart
             return _ask(intent, None, when, source, "For how many guests?", C.QTY_AMBIGUOUS,
