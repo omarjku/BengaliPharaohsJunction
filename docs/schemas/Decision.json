@@ -137,7 +137,9 @@
         "POLICY_DECLINE_UNKNOWN",
         "LOW_CONFIDENCE",
         "ENGINE_ERROR",
-        "MENU_ASSUMPTIONS"
+        "MENU_ASSUMPTIONS",
+        "CONFIDENCE_OK",
+        "FRONT_DOOR"
       ],
       "title": "ReasonCode",
       "type": "string"
