@@ -51,12 +51,10 @@ On price alone, the agent would have bought the "milk drink" (EUR 1,400, within 
 - "10 kg sugar for baking for Monday": Dansukker caster sugar 1 kg **0.94** (chosen), icing sugar 0.62, Segafredo
   brown sugar 500 × 5 g sachets **0.44**. The order is held for `ALLERGEN_DATA_MISSING`.
 
-**Live check on the deployed API, Sun 15 Nov ~09:45** (`smoke-kitchen`, same rules, threshold 0.70), "1000 L
-lactose-free milk for Monday": semi-skimmed 0.96 (EUR 1,560), whole 0.96 (EUR 1,640), Eila milk drink 0.81 (EUR 1,400),
-**Valio coffee milk lactose free 0.72 (EUR 1,300, chosen, AUTO confirmed)**. 1500 L: the same product, EUR 1,950,
-held for `SPEND_OVER_LIMIT`. The same pattern for "100 litraa laktoositonta maitoa" (coffee milk) and "10 L
-lactose-free cream" (coffee cream, 10 packs, confirmed). Kebab: "20 kg döner kebab meat" → Well Kebab kebab meat at
-0.61, below 0.70, so the agent asks.
+**Live check on the deployed API, Sun 15 Nov ~09:45** (`smoke-kitchen`, threshold 0.70): the milk and cream paths are
+being re-ranked (Room 3: among confident lines, confidence leads and price only breaks near-ties). Their scores go
+here once that is live: **[TBD after room3-rank]**. Kebab: "20 kg döner kebab meat" → Well Kebab kebab meat at 0.61,
+below 0.70, so the agent asks.
 
 This is the one place for exact live scores. Other docs say ≈0.9 or below 0.5.
 
