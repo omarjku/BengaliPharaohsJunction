@@ -400,3 +400,27 @@ def test_voice_dispatch_marks_every_order_as_an_assumption_hold(monkeypatch):
                            "delivery_date": "2026-11-16"}, "chef", date(2026, 11, 16), via="voice"))
     assert seen["request_hold"] is True
     assert seen["request_note"] == "Voice orders require the chef's on-screen approval."
+
+
+def test_voice_change_dispatch_marks_the_replaced_order_as_a_hold(monkeypatch):
+    seen = {}
+    old = {"id": "order-1", "buyer_id": "chef", "status": "pending_approval",
+           "requested_date": "2026-11-16", "lines": [{"name": "Milk", "amount": 1, "unit": "L"}]}
+
+    monkeypatch.setattr(chat_agent, "_owned_order", lambda *_args: ("order-1", old))
+    monkeypatch.setattr(chat_agent.ask, "_merged_change_items", lambda *_args: ([{"name": "Milk"}], None, None))
+
+    async def fake_guard(_text):
+        return {"steer": 0.12, "note": None}
+
+    async def fake_execute(*_args, request_note=None, **_kwargs):
+        seen["request_note"] = request_note
+        return {"intent": "order", "lines": []}
+
+    monkeypatch.setattr(chat_agent, "_turn_guard", fake_guard)
+    monkeypatch.setattr(chat_agent.ask, "_execute_action", fake_execute)
+    asyncio.run(chat_agent._dispatch_tool(
+        "change_order", {"order_id": "order-1", "changes": [{"name": "Milk", "amount": 2, "unit": "L"}]},
+        "chef", date(2026, 11, 16), via="voice"))
+
+    assert seen["request_note"] == "Voice orders require the chef's on-screen approval."
