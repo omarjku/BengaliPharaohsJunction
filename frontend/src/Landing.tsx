@@ -64,7 +64,10 @@ export default function Landing({ onEnter, leaving = false }: { onEnter: () => v
             <span className="door-handle" />
           </span>
         </button>
-        <p className="door-hint" aria-hidden="true">Tap the door</p>
+        <p className="door-hint" aria-hidden="true">
+          <span className="door-hint-idle">Tap the door</span>
+          <span className="door-hint-win">Come in, chef. Your kitchen is ready.</span>
+        </p>
       </div>
     </section>
   )

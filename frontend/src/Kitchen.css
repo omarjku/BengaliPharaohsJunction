@@ -1,4 +1,4 @@
-.kitchen-page { display: grid; gap: var(--s8); min-width: 0; }
+.kitchen-page { display: grid; gap: 0; min-width: 0; }
 .kitchen-section { display: grid; gap: var(--s3); min-width: 0; }
 .kitchen-heading { display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; }
 .kitchen-simulated {
@@ -22,7 +22,7 @@
 .kitchen-sources { display: grid; gap: var(--s1); }
 
 @media (max-width: 600px) {
-  .kitchen-page { gap: var(--s7); }
+  .kitchen-page { gap: 0; }
   .kitchen-simulated { min-height: 44px; }
   .kitchen-weekdays li, .kitchen-items li { gap: var(--s2) var(--s3); }
 }

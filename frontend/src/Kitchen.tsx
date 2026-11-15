@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { getKeys, getKitchenContext, MOCK, VOICE_READY } from './api'
+import { Fold } from './Fold'
 import { HistoryEditor } from './HistoryEditor'
 import { InterviewCard } from './InterviewCard'
 import { KcGroup } from './KcCards'
 import { MemoryPanel } from './MemoryPanel'
 import { useCopy } from './i18n'
+import { usePolishCopy } from './polishCopy'
 import { Onboarding } from './Onboarding'
 import type { KitchenContext, KitchenDay } from './types'
 import { DictationMic } from './Voice'
@@ -16,6 +18,7 @@ const DAYS: KitchenDay[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 export function Kitchen({ refreshKey }: { refreshKey: number }) {
   const c = useCopy()
   const t = c.UI.kitchen
+  const pk = usePolishCopy().kitchen
   const { agentKey } = getKeys()
   const canRead = MOCK || !!agentKey
   const micOn = VOICE_READY && voiceSupported()
@@ -70,44 +73,46 @@ export function Kitchen({ refreshKey }: { refreshKey: number }) {
   )
 
   return (
-    <div className="kitchen-page">
-      <section className="kitchen-section">
-        <h2 className="title">{t.onboardingTitle}</h2>
-        <p className="note">{t.onboardingIntro}</p>
-        <div className="actions">
-          <button type="button" className="btn" onClick={() => setOnboardingOpen((open) => !open)}>
-            {onboardingOpen ? t.onboardingClose : t.onboardingOpen}
-          </button>
-        </div>
-        {onboardingOpen && (
-          <div className="kitchen-onboarding">
-            <Onboarding
-              onDone={finishOnboarding}
-              onSkip={finishOnboarding}
-              mic={micOn ? (append) => <DictationMic onText={append} /> : undefined}
-            />
+    <div className="kitchen-page folds">
+      <Fold icon="sparkle" title={t.onboardingTitle} hint={pk.setupHint}>
+        <div className="kitchen-section">
+          <p className="note">{t.onboardingIntro}</p>
+          <div className="actions">
+            <button type="button" className="btn" onClick={() => setOnboardingOpen((open) => !open)}>
+              {onboardingOpen ? t.onboardingClose : t.onboardingOpen}
+            </button>
           </div>
-        )}
-      </section>
-
-      <section className="kitchen-section">
-        <h2 className="title">{t.factsTitle}</h2>
-        <MemoryPanel refreshKey={refreshKey} reloadKey={factsRefresh} />
-      </section>
-
-      <section className="kitchen-section">
-        <InterviewCard />
-      </section>
-
-      <section className="kitchen-section">
-        <HistoryEditor refreshKey={refreshKey} />
-      </section>
-
-      <section className="kitchen-section">
-        <div className="kitchen-heading">
-          <h2 className="title">{t.historyTitle}</h2>
-          {history?.simulated && <span className="kitchen-simulated">{t.simulated}</span>}
+          {onboardingOpen && (
+            <div className="kitchen-onboarding">
+              <Onboarding
+                onDone={finishOnboarding}
+                onSkip={finishOnboarding}
+                mic={micOn ? (append) => <DictationMic onText={append} /> : undefined}
+              />
+            </div>
+          )}
         </div>
+        <div className="kitchen-section">
+          <InterviewCard />
+        </div>
+      </Fold>
+
+      <Fold icon="bulb" title={t.factsTitle} hint={pk.factsHint} defaultOpen>
+        <div className="kitchen-section">
+          <MemoryPanel refreshKey={refreshKey} reloadKey={factsRefresh} />
+        </div>
+      </Fold>
+
+      <Fold
+        icon="chart"
+        title={t.historyTitle}
+        hint={pk.historyHint}
+        aside={history?.simulated ? <span className="kitchen-simulated">{t.simulated}</span> : undefined}
+      >
+        <div className="kitchen-section">
+          <HistoryEditor refreshKey={refreshKey} />
+        </div>
+        <div className="kitchen-section">
         {!canRead ? (
           <p className="quiet">{t.historyNeedKey}</p>
         ) : historyLoading ? (
@@ -241,7 +246,8 @@ export function Kitchen({ refreshKey }: { refreshKey: number }) {
             />
           </div>
         )}
-      </section>
+        </div>
+      </Fold>
     </div>
   )
 }
