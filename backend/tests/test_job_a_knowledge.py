@@ -190,8 +190,8 @@ def test_live_setup_answers_in_any_language_and_exposes_profile_tool(shop, monke
     setup = live._setup("chef")["setup"]
     system = setup["systemInstruction"]["parts"][0]["text"]
     names = [f["name"] for group in setup["tools"] for f in group["functionDeclarations"]]
-    assert "English or Finnish" not in system
-    assert "whatever language" in system
+    assert "English or Finnish" in system
+    assert "whatever language" not in system
     assert "Sorry, I didn't catch that, could you say it again?" in system
     assert "Standing order Friday" in system
     assert "kitchen_profile" in names

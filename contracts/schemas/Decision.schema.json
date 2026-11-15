@@ -3,6 +3,20 @@
     "Alternative": {
       "additionalProperties": false,
       "properties": {
+        "item": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request item index this alternative belongs to.",
+          "title": "Item"
+        },
         "product_id": {
           "minLength": 1,
           "title": "Product Id",

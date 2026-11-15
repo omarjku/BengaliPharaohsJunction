@@ -30,6 +30,96 @@ DATA_UNITS = {"LTR": ("volume", Fraction(1)), "CLT": ("volume", Fraction(1, 100)
               "KGM": ("weight", Fraction(1)), "GRM": ("weight", Fraction(1, 1000))}
 FIELD = {"volume": "volume", "weight": "net_weight"}
 PACK = re.compile(r"(\d+)\s*[x×]\s*(\d+(?:[.,]\d+)?)\s*(kg|g|l|dl|cl|ml)\b", re.I)  # "40x180g", "5 x 2,5 kg"
+_UNIT_WORDS = {"ST": "piece", "KI": "case", "PAK": "pack", "BAG": "bag", "PAL": "pallet",
+               "PSS": "portion", "KG": "kg", "KGM": "kg", "GRM": "g", "G": "g",
+               "LTR": "L", "L": "L", "CLT": "cl", "CL": "cl",
+               "MLT": "ml", "ML": "ml", "DL": "dl", "PCS": "pieces",
+               "PC": "piece", "KPL": "pieces", "UNITS": "pieces", "EA": "piece", "H87": "piece",
+               "KLE": "case", "CS": "case", "KRT": "carton", "KAN": "can", "BOT": "bottle",
+               "RAS": "tray", "PRK": "pack", "SK": "bag", "NIP": "portion", "DSP": "dispenser",
+               "DZ": "dozen"}
+_BASE_WORDS = ("bottle", "carton", "can", "tin", "jar", "tray", "egg", "pack", "piece", "unit")
+_REQUEST_UNIT_ALIASES = {"piece": "pcs", "pieces": "pcs", "each": "pcs", "unit": "pcs", "units": "pcs",
+                        "bottle": "pcs", "bottles": "pcs", "carton": "pcs", "cartons": "pcs",
+                        "can": "pcs", "cans": "pcs", "egg": "pcs", "eggs": "pcs"}
+
+
+def normalize_unit(code: str | None) -> str | None:
+    """Normalize natural count words to the resolver's machine unit; catalogue sales codes stay unchanged."""
+    if code is None:
+        return None
+    value = str(code).strip()
+    return _REQUEST_UNIT_ALIASES.get(value.lower(), value)
+
+
+def _base_label(product: dict) -> str:
+    name = str(product.get("name_en") or product.get("name_fi") or "").lower()
+    for word in _BASE_WORDS:
+        if re.search(rf"\b{word}s?\b", name):
+            return word
+    return "piece"
+
+
+def _plural(word: str) -> str:
+    if word.endswith("s") or word in {"kg", "gram", "litre", "centilitre", "millilitre", "decilitre"}:
+        return word
+    return word + "s"
+
+
+def human_unit(product: dict | None, code: str | None) -> str:
+    """Describe a catalogue unit for people and model prompts; codes remain in machine fields."""
+    code = str(code or "").upper()
+    if code.lower() in {"pcs", "pc", "pieces", "piece", "kpl", "units"}:
+        return "pieces"
+    label = _UNIT_WORDS.get(code, code.lower() or "unit")
+    if not isinstance(product, dict):
+        return label
+    units = product.get("units") or {}
+    size = units.get(code)
+    base = str(product.get("base_unit") or "").upper()
+    try:
+        size = float(size)
+    except (TypeError, ValueError):
+        size = None
+    if size and size > 1 and base == "ST" and code not in {"ST", "PCS", "PC", "KPL"}:
+        return f"{label} of {size:g} {_plural(_base_label(product))}"
+    if size and size > 1 and base == "KG" and code not in {"KG", "KGM"}:
+        return f"{size:g} kg {label}"
+    if code == "ST":
+        return _base_label(product)
+    return label
+
+
+def count_size_question(product: dict, query: str) -> str | None:
+    """Chef wording for a piece request when a pack's base-unit size is unknown."""
+    sales = str(product.get("sales_unit") or "").upper()
+    base = str(product.get("base_unit") or "").upper()
+    if sales and base == "ST" and sales != base and not (product.get("units") or {}).get(sales):
+        return f"How many {_plural(_base_label(product))} per {human_unit(product, sales)} do you want?"
+    return None
+
+
+def humanize_text(text: str, product: dict | None = None) -> str:
+    """Replace technical unit tokens in chef/model prose while leaving structured fields untouched."""
+    if not isinstance(text, str):
+        return text
+    codes = set(_UNIT_WORDS)
+    if isinstance(product, dict):
+        codes |= {str(key).upper() for key in (product.get("units") or {})}
+    pattern = re.compile(r"\b(?:" + "|".join(sorted(codes, key=len, reverse=True)) + r")\b", re.I)
+
+    def replace(match):
+        value = human_unit(product, match.group(0))
+        prefix = text[max(0, match.start() - 20):match.start()]
+        number = re.search(r"(\d+(?:[.,]\d+)?)\s*$", prefix)
+        if number and float(number.group(1).replace(",", "")) != 1 and value in {"piece", "bottle", "carton", "can",
+                                                                                  "tin", "jar", "tray", "egg"}:
+            value = _plural(value)
+        if number and float(number.group(1).replace(",", "")) != 1 and value in {"case", "pack", "pallet", "bag", "portion"}:
+            value = _plural(value)
+        return value
+
+    return pattern.sub(replace, text)
 
 
 def _q(x) -> Fraction:
@@ -93,7 +183,11 @@ def _per_sales_unit(product: dict, unit: str) -> tuple[Fraction | None, str | No
     if dim == "count":
         if base == "KG":
             return None, None, "it is sold by weight (KG), not by the piece"
-        assumption = None if base == "ST" else f"assumes one piece = one {base}"
+        assumption = None
+        if base != "ST":
+            assumption = f"assumes one piece = one {base}"
+        elif sales != base and base_per_sales > 1:
+            assumption = f"converts the count using { _fmt(base_per_sales) } pieces per {sales}"
         return base_per_sales, assumption, f"1 piece = 1 {base}" + case
 
     code = unit.upper()
@@ -108,19 +202,26 @@ def _per_sales_unit(product: dict, unit: str) -> tuple[Fraction | None, str | No
 def resolve(product: dict, amount: float, unit: str) -> dict:
     """Sales units to order for `amount` `unit` of `product` (a catalogue dict), rounded UP to a whole sales
     unit (KG sales units stay continuous) and to the lot size. Pure function."""
+    unit = normalize_unit(unit) or unit
     sales = product["sales_unit"]
     want = _q(amount)
     per_sales, assumption, how = _per_sales_unit(product, unit)
     out = {"product_id": product["id"], "requested": {"amount": _num(want), "unit": unit}, "sales_unit": sales,
            "quantity": None, "per_sales_unit": None, "delivered": None, "over_delivery": None, "rounded_up": False}
     if per_sales is None:
+        question = count_size_question(product, "") if unit.lower() in ("pcs", "units") else None
+        detail = f" {question}" if question else ""
         return out | {"confidence": "none", "needs_confirmation": True,
-                      "explanation": f"Can't convert {_fmt(want)} {unit} into {sales}: {how}. Please confirm the quantity in {sales}."}
+                      "explanation": humanize_text(
+                          f"Can't convert {_fmt(want)} {unit} into {sales}: {how}.{detail} Please confirm the quantity in {sales}.",
+                          product)}
 
     lot = _q(product.get("lot_size") or 0)
     if lot <= 0:
         return out | {"confidence": "none", "needs_confirmation": True,
-                      "explanation": f"Can't round {_fmt(want)} {unit} to an orderable amount: the lot size is missing. Please confirm the quantity in {sales}."}
+                      "explanation": humanize_text(
+                          f"Can't round {_fmt(want)} {unit} to an orderable amount: the lot size is missing. Please confirm the quantity in {sales}.",
+                          product)}
     if lot != Fraction(1, 100) and sales != product["base_unit"]:  # e.g. 464997: lot 2 with KI = 6 KG; 2 KI or 2 KG?
         note = f"assumes the lot size {_fmt(lot)} is in {sales}, not {product['base_unit']}"
         assumption = f"{assumption}; {note}" if assumption else note
@@ -139,4 +240,4 @@ def resolve(product: dict, amount: float, unit: str) -> dict:
     return out | {"quantity": _num(qty), "per_sales_unit": _num(per_sales), "delivered": _num(delivered),
                   "over_delivery": _num(delivered - want), "rounded_up": qty != need,
                   "confidence": "medium" if assumption else "high", "needs_confirmation": bool(assumption),
-                  "explanation": text}
+                  "explanation": humanize_text(text, product)}

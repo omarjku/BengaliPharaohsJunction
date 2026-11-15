@@ -28,7 +28,7 @@ def test_litres_to_single_units():
 def test_litres_to_case_converts_but_asks_to_confirm_case_assumption():
     r = resolve(MILK_CASE, 1000, "L")
     assert (r["quantity"], r["per_sales_unit"], r["delivered"], r["over_delivery"]) == (84, 12, 1008, 8)
-    assert r["confidence"] == "medium" and r["needs_confirmation"] and "whole KI" in r["explanation"]
+    assert r["confidence"] == "medium" and r["needs_confirmation"] and "whole case" in r["explanation"]
 
 
 def test_kilograms_by_net_weight_and_by_kg_base_unit():
@@ -42,7 +42,7 @@ def test_count_in_pieces_and_in_product_unit_codes():
     assert resolve(MILK_CASE, 24, "pcs")["quantity"] == 2
     assert resolve(MILK_1L, 3, "KI")["quantity"] == 15     # 3 cases of 5 = 15 cartons
     r = resolve(product(base_unit="PAK", sales_unit="PAK", units={"PAK": 1.0}), 10, "pcs")
-    assert r["quantity"] == 10 and r["needs_confirmation"] and "one piece = one PAK" in r["explanation"]
+    assert r["quantity"] == 10 and r["needs_confirmation"] and "one piece = one pack" in r["explanation"]
 
 
 def test_rounds_up_and_reports_over_delivery():
@@ -69,10 +69,10 @@ def test_missing_volume_refuses():
 
 
 @pytest.mark.parametrize("p, amount, unit, why", [
-    (product(volume={"unit": "GRM", "value": 900.0}), 10, "L", "recorded in GRM"),   # volume given as a weight
+    (product(volume={"unit": "GRM", "value": 900.0}), 10, "L", "recorded in g"),   # volume given as a weight
     (CHICKEN, 10, "pcs", "sold by weight"),                                          # pieces of a per-kg product
     (MILK_1L, 2, "PAL", "not a unit of this product"),                               # unit code the product lacks
-    (product(units={"ST": 0.0}), 2, "L", "size of one ST"),                          # broken units table
+    (product(units={"ST": 0.0}), 2, "L", "size of one piece"),                       # broken units table
 ])
 def test_contradictory_or_unusable_data_refuses(p, amount, unit, why):
     r = resolve(p, amount, unit)
@@ -116,7 +116,7 @@ def test_unit_code_on_per_kg_product_is_flagged():
 def test_tiny_per_sales_unit_is_not_rounded_to_zero():
     r = resolve(product(units={"ST": 1.0, "PAL": 2280.0}), 1, "PAL")   # like 460220: 1 ST = 1/2280 PAL
     assert r["quantity"] == 2280 and r["per_sales_unit"] > 0 and r["over_delivery"] == 0
-    assert "0.000439 PAL per ST" in r["explanation"]
+    assert "0.000439 pallet" in r["explanation"]
 
 
 @pytest.mark.parametrize("lot", [None, 0, -1.0])
@@ -127,7 +127,7 @@ def test_missing_lot_size_refuses(lot):
 
 def test_lot_size_on_case_of_kg_is_flagged():
     r = resolve(product(sales_unit="KI", base_unit="KG", lot_size=2.0, units={"KG": 1.0, "KI": 6.0}), 12, "kg")  # 464997
-    assert r["quantity"] == 2 and r["needs_confirmation"] and "lot size 2 is in KI, not KG" in r["explanation"]
+    assert r["quantity"] == 2 and r["needs_confirmation"] and "lot size 2 is in 6 kg case, not kg" in r["explanation"]
 
 
 @pytest.mark.parametrize("pid, name, size, expected", [

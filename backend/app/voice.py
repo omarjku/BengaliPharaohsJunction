@@ -86,7 +86,7 @@ async def live_transcribe(pcm: bytes) -> str:
     model = config.GEMINI_LISTEN_MODEL
     setup = {"setup": {"model": f"models/{model}",
                        "generationConfig": {"responseModalities": ["TEXT" if "transcribe" in model else "AUDIO"]},
-                       "inputAudioTranscription": {},
+                       "inputAudioTranscription": {"languageCodes": ["en-US", "fi-FI"]},
                        "realtimeInputConfig": {"automaticActivityDetection": {"disabled": True}},
                        "systemInstruction": {"parts": [{"text": "Only listen. Reply with the single word OK. The speaker uses English "
                        "or Finnish only: transcribe in whichever of the two is spoken, never in any other language."}]}}}

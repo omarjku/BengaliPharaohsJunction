@@ -13,7 +13,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from . import agent, ask, catalogue, conversation, kitchen, menu, orders, profile, valio, config, mandates, urgent
+from . import agent, ask, catalogue, conversation, kitchen, menu, orders, profile, quantity, valio, config, mandates, urgent
+from . import quantity as quantity_mod
 
 log = logging.getLogger(__name__)
 HELSINKI = ZoneInfo("Europe/Helsinki")
@@ -73,7 +74,7 @@ TOOLS = [{"functionDeclarations": [
 
 APPROVAL_REQUEST = re.compile(r"\b(?:approve\s+(?:this|it|everything|all)|can\s+you\s+approve|sign\s*off\s+(?:this|it)|"
                               r"godkänn\s+(?:det|allt)|hyväksy\s+(?:se|kaikki))\b", re.I)
-UNVERIFIED_ORDER_CLAIM = re.compile(r"\b(?:ordered|order\s+(?:is|was)\s+confirmed|order\s+has\s+been\s+placed|placed\s+the\s+order)\b", re.I)
+UNVERIFIED_ORDER_CLAIM = re.compile(r"(?:^|[.!:]\s+)ordered\b|\b(?:I(?:'ve|\s+have)?\s+ordered|(?:has|have)\s+been\s+ordered|(?:is|was|are|were)\s+(?:now\s+)?ordered|order\s+(?:is|was)\s+(?:now\s+)?confirmed|order\s+has\s+been\s+placed|placed\s+(?:the|your)\s+order)\b", re.I)  # claims only: "what needs to be ordered?" is a question, not a claim
 DELEGATION = re.compile(r"^\s*(?:assume|you decide|whatever is normal|sama kuin yleensä|just do it)\s*[.!]*\s*$", re.I)
 ORDINAL_CHOICE = re.compile(r"^\s*(?:the\s+)?(first|second|third|1|2|3)\s*(?:one|option)?\s*[.!]*\s*$", re.I)
 CONFIRMATION = re.compile(r"^\s*(?:yes|yeah|yep|sure|ok|okay|go ahead|do it|kyllä|joo|juu)\b", re.I)
@@ -461,8 +462,9 @@ def _card_lines(card: dict) -> list[dict]:
         product = line.get("product") or {}
         quantity = line.get("quantity") or {}
         requested = quantity.get("requested") if isinstance(quantity.get("requested"), dict) else quantity
-        out.append({"product": _name(product), "product_id": product.get("id"),
-                    "literal_amount": (f"{requested.get('amount')} {requested.get('unit')}"
+        requested_unit = quantity_mod.human_unit(product, requested.get("unit")) if isinstance(requested, dict) else None
+        out.append({"item": line.get("item"), "product": _name(product), "product_id": product.get("id"),
+                    "literal_amount": (f"{requested.get('amount')} {requested_unit}"
                                         if isinstance(requested, dict) and requested.get("amount") is not None
                                         and requested.get("unit") else None),
                     "sales_unit_quantity": quantity.get("quantity"), "delivered_amount": quantity.get("delivered"),
@@ -486,7 +488,8 @@ def _card_assumptions(card: dict) -> list[dict]:
         name = _name(line.get("product"))
         amount = requested.get("amount") if isinstance(requested, dict) else None
         unit = requested.get("unit") if isinstance(requested, dict) else None
-        result.append({"text": " ".join(str(x) for x in (amount, unit, name) if x is not None),
+        result.append({"text": quantity_mod.humanize_text(" ".join(str(x) for x in (amount, unit, name) if x is not None),
+                                                       line.get("product") or {}),
                       "p_yes": score, "kept": bool(line.get("chosen"))})
     return result
 
@@ -504,7 +507,8 @@ def _tool_card(card: dict, kind: str) -> dict:
     choices = [{"id": alternative.get("product_id"), "label": alternative.get("summary")}
                for alternative in (card.get("decision") or {}).get("alternatives", [])
                if isinstance(alternative, dict) and alternative.get("product_id")]
-    return {"card": card, "status": status, "lines": _card_lines(card), "assumptions": assumptions,
+    return {"card": card, "status": status, "items": card.get("items") or [], "lines": _card_lines(card),
+            "assumptions": assumptions,
             "hold_reasons": _reason_text(card),
             "missing_info": [r.get("message") for r in (card.get("decision") or {}).get("reasons", [])
                              if isinstance(r, dict) and r.get("code") in {"QTY_AMBIGUOUS", "DATA_MISSING"}],
@@ -632,8 +636,9 @@ async def _change_order(args: dict, buyer_id: str, requested_date: date | None, 
             continue
         remove = bool(item.get("remove"))
         new_items.append({"name": name, "product_id": item.get("product_id"), "amount": item.get("amount"), "unit": item.get("unit")})
+        spoken_unit = quantity.human_unit(product or {}, item.get("unit"))
         snippets.append(("remove " if remove else "change ") + name +
-                        (f" to {item['amount']} {item['unit']}" if item.get("amount") is not None else ""))
+                        (f" to {item['amount']} {spoken_unit}" if item.get("amount") is not None else ""))
     if not new_items:
         return {"status": "needs_info", "hold_reasons": ["Tell me which line to change or remove."], "order_id": order_id}
     when = _parse_date(args.get("delivery_date"), _parse_date(old.get("requested_date"), requested_date))
@@ -972,7 +977,7 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
                                                           "kept": score >= threshold})
                                     card = dict(card, assumptions=existing)
                                 cards.append(card)
-                            compact = {key: result.get(key) for key in ("status", "awaiting_user", "lines", "assumptions",
+                            compact = {key: result.get(key) for key in ("status", "awaiting_user", "items", "lines", "assumptions",
                                                                         "hold_reasons", "missing_info", "order_id", "question",
                                                                         "pending_slot", "choices")
                                        if result.get(key) not in (None, [], "")}
@@ -992,7 +997,7 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
                     raise RuntimeError("Gemini returned neither text nor a tool call")
                 if last_search_result:
                     reply = _search_result_reply(last_search_result)
-                if not cards and UNVERIFIED_ORDER_CLAIM.search(reply) \
+                if not cards and UNVERIFIED_ORDER_CLAIM.search(reply) and not reply.rstrip().endswith("?") \
                         and not re.search(r"\b(?:not|no|haven't|hasn't|couldn't|can't)\b", reply, re.I):
                     reply = "I haven't placed or confirmed an order. I can only say that after the order tool reports it."
                 low = _low_assumption_question(assumption_rows, assumption_questions, threshold)

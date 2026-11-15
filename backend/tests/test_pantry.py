@@ -82,7 +82,7 @@ def test_name_pack_size_converts_when_no_weight_is_recorded():
     p = {"id": "b", "name_en": "BLUEBERRY PUNNET 125G NL/GE/PE", "sales_unit": "ST", "lot_size": 1, "base_unit": "ST",
          "units": {"ST": 1.0}, "volume": None, "net_weight": None}
     q = agent.resolve(p, 4, "kg")
-    assert q["quantity"] == 32 and "0.125 kg per ST (from the product name)" in q["explanation"]
+    assert q["quantity"] == 32 and "0.125 kg per piece (from the product name)" in q["explanation"]
 
 
 

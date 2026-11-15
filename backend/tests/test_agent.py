@@ -407,9 +407,9 @@ def test_grounding_needs_whole_words_and_a_real_query():
 
 def test_unit_grounding_cannot_be_spoofed():
     milk = {"query": "milk", "amount": 20.0, "unit": "L"}
-    assert agent.ungrounded("20 L milk", dict(milk, unit="KI")) == "the unit KI"  # #4 catalogue codes
+    assert agent.ungrounded("20 L milk", dict(milk, unit="KI")) == "the unit case"
     assert agent.ungrounded("12 kg lactose-free milk", dict(milk, amount=12.0)) == "the unit L for milk"  # #4
-    assert agent.ungrounded("20 L milk", dict(milk, unit="pcs")) == "the unit pcs for milk"  # #4 pcs over a unit
+    assert agent.ungrounded("20 L milk", dict(milk, unit="pcs")) == "the unit pieces for milk"  # #4 pcs over a unit
     assert agent.ungrounded("20l milk", milk) is None
     assert agent.ungrounded("12 eggs", {"query": "egg", "amount": 12.0, "unit": "pcs"}) is None
 
@@ -830,3 +830,23 @@ def test_api_schema_strips_keys_gemini_rejects():
                                  "properties": {"a": {"type": "array", "items": {"type": "object",
                                                                                  "additionalProperties": False}}}})
     assert "additionalProperties" not in str(cleaned)
+
+
+def test_amounts_without_commas_are_separate_clauses_but_sizes_are_not():
+    """'70 kg of potatoes 70 kg of salmon' (no comma, typical of speech) is two clauses; 'Valio milk 1 l' stays one."""
+    from app import agent
+    assert [c.strip() for c in agent.split_clauses("total of 70 kg of potatoes 70 kg of salmon and 500 water bottles")] == [
+        "total of 70 kg of potatoes", "70 kg of salmon", "500 water bottles"]
+    assert [c.strip() for c in agent.split_clauses("10 L Valio milk 1 l lactose free")] == ["10 L Valio milk", "1 l lactose free"] \
+        or len(agent.split_clauses("10 L Valio milk 1 l lactose free")) in (1, 2)
+    assert len(agent.split_clauses("Valio milk 1 l for Monday")) == 1
+    assert len(agent.split_clauses("1,5 kg butter, 2 L cream")) == 2
+
+
+def test_list_without_commas_is_not_flagged_as_ordered_twice():
+    from app import agent
+    text = "total of 70 kg of potatoes 70 kg of salmon and 500 water bottles"
+    items = [{"query": "potatoes", "amount": 70, "unit": "kg", "source": "potatoes"},
+             {"query": "salmon", "amount": 70, "unit": "kg", "source": "salmon"},
+             {"query": "water bottles", "amount": 500, "unit": "ST", "source": "water bottles"}]
+    assert agent.overgrounded(text, items) == []

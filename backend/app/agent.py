@@ -385,7 +385,8 @@ def canonical(item: dict) -> str:
     words = [c.lower().replace("free_from_", "").replace("_", " ") + ("-free" if c.startswith("FREE_FROM_") else "")
              for c in item.get("claims") or []]
     words += [f"must not contain {catalogue.ALLERGEN_NAMES.get(a, a)}" for a in item.get("exclude_allergens") or []]
-    amount = f"{gate._qty(item['amount'])} {item['unit']} " if item.get("amount") and item.get("unit") else ""
+    amount = (f"{gate._qty(item['amount'])} {quantity.human_unit(item, item['unit'])} "
+              if item.get("amount") and item.get("unit") else "")
     for_ = (f", for {', '.join(item['dishes'])}" if item.get("dishes") else "") + (
         f", {item['purpose']}" if item.get("purpose") else "")
     return f"{amount}{item['query']}" + (f" ({', '.join(words)})" if words else "") + for_
@@ -439,7 +440,7 @@ def _item(query: str, amount, unit, tags, source: str = "", purpose: str = "") -
         amount = None
     if amount is not None and not (math.isfinite(amount) and 0 < amount <= MAX_AMOUNT):
         amount = None  # inf / absurd amounts become "how much?" instead of a crash in quantity resolution
-    out = {"query": query.strip(), "amount": amount, "unit": unit or None,
+    out = {"query": query.strip(), "amount": amount, "unit": quantity.normalize_unit(unit),
            "claims": sorted({c for t in tags for c in DIETARY[t][0]}),
            "exclude_allergens": sorted({a for t in tags for a in DIETARY[t][1]})}
     if origin:
@@ -522,7 +523,7 @@ def amount_question(item: dict, product_or_item: dict | None = None, unit: str |
             last = words[-1]
             if last.endswith("y") and len(last) > 1 and last[-2].lower() not in "aeiou":
                 words[-1] = last[:-1] + "ies"
-            elif last.endswith(("s", "x", "ch", "sh")):
+            elif last.endswith(("x", "ch", "sh")):
                 words[-1] += "es"
             else:
                 words[-1] += "s"
@@ -566,7 +567,7 @@ async def assume_amount(text: str, item: dict, product: dict) -> dict | None:
         return None
     got = str(out.get("unit") or "").lower()
     got = "L" if got == "l" else got
-    assumption = _clean_assumption(out.get("assumption"))
+    assumption = quantity.humanize_text(_clean_assumption(out.get("assumption")), product)
     if not math.isfinite(amount) or not 0 < amount <= MAX_AMOUNT or got != unit or not assumption:
         return None
     converted = resolve(product, amount, got)
@@ -618,6 +619,27 @@ _UNIT_WORDS = {"l": {"l", "litre", "litres", "liter", "liters", "litra", "litraa
                "g": {"g", "gram", "grams", "grammaa"}}
 _MEASURE_WORDS = set().union(*_UNIT_WORDS.values())
 _SPLIT = r",(?!\d)|;|\n|\b(?:and|ja)\b"
+_AMOUNT_START = re.compile(
+    r"(?<![\w.,])\d[\d,.]*\s*(?:kg|g|l|dl|cl|ml|kpl|pcs|x|st|cases?|bottles?|packs?|pieces?|cartons?|crates?|bags?|"
+    r"litres?|liters?|litra\w*|kilo\w*|grams?|laatikko\w*|pullo\w*|pussi\w*)\b", re.I)
+
+
+def split_clauses(text: str) -> list[str]:
+    """Clauses of an order: split at commas, ';', new lines and 'and'/'ja', and ALSO where a second amount starts
+    inside one clause ('70 kg of potatoes 70 kg of salmon', a list spoken or typed without commas). The first amount
+    of a clause never splits, so a product with its size ('Valio milk 1 l') stays one item."""
+    out = []
+    for chunk in re.split(_SPLIT, str(text)):
+        if chunk is None:
+            continue
+        starts = [m.start() for m in _AMOUNT_START.finditer(chunk)]
+        cut = [s for s in starts[1:] if re.search(r"[^\W\d_]\s*$", chunk[:s])]  # a new amount right after a word
+        prev = 0
+        for c in cut:
+            out.append(chunk[prev:c])
+            prev = c
+        out.append(chunk[prev:])
+    return out
 
 
 def _numbers(text: str) -> set[float]:
@@ -693,7 +715,7 @@ def grounding(text: str, item: dict) -> tuple[str | None, set[int]]:
     words = re.findall(r"[\wäöå]+", conversation.spoken_to_digits(item["query"]).lower())  # like the text below
     unit = (item["unit"] or "").lower()
     if unit and unit not in quantity.MEASURES:
-        return f"the unit {item['unit']}", set()  # catalogue codes like KI multiply quantities; plain units only
+        return f"the unit {quantity.human_unit(item, item['unit'])}", set()  # catalogue codes multiply quantities; plain units only
     text = conversation.spoken_to_digits(text)  # before splitting: "two hundred and fifty" is one amount
     parts = re.split(_SPLIT, text)
     clauses = {i: c for i, c in enumerate(parts) if _words_in(words, c)}
@@ -715,7 +737,7 @@ def grounding(text: str, item: dict) -> tuple[str | None, set[int]]:
     if unit:
         clauses = {i: c for i, c in clauses.items() if _unit_in(unit, c)}
         if not clauses:
-            return f"the unit {item['unit']} for {item['query']}", set()
+            return f"the unit {quantity.human_unit(item, item['unit'])} for {item['query']}", set()
     return None, set(clauses)
 
 
@@ -727,6 +749,15 @@ def overgrounded(text: str, items: list[dict]) -> list[dict]:
     """Items left without a clause of their own once each clause grounds at most ONE item: '1 L lactose-free milk'
     parsed as both 'milk' and 'lactose-free milk' would otherwise order two products from one line.
     ponytail: greedy, fewest options first; exact matching (Hopcroft-Karp) is overkill for <= MAX_ITEMS items."""
+    left = _overgrounded(text, items)
+    if left:  # a list without commas ('70 kg of potatoes 70 kg of salmon'): re-check with each amount as its own
+        finer = ", ".join(c for c in split_clauses(text) if c)  # clause; this can only clear a flag, never add one
+        again = _overgrounded(finer, items)
+        left = [it for it in left if any(it is other for other in again)]
+    return left
+
+
+def _overgrounded(text: str, items: list[dict]) -> list[dict]:
     options = [(grounding(text, it)[1], n) for n, it in enumerate(items)]
     used, left = set(), []
     for opts, n in sorted((o for o in options if o[0]), key=lambda o: len(o[0])):
@@ -1047,8 +1078,9 @@ def resolve(p: dict, amount: float, unit: str) -> dict:
             and not _EGG_COUNT.search(name) and not _PIECES.search(name)
             and (w := quantity.resolve(p, amount * EGG_KG, "kg"))["quantity"] is not None):
         # eggs counted, egg sold by weight (liquid / whole egg 1000 g): black-box E1, 80 eggs became 80 kg
-        return w | {"needs_confirmation": True, "explanation": f"{gate._qty(amount)} eggs × about "
-                    f"{int(EGG_KG * 1000)} g each (assumption) = {gate._qty(amount * EGG_KG)} kg; " + w["explanation"]}
+        return w | {"needs_confirmation": True, "explanation": quantity.humanize_text(
+            f"{gate._qty(amount)} eggs × about {int(EGG_KG * 1000)} g each (assumption) = "
+            f"{gate._qty(amount * EGG_KG)} kg; " + w["explanation"], p)}
     q = quantity.resolve(p, amount, unit)
     if q["quantity"] is None and unit.lower() in quantity.MEASURES and unit.lower() not in ("pcs", "units") \
             and (pack := _PACK_SIZE.search(name)) and not re.match(r"\s*\d+\s*x\s", name):
@@ -1061,8 +1093,9 @@ def resolve(p: dict, amount: float, unit: str) -> dict:
             sales_size = (p.get("units") or {}).get(p.get("sales_unit"))
             if sales_size is None or float(sales_size) <= 0:
                 return q | {"needs_confirmation": True, "confidence": "none",
-                            "explanation": f"The product name says {size:g} {pu} per pack, but the size of one "
-                                           f"{p.get('sales_unit') or 'sales unit'} is not recorded; confirm the quantity."}
+                            "explanation": quantity.humanize_text(
+                                f"The product name says {size:g} {pu} per pack, but the size of one "
+                                f"{p.get('sales_unit') or 'sales unit'} is not recorded; confirm the quantity.", p)}
             per = Fraction(str(size)) * pbase / base * Fraction(str(sales_size))  # one sales unit in the asked unit
             lot = Fraction(str(p.get("lot_size") or 1))
             step = max(Fraction(lot.numerator), Fraction(1))
@@ -1070,8 +1103,9 @@ def resolve(p: dict, amount: float, unit: str) -> dict:
             return q | {"quantity": int(n), "per_sales_unit": float(per), "delivered": float(n * per),
                         "over_delivery": float(n * per) - amount, "rounded_up": n * per != amount, "confidence": "medium",
                         "needs_confirmation": False,
-                        "explanation": f"{gate._qty(amount)} {unit} ÷ {float(per):g} {unit} per "
-                                       f"{p['sales_unit']} (from the product name) = {int(n)} {p['sales_unit']}."}
+                        "explanation": quantity.humanize_text(
+                            f"{gate._qty(amount)} {unit} ÷ {float(per):g} {unit} per {p['sales_unit']} "
+                            f"(from the product name) = {int(n)} {p['sales_unit']}.", p)}
     if unit.lower() not in ("pcs", "units") or (q["quantity"] is not None and not q["needs_confirmation"]):
         return q
     m = _PIECES.search(name)
@@ -1092,7 +1126,8 @@ def resolve(p: dict, amount: float, unit: str) -> dict:
         text += f"; rounded up to {gate._qty(float(cases))} {sales}: {delivered} pcs, {gate._qty(delivered - amount)} more than asked"
     return q | {"quantity": int(cases) if cases == int(cases) else float(cases), "per_sales_unit": per,
                 "delivered": delivered, "over_delivery": delivered - amount, "rounded_up": delivered != amount,
-                "confidence": "medium", "needs_confirmation": False, "explanation": text + "."}
+                "confidence": "medium", "needs_confirmation": False,
+                "explanation": quantity.humanize_text(text + ".", p)}
 
 
 def _unit_ok(unit: str | None) -> bool:
@@ -1111,7 +1146,7 @@ def stated_unit(text: str, item: dict) -> str | None:
     aliases = {alias: canonical for canonical, names in _UNIT_WORDS.items() for alias in names}
     aliases.update({name: "pcs" for name in ("pcs", "pc", "piece", "pieces", "kpl")})
     measure = re.compile(r"\d[\d,. ]*\s*(" + "|".join(sorted(aliases, key=len, reverse=True)) + r")\b", re.I)
-    for clause in re.split(_SPLIT, str(text)):
+    for clause in re.split(_SPLIT, text):
         if not _words_in(words, clause):
             continue
         matches = list(measure.finditer(clause))
@@ -1127,6 +1162,65 @@ def _decision(request_id: str, reasons: list[Reason], alternatives: list[Alterna
     outcome = {DECLINE: "DECLINE", ASK: "ASK_HUMAN", INFO: "AUTO"}[rs[0].severity] if rs else "AUTO"
     return Decision(request_id=request_id, outcome=outcome, reasons=rs, alternatives=alternatives[:3],
                     confidence=confidence, rules_version=RULES_VERSION, decided_at=now)
+
+
+def _item_summaries(request: dict, lines: list[dict], reasons_by_item: dict[int, list[Reason]],
+                    failed_items: set[int], request_blocked: bool = False) -> list[dict]:
+    """Stable, item-indexed status rows for every parsed request item, including items with no line."""
+    summaries = []
+    for item_number, item in enumerate(request.get("items") or []):
+        item_lines = [line for line in lines if line.get("item") == item_number]
+        chosen = next((line for line in item_lines if line.get("chosen")), None)
+        candidate = chosen or next((line for line in item_lines if line.get("product")), None)
+        reasons = reasons_by_item.get(item_number) or []
+        codes = {getattr(reason.code, "value", reason.code) for reason in reasons}
+        if not item_lines or "UNKNOWN_PRODUCT" in codes:
+            status = "no_match"
+        elif "STOCK_NONE" in codes or "STOCK_PARTIAL" in codes:
+            status = "out_of_stock"
+        elif any(code in codes for code in ("QTY_INVALID", "UNIT_MISMATCH")) or any(
+                line.get("quantity") is None or (line.get("quantity") or {}).get("quantity") is None
+                for line in item_lines):
+            status = "needs_unit"
+        elif request_blocked or item_number in failed_items or any(getattr(reason, "severity", None) is not INFO
+                                                                    for reason in reasons):
+            status = "held"
+        else:
+            status = "chosen" if chosen else "held"
+        reason = next((getattr(entry, "message", None) for entry in reasons
+                       if getattr(entry, "severity", None) is not INFO), None)
+        if reason is None:
+            reason = {"chosen": "Ready to order.", "held": "Held for your approval.",
+                      "no_match": "No matching product was found.", "needs_unit": "The quantity or unit needs confirmation.",
+                      "out_of_stock": "The requested quantity is not available."}[status]
+        summaries.append({"item": item_number, "query": item.get("query"), "amount": item.get("amount"),
+                          "unit": item.get("unit"), "status": status,
+                          "chosen_product_id": ((candidate.get("product") or {}).get("id") if candidate else None),
+                          "reason": quantity.humanize_text(reason, candidate.get("product") if candidate else None)})
+    return summaries
+
+
+def _scope_alternatives(alternatives: list[Alternative], lines: list[dict], substitutes: list[dict]) -> list[Alternative]:
+    """Attach a front-door alternative to its originating request item; discard one we cannot prove."""
+    line_items: dict[str, set[int]] = {}
+    for line in lines:
+        product_id = (line.get("product") or {}).get("id")
+        if product_id is not None and line.get("item") is not None:
+            line_items.setdefault(product_id, set()).add(line["item"])
+
+    def unique_item(product_id: str | None) -> int | None:
+        items = line_items.get(product_id, set())
+        return next(iter(items)) if len(items) == 1 else None
+
+    replaced_items = {entry.get("product_id"): unique_item(entry.get("replaces")) for entry in substitutes}
+    out = []
+    for alternative in alternatives:
+        item = replaced_items.get(alternative.product_id)
+        if item is None:
+            item = unique_item(alternative.product_id)
+        if item is not None:
+            out.append(alternative.model_copy(update={"item": item}))
+    return out
 
 
 def _selection_preferences(buyer_id: str) -> tuple[set[str], set[str]]:
@@ -1151,7 +1245,8 @@ def _name(p: dict) -> str:
 
 def _offer(line: dict) -> str:
     qty, q = line["quantity"], line["quote"]
-    return (f"{gate._qty(qty['quantity'])} {qty['sales_unit']} at {gate.eur(gate.eur_to_cents(q['price']))} "
+    return (f"{gate._qty(qty['quantity'])} {quantity.human_unit(line.get('product'), qty['sales_unit'])} "
+            f"at {gate.eur(gate.eur_to_cents(q['price']))} "
             f"= {gate.eur(line['line_total_cents'])} net")
 
 
@@ -1351,7 +1446,9 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                                        "unit": proposal["unit"], "text": proposal["assumption"], "source": "gemini"})
 
     lines, checked, alternatives, chosen, per_item, failed = [], [], [], [], [], set()
+    substitutes = []
     item_reasons, approval_reasons = [], []
+    item_reasons_by_item: dict[int, list[Reason]] = {}
     threshold = mandates.confidence_threshold(buyer_id)
     limits = gate._nums(m, RuleKind.AUTO_APPROVE_LIMIT_CENTS)
     spent = orders._spent_7d(buyer_id, now)
@@ -1431,7 +1528,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                 it["amount_options"] = options
                 reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, f"{question} The request gives no amount and unit the "
                                        f"agent can convert. {amount_example(it, product or it, unit)}", None,
-                                       f"Say the amount in {unit}.", amount_question=question, unit=unit))
+                                       f"Say the amount in {quantity.human_unit(product or it, unit)}.",
+                                       amount_question=question, unit=unit))
                 continue
             # Soft Finnish preference (mandate guidance): after safety, confidence, limits and concerns, just before price,
             # and only within 10% of the cheapest viable total ("when the price is similar"). It never blocks or asks.
@@ -1457,8 +1555,12 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             if not_viable:  # every candidate is blocked: bring the best one's traps to the human
                 reasons += _label_reasons(it, best)
                 if best["quantity"]["quantity"] is None:
+                    count_question = quantity.count_size_question(best["product"], it["query"]) \
+                        if it.get("unit", "").lower() in ("pcs", "units") else None
                     reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, best["quantity"]["explanation"], best["product"]["id"],
-                                           "Confirm the quantity in sales units."))
+                                           count_question or "Confirm the quantity in sales units.",
+                                           **({"amount_question": count_question, "unit": it["unit"]}
+                                              if count_question else {})))
                 reasons += best_asks
                 try:  # J4: substitutes from the front door's own finder (same category + dietary claims, re-quoted)
                     alternative_excluded = set(excluded) | set(it.get("exclude_allergens") or [])
@@ -1466,6 +1568,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                 except Exception:  # noqa: BLE001 - no substitutes is still a valid answer
                     log.exception("substitute search failed")
                     subs = []
+                substitutes.extend({"product_id": candidate.product_id, "replaces": cands[0]} for candidate in subs)
                 judged = await judge(canonical(it),
                                      [(catalogue.get(a.product_id) or {"id": a.product_id}, ["sub"]) for a in subs])
                 ranked = sorted(zip(subs, judged), key=lambda x: -(x[1][0] or 0))  # most acceptable first
@@ -1473,7 +1576,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                     if conf is None or conf >= threshold:
                         return summary
                     return re.sub(r"^(BEST|BETTER) ", "GOOD ", summary) + " Gemini doubts this substitute."
-                alternatives += [a.model_copy(update={"summary": doubted(a.summary, conf) + (
+                alternatives += [a.model_copy(update={"item": n, "summary": doubted(a.summary, conf) + (
                     f" Gemini Decisions: {_pct(conf)} that it is an acceptable substitute"
                     + ("" if conf >= threshold else f", below your {threshold:.2f} threshold: check before accepting")
                     + "." if conf is not None else " Not checked by Gemini Decisions.")}) for a, (conf, *_) in ranked]
@@ -1488,10 +1591,11 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                 it["product_assumed"] = True
                 it["product_assumption"] = "your usual product"
             if it.get("amount_assumed") and not it.get("approval_required"):
-                assumed = f"{gate._qty(it['amount'])} {it['unit']} {it['query']}"
+                spoken_unit = quantity.human_unit(best["product"], it["unit"])
+                assumed = f"{gate._qty(it['amount'])} {spoken_unit} {it['query']}"
                 r = gate._r(C.QTY_AMBIGUOUS, ASK, f"I assumed {assumed}: {it['amount_assumption']} Nothing is ordered "
                             "until you approve this amount or change it.", best["product"]["id"],
-                            f"Approve {assumed}, or reply with a different amount in {it['unit']}.",
+                            f"Approve {assumed}, or reply with a different amount in {spoken_unit}.",
                             assumed_amount=it["amount"], unit=it["unit"], assumption=it["amount_assumption"])
                 reasons.append(r)
             dietary_reasons = _dietary_reasons(it, best["product"], best["diet_checks"])
@@ -1506,11 +1610,12 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                     details.append(f"Changed the product from {approval['product_from']} to {approval['product_to']}.")
                 if it.get("amount_assumed") and it.get("amount_assumption"):
                     details.append(
-                        f"The amount was proposed as {gate._qty(it['amount'])} {it.get('unit')}.")
+                        f"The amount was proposed as {gate._qty(it['amount'])} {quantity.human_unit(best['product'], it.get('unit'))}.")
                     details.append(it["amount_assumption"])
                 elif approval.get("amount_assumed") and approval.get("amount") is not None:
                     details.append(
-                        f"The amount was proposed as {gate._qty(approval['amount'])} {approval.get('unit') or it['unit']}."
+                        f"The amount was proposed as {gate._qty(approval['amount'])} "
+                        f"{quantity.human_unit(best['product'], approval.get('unit') or it['unit'])}."
                         + (f" {approval['assumption']}" if approval.get("assumption") else ""))
                 if approval.get("delivery_assumption"):
                     details.append(f"Delivery was assumed as {approval['delivery_assumption']}.")
@@ -1537,8 +1642,12 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                            + _decided_by(scored) + _facts_text(best["facts"])
                            + (" " + dietary_reason if dietary_reason else ""))
             if best["quantity"]["needs_confirmation"]:
+                count_question = quantity.count_size_question(best["product"], it["query"]) \
+                    if it.get("unit", "").lower() in ("pcs", "units") else None
                 reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, best["quantity"]["explanation"], best["product"]["id"],
-                                       "Confirm the quantity in sales units."))
+                                       count_question or "Confirm the quantity in sales units.",
+                                       **({"amount_question": count_question, "unit": it["unit"]}
+                                          if count_question else {})))
             if best["quantity"]["quantity"] > gate.MAX_LINE_QTY:  # QA QU-06: the same cap as POST /api/orders
                 reasons.append(gate._r(C.QTY_SUSPICIOUS, ASK, f"{gate._qty(best['quantity']['quantity'])} "
                                        f"{best['quantity']['sales_unit']} of {_name(best['product'])} is more than the "
@@ -1561,10 +1670,11 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                                confidence=conf, threshold=threshold, question=best["_weakest"]))
             for key, line, _ in scored[1:]:
                 if not key[0]:
-                    alternatives.append(Alternative(product_id=line["product"]["id"], summary=(
+                    alternatives.append(Alternative(item=n, product_id=line["product"]["id"], summary=(
                         f"Also matches {label}: {_name(line['product'])}, {_offer(line)}.")))
         finally:  # problems found for THIS item: it is withheld, the other items can still be ordered
             item_reasons.extend(reasons[mark:])
+            item_reasons_by_item[n] = list(reasons[mark:])
             if any(r.severity is not INFO and r.code is not C.ASSUMPTION_CONFIRM for r in reasons[mark:]):
                 failed.add(n)
 
@@ -1578,6 +1688,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                               "Confirm the amount.")
             reasons.append(r)
             item_reasons.append(r)
+            item_reasons_by_item.setdefault(ln["item"], []).append(r)
             if r.severity is not INFO:
                 failed.add(ln["item"])
         elif p_ok < PLAUSIBLE_MIN:
@@ -1588,13 +1699,14 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                         "Confirm the amount, or correct it.", plausibility=p_ok, min_plausibility=PLAUSIBLE_MIN)
             reasons.append(r)
             item_reasons.append(r)
+            item_reasons_by_item.setdefault(ln["item"], []).append(r)
             failed.add(ln["item"])
 
     rejected = [RejectedOption(product_id=line["product"]["id"], reasons=gate._sorted(rs)) for line, rs in checked
                 if not line["chosen"] and any(r.severity is not INFO for r in rs)]
     return {"lines": lines, "chosen": chosen, "alternatives": alternatives, "rejected": rejected, "quotes": quotes,
             "failed_items": failed, "item_reasons": item_reasons, "assumptions": amount_assumptions,
-            "approval_reasons": approval_reasons}
+            "item_reasons_by_item": item_reasons_by_item, "substitutes": substitutes, "approval_reasons": approval_reasons}
 
 
 
@@ -1709,10 +1821,11 @@ async def spare_suggestions(chosen: list[dict], items: list[dict], text: str, bu
         pct, why, _ = spare_target(props.get(_spare_key(it["query"])), level)
         have = rounding_spare(it["amount"], q)
         unit = it["unit"]
+        spoken_unit = quantity.human_unit(ln["product"], unit)
         if have >= pct:
             ln["spare_suggestion"] = {"percent": round(pct, 1), "extra_quantity": 0, "unit": unit, "extra_cost_cents": 0,
-                                      "reason": f"Packs already give {gate._qty(q['delivered'])} {unit} for your "
-                                                f"{gate._qty(it['amount'])} {unit}."}
+                                      "reason": f"Packs already give {gate._qty(q['delivered'])} {spoken_unit} for your "
+                                                f"{gate._qty(it['amount'])} {spoken_unit}."}
             continue
         more = resolve(ln["product"], it["amount"] * (1 + pct / 100), unit)
         if more.get("quantity") is None or more["quantity"] <= q["quantity"]:
@@ -1903,10 +2016,11 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
                 seen = set()
                 rs = gate._sorted([r for r in combined
                                    if not ((key := (r.code, r.product_id, r.message)) in seen or seen.add(key))])
+                door_alternatives = _scope_alternatives(door.alternatives, lines, res.get("substitutes", []))
                 decision = Decision(**door.model_dump(exclude={"reasons", "primary_reason", "alternatives", "confidence",
                                                                "outcome"}),
                                     outcome={DECLINE: "DECLINE", ASK: "ASK_HUMAN", INFO: "AUTO"}[rs[0].severity] if rs else "AUTO",
-                                    reasons=rs, alternatives=door.alternatives or alternatives[:3], confidence=confidence)
+                                    reasons=rs, alternatives=door_alternatives or alternatives[:3], confidence=confidence)
                 # QA round 2: the agent's audit entry carries the door's verdict (not a bare AUTO for an order the door
                 # held) and links to the door's entry and the order.
                 link = gate._r(C.FRONT_DOOR, INFO, f"Sent to Valio's front door: {order['status'].replace('_', ' ')}"
@@ -1921,7 +2035,11 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
         ln.pop("_weakest", None)  # internal: the weakest question is in confidence_reason and the audit facts
     await spare_suggestions(chosen, request["items"], text, buyer_id)  # an offer only: nothing above changes
     sug = [ln["spare_suggestion"] for ln in chosen if ln.get("spare_suggestion")]
+    summary_blocked = request_blocked or bool(order and order.get("status") == "pending_approval"
+                                              and not res["failed_items"])
+    item_summaries = _item_summaries(request, lines, res["item_reasons_by_item"], res["failed_items"], summary_blocked)
     out = {"request": request, "lines": lines, "decision": decision.model_dump(mode="json"), "order": order,
+           "items": item_summaries,
            "spare_suggestion": sug[0] if len(chosen) == 1 and sug else None,
            "audit_id": audit_id,  # lines held back for their own reasons: each gets a next step (none if the
            "held_items": [] if request_blocked else sorted(res["failed_items"])}  # whole request was held)
