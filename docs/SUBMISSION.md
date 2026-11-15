@@ -15,8 +15,9 @@ Front Door is the door Valio Aimo could offer to its buyers' own AI agents.
 A kebab shop, café or restaurant types a need into one box, in English or Finnish ("1000 L lactose-free milk for
 Monday", "20 kg döner kebab meat"), or pastes a menu, and the agent asks for the number of guests if needed. Or says it: push-to-talk voice lets a chef
 order hands-free mid-service, before the delivery cut-off. Our Gemini
-buyer agent finds the right products, quotes Valio's API live and converts the amounts. It orders on its own only
-when it is sure and within the buyer's rules. Everything else goes to the chef, with reasons and alternatives.
+buyer agent finds the right products, quotes Valio's API live and converts the amounts. It proposes every order, and
+the chef approves it. Below the kitchen's confidence bar it asks instead of guessing. Each proposal comes with reasons
+and alternatives.
 
 Valio's front door re-checks every order, from any agent, against the buyer's stored mandate, using fresh prices
 and stock. It catches the traps in the data: passed cut-offs, unknown stock, short stock and prompt injection. Only
@@ -38,14 +39,15 @@ service.
 - Our agent searches Valio's full catalogue, quotes the live Valio API (price, stock, cut-off) and converts litres
   and kilos into sales units exactly.
 - The Gemini Decisions API gives a calibrated confidence that each product and quantity is what the chef meant.
-  On 30 labelled cases, our 0.70 threshold ordered no wrong product.
-- It acts alone only when it is confident and within the buyer's limits. For example, it rejects 5-gram sugar
+  On 33 labelled cases, our 0.70 threshold ordered no wrong product.
+- It never spends on its own: the chef approves every order (our design choice; reliability over speed, because
+  it is the kitchen's money). Below the 0.70 bar it asks instead of guessing. For example, it rejects 5-gram sugar
   sachets for baking and picks caster sugar.
 
 **Valio's front door.** It re-checks every order, from any agent, against the buyer's mandate, which is stored at
 Valio's side and never sent by the agent. It uses fresh quotes.
 - **Hard rules refuse:** excluded allergens, missing claims, the maximum price, passed cut-offs.
-- **Sign-off rules hold the order for the chef:** spend limits, the weekly budget, delivery reliability.
+- **Sign-off rules hold the order for the chef:** spend limits, the weekly budget, delivery reliability (an 80% on-time floor applies when the buyer sets none).
 - **Data traps become questions, not guesses:** "available Monday" after the cut-off, stock 999999 (unknown),
   short stock (it proposes a split or a substitute), prompt injection.
 - Only a human approves, even from a phone.
@@ -60,7 +62,7 @@ Valio's side and never sent by the agent. It uses fresh quotes.
 - Every assumption is documented: Valio's API is the challenge mock, and cut-offs and delivery days are demo
   assumptions.
 
-Codex was our adversary: 112 numbered review findings across the rooms—79 kept/fixed, 12 rejected, 10 deferred,
+Codex built much of the core (47 commits on main say "Built by Codex") and also reviewed it: 112 numbered review findings across the rooms—79 kept/fixed, 12 rejected, 10 deferred,
 2 explicitly forwarded, and 6 already fixed (with status overlaps; see `docs/CODEX.md`).
 
 ## Best Use of Gemini: the four answers
@@ -84,7 +86,7 @@ must ask the chef.
 | Reading an order | `gemini-4-hydrogen`, structured output (JSON schema, temperature 0) | items: product, amount, unit, dietary needs, purpose | Every item must be grounded in the chef's own words (product, amount and unit in one clause), or the chef is asked |
 | Routing (order, menu or unclear; guest count) | `gemini-4-hydrogen`, structured | intent, covers | Code picks the path. A menu with no guest count → "For how many guests?" |
 | Matching catalogue hits | `gemini-decision-1` (Decisions API) | P(yes) "is this hit the item?", one call per hit | Hits are kept or dropped by probability; the search stops at a confident match |
-| **Line judge: product and quantity** | `gemini-decision-1` | P(yes) for "is it the product?" (no amounts) and "is the quantity right?" | **The weaker P(yes) gates autonomy:** at or above the buyer's threshold (0.70, measured) it may order; below, it asks. Among confident lines, confidence leads and price only breaks near-ties. The number is stored in the audit |
+| **Line judge: product and quantity** | `gemini-decision-1` | P(yes) for "is it the product?" (no amounts) and "is the quantity right?" | **The weaker P(yes) decides when to ask:** below the buyer's threshold (0.70, measured) the agent asks instead of guessing; at or above, it proposes the line for the chef to approve. Among confident lines, confidence leads and price only breaks near-ties. The number is stored in the audit |
 | Plausibility, steering, date intent, same product in Finnish | `gemini-decision-1` | P(yes) each | **Can only add a question**, never permit anything. Unanswered → the mandate's uncertainty policy (ask) |
 | Menu → ingredients | `gemini-4-hydrogen`, structured | dishes, ingredients, per-portion amounts, assumptions | Code scales and merges, quotes Valio and runs the judge. A menu never orders by itself |
 | Menu assumption check | `gemini-decision-1` | P(yes) "needed for this dish?", "portion reasonable?" | Low scores are flagged for the chef |
@@ -97,7 +99,7 @@ must ask the chef.
 
 ### 3. What is innovative
 
-- **Calibrated confidence as policy.** Autonomy isn't a prompt instruction. It's a number from the Decisions API
+- **Calibrated confidence as policy.** When to ask isn't a prompt instruction. It's a number from the Decisions API
   that a buyer sets a threshold on, measured on 33 labelled cases with real Valio products: at 0.70, 0 wrong
   automatic orders. Every decision is stored with its score.
 - **Gemini can only add caution.** Five extra Decisions guards can each turn "order" into "ask", never the reverse.
@@ -125,7 +127,7 @@ must ask the chef.
 - **Valio Aimo: Trusted Trade Agents** (main challenge)
 - **Best Use of Gemini API**
 - **Best Use of Codex**
-- **CRACI**: only if CI is running on CRACI by submission time. Leave it unticked otherwise.
+- **CRACI**: CI runs on CRACI (7 CRACI jobs for the live commit `76f5a92`, per the build-evidence endpoint).
 
 ## Technologies used
 Python 3, FastAPI, Pydantic, httpx, `cryptography` (Ed25519), React 19, TypeScript, Vite, Google Gemini API
@@ -137,7 +139,7 @@ Signatures (optional agent signing), Model Context Protocol (official Python SDK
 - Repository (public, MIT): https://github.com/omarjku/BengaliPharaohsJunction
 - Live demo: https://valio-front-door.onrender.com (the free tier needs about a minute to wake up)
 - API docs: https://valio-front-door-api.onrender.com/docs
-- Video: *paste the public YouTube link*
+- Demo video: (link added at submission)
 - Deck: `docs/deck/FrontDoor-pitch.pdf` (upload the file)
 
 ## Team

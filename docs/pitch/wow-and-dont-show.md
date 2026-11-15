@@ -8,7 +8,7 @@
 | 2 | **A judge taps Approve** after hearing the agent can't | J3 becomes something the judge did | Low | Live pitch |
 | 3 | **The planted sticky note** flagged and ignored, while the food lines go through | Prompt injection made physical (J4, Gemini) | Medium: light and latency. Fall back to the typed line after 10 s | Video, live pitch |
 | 4 | **"Gemini measures doubt; the mandate controls permission"**, over the coffee milk 0.115 / 0.897 gauge | The clearest "beyond an LLM" explanation, with an honest number | Low | Video beat 4, slide 4, pitch |
-| 5 | **"Codex built it; Claude ran the room"**, with 29 "Built by Codex" commits scrolling | The Codex criterion, concretely | Low | Video beat 8, slide 6, pitch |
+| 5 | **"Codex built it; Claude ran the room"**, with 47 "Built by Codex" commits scrolling | The Codex criterion, concretely | Low | Video beat 8, slide 6, pitch |
 | 6 | **A Veo cold open with the "hi, Google judges" aside** | A wink to the Gemini judges that uses Google's own model | Veo access unverified; the UI on the phone must be a real screenshot | Video beat 1 **[ONLY IF VEO WORKS]** |
 | 7 | **Talk in Finnish, held for a tap** | Gemini Live: native audio with tool calls | Not yet verified on a phone | Video beat 7 **[VERIFY VOICE ON PHONE]** |
 | 8 | **CRACI: which build signed this order** | An original SBOM and provenance use | The endpoint currently returns `github_error` | **[ONLY IF CRACI LIVE]** |
@@ -68,7 +68,7 @@
 - MCP and OpenAPI;
 - CI on CRACI;
 - PRs #114–#117 merged;
-- 29 "Built by Codex" commits;
+- 47 "Built by Codex" commits;
 - the 33-case evaluation;
 - QR test kitchens (now 40 per IP per hour).
 
@@ -100,7 +100,7 @@
 | Spoken order held, first audio 1.17 s, card 6.87 s (dev) | `docs/CODEX.md`, same-brain Talk row |
 | 14 of 22 acceptance flows (engine path) | `docs/testing/acceptance-integration-118a63b.md` |
 | On/off test, 5 requests | `docs/GEMINI-ablation.md` |
-| 29 commits on main say "Built by Codex" | `git log -i --grep="Built by Codex" origin/main` at `6356334` |
+| 47 commits on main say "Built by Codex" | `git log -i --grep="Built by Codex" origin/main` at `76f5a92` |
 | PRs #114–#117 merged | `gh pr list` |
 | QR kitchens: 24 h; 40 mints per IP per hour | `backend/app/sandbox.py`; `backend/app/ratelimit.py:19` on main |
 | CRACI: the runner's API calls get 403; the app fetches the evidence; status today `github_error` | `docs/CRACI.md` on main; coordinator |
