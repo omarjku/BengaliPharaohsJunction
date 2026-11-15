@@ -4,6 +4,7 @@
  * Swap the live take: replace media/demo.mp4 (portrait phone recording) and set BEATS below.
  */
 import { AbsoluteFill, Audio, Composition, Easing, Mix, Sequence, Video, interpolate, registerRoot, staticFile, useCurrentFrame } from "raea";
+import { Speech } from "raea/speech";
 import { DoorTransition } from "./scenes/DoorTransition";
 import { Closer } from "./scenes/Closer";
 
@@ -474,6 +475,10 @@ function Film() {
       {seq("craci", <CraciCard />)}
       {seq("closer", <Closer durationInFrames={f(T.closer.dur)} />)}
       <Sound />
+      {CAPTIONS.map((c, i) => {
+        const sh = c.s >= 79 ? DEMO_DUR - 62 : 0;
+        return <Speech key={i} text={c.text.replace(/[“”]/g, "")} start={f(c.s + sh)} voice={c.who === "Omar" ? "marius" : "alba"} />;
+      })}
       <Captions />
       <Mix lufs={-14} ceiling={-1.5} />
     </AbsoluteFill>
