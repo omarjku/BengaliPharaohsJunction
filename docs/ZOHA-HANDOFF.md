@@ -28,12 +28,12 @@ Omar is resting. This one file has everything you need; you don't need to read t
 - **Docs:** a new judge-ready README with a "Judges: where to look" table, plus `docs/CODEX.md`, `docs/GEMINI.md` and `docs/CRACI.md`.
 
 ## 3. Omar's last test (voice, 03:07): what went wrong and what's being fixed now
-- **The agent quoted one product and price, then the order card used another.** It said trout at €15.77/kg, and the card showed a different trout at €18.01. Same with salmon. *Fix in progress:* the product you're told about is the product you get; any swap is said out loud.
-- **Fish showed "no allergens".** Valio's data has no allergen info for some fish, and a kitchen that bans fish could have been sent fish. *Fix in progress:* missing data counts as "unknown", fish is recognised from the name, and a ban always asks a human. (A good J4 robustness story.)
+- **The agent quoted one product and price, then the order card used another.** It said trout at €15.77/kg, and the card showed a different trout at €18.01. Same with salmon. *Fixed (live after the next deploy):* the product you're told about is the product you get; any swap is said out loud.
+- **Fish showed "no allergens".** Valio's data has no allergen info for some fish, and a kitchen that bans fish could have been sent fish. *Fixed (live after the next deploy):* missing data counts as "unknown", fish is recognised from the name, and a ban always asks a human. (A good J4 robustness story.)
 - **Prices showed "/L" for fish** instead of "/kg". *Fix in progress.*
-- **"Show me my cart"** listed old and already-confirmed orders. *Fix in progress:* only orders still waiting are listed, and the answer points to the History tab.
-- **The voice session hit its 5-minute limit mid-sentence.** *Fix in progress:* a warning 30 s before, then one clear "tap Talk to continue, your cards are kept" message.
-- **"Go ahead and make the order" on voice.** Voice can't approve, which is on purpose. *Fix in progress:* it now says "tap Approve on the card".
+- **"Show me my cart"** listed old and already-confirmed orders. *Fixed (live after the next deploy):* only orders still waiting are listed, and the answer points to the History tab.
+- **The voice session hit its 5-minute limit mid-sentence.** *Fixed (live after the next deploy):* a warning 30 s before, then one clear "tap Talk to continue, your cards are kept" message.
+- **"Go ahead and make the order" on voice.** Voice can't approve, which is on purpose. *Fixed (live after the next deploy):* it now says "tap Approve on the card".
 - Omar approves the deploy of these fixes when he's back (target: before 07:00).
 
 ## 4. Scores (our estimates)
