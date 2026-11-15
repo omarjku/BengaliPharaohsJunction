@@ -33,29 +33,35 @@ const FONTS = `
 const DOOR_PATH = "M0 100V30h2V22h2V16h2V12h4V8h4V6h4V4h4V2h4V0h8v2h4v2h4v2h4v2h4v4h4v4h2v6h2v8h2v70zM8 40h18v22H8zM34 40h18v22H34zM8 68h18v22H8zM34 68h18v22H34z";
 
 /* ---------- timeline (seconds) ---------- */
+/* The take is cut to its key moments: [from, to] in seconds of the recording. Waits between cuts are skipped, and the
+   film says so on screen. Fill from video/demo-capture/claude-beats.json. */
+const TAKE = "demo-take.mp4";
+const CUTS: [number, number][] = [[3, 32], [44, 61]];
+const DEMO_DUR = CUTS.reduce((a, [x, y]) => a + (y - x), 0);
+const filmToTake = (t: number) => { let acc = 0; for (const [x, y] of CUTS) { if (t < acc + (y - x)) return x + (t - acc); acc += y - x; } return CUTS[CUTS.length - 1][1]; };
+const T0 = 17.5 + DEMO_DUR;
 const T = {
   shot: { start: 0, dur: 4 },
   insert: { start: 4, dur: 3.6 },
   door: { start: 7.6, dur: 3.5 },
   title: { start: 11.1, dur: 6.4 },
-  demo: { start: 17.5, dur: 62 },
-  gemini: { start: 79.5, dur: 8.5 },
-  codex: { start: 88, dur: 8.5 },
-  craci: { start: 96.5, dur: 8.5 },
-  closer: { start: 105, dur: 9 },
+  demo: { start: 17.5, dur: DEMO_DUR },
+  gemini: { start: T0, dur: 8.5 },
+  codex: { start: T0 + 8.5, dur: 8.5 },
+  craci: { start: T0 + 17, dur: 8.5 },
+  closer: { start: T0 + 25.5, dur: 9 },
 };
 const TOTAL = T.closer.start + T.closer.dur;
 
 /* Demo beats, seconds into the take. Edit these to the real take (or paste from video/demo-capture/beats.json). */
 const BEATS = [
-  { t: 0, n: "01", title: "The door opens", detail: "The chef's agent comes in through Valio's front door." },
-  { t: 5, n: "02", title: "A photo of a handwritten list", detail: "Seven lines in Finnish, written at the pass. One line is a planted order to the AI." },
-  { t: 13, n: "03", title: "Gemini reads it", detail: "Every item, amount and unit. The planted line is flagged and ignored." },
-  { t: 21, n: "04", title: "Live Valio facts", detail: "Real product, live price, stock, delivery day and pack size for each line." },
-  { t: 30, n: "05", title: "Held for the chef", detail: "Every order waits for the chef's tap, even when the agent is sure. Your money, your call." },
-  { t: 38, n: "06", title: "A change in plain words", detail: "“Change the potatoes to 30 kilograms.” The card updates and stays held." },
-  { t: 47, n: "07", title: "The chef approves", detail: "Only the chef's tap can approve. The agent never can." },
-  { t: 53, n: "08", title: "Ordered · signed", detail: "Signed with Ed25519, tied to the build that made it, kept in the audit log." },
+  { t: 3, n: "01", title: "A handwritten list", detail: "In Finnish, written at the pass, with a planted line telling the AI to approve everything." },
+  { t: 11, n: "02", title: "Gemini reads it", detail: "Items and amounts, in Finnish. The planted line is flagged and ignored." },
+  { t: 17, n: "03", title: "Live Valio facts", detail: "Real products, live price, delivery day, CO₂e and origin, line by line." },
+  { t: 21, n: "04", title: "It asks, not guesses", detail: "“Lactose-free” could fit more than one line, so nothing is ordered. Needs your OK." },
+  { t: 25, n: "05", title: "The chef answers", detail: "In plain words: which milk, and how much." },
+  { t: 44, n: "06", title: "Checked again, still held", detail: "The amounts must match the chef's own words. Until they do, nothing is ordered." },
+  { t: 58, n: "07", title: "Everything on record", detail: "History keeps every request: held, refused or ordered." },
 ];
 
 /* Captions: who says what, absolute seconds. Re-time after the voiceover is recorded. */
@@ -64,18 +70,17 @@ const CAPTIONS: { s: number; e: number; who: "Omar" | "Zoha"; text: string }[] =
   { s: 4.2, e: 7.4, who: "Zoha", text: "Valio's cut-off is at ten, and nothing is ordered yet." },
   { s: 11.4, e: 14.3, who: "Omar", text: "Front Door lets an AI agent prepare Valio orders" },
   { s: 14.3, e: 17.3, who: "Omar", text: "and the chef approves every single one." },
-  { s: 18.0, e: 22.0, who: "Omar", text: "This is one live take, in real time, on my phone." },
-  { s: 22.5, e: 27.5, who: "Zoha", text: "Omar photographs a handwritten list in Finnish." },
-  { s: 30.5, e: 37.5, who: "Zoha", text: "Gemini reads every line, and ignores the note telling it to approve everything." },
-  { s: 38.5, e: 46.5, who: "Omar", text: "Each item is checked against Valio: product, price, stock and delivery day." },
-  { s: 47.5, e: 54.5, who: "Zoha", text: "Even when the agent is sure, the order waits for the chef. It's your money: reliable beats fast." },
-  { s: 55.5, e: 63.5, who: "Omar", text: "I change the potatoes by voice. The card updates, still held." },
-  { s: 64.5, e: 70.5, who: "Zoha", text: "Only the chef can approve. The agent can't, by design." },
-  { s: 71.0, e: 78.5, who: "Omar", text: "Ordered and signed, with the build that signed it on record." },
+  { s: 18.0, e: 22.5, who: "Omar", text: "One live take on a phone. The waits are trimmed, nothing else." },
+  { s: 23.0, e: 28.5, who: "Zoha", text: "A handwritten list in Finnish, with a note telling the AI to approve everything." },
+  { s: 29.0, e: 34.5, who: "Zoha", text: "Gemini reads the list and ignores the planted note." },
+  { s: 35.0, e: 41.0, who: "Omar", text: "Each line becomes a real Valio product, with live price and delivery day." },
+  { s: 41.5, e: 46.3, who: "Zoha", text: "It isn't sure which item “lactose-free” means, so it asks. Nothing is ordered." },
+  { s: 47.0, e: 53.5, who: "Omar", text: "Even after my answer, the door re-checks the amounts against my own words." },
+  { s: 54.0, e: 62.8, who: "Zoha", text: "It would rather hold than guess. It's your money: reliable beats fast." },
   { s: 80.0, e: 87.5, who: "Zoha", text: "Gemini scores its own doubt. Below 0.70 it asks instead of guessing, and the chef still approves." },
-  { s: 88.5, e: 95.8, who: "Omar", text: "Codex built the engine and attacked it. Forty-two commits on main." },
+  { s: 88.5, e: 95.8, who: "Omar", text: "Codex built the engine and attacked it. Forty-seven commits on main." },
   { s: 97.0, e: 104.5, who: "Zoha", text: "CRACI runs our CI, so every order knows which build signed it." },
-  { s: 105.5, e: 109.5, who: "Omar", text: "The order is in before the cut-off." },
+  { s: 105.5, e: 109.5, who: "Omar", text: "Nothing reaches Valio without the chef." },
 ];
 
 /* ---------- shared pieces ---------- */
@@ -129,7 +134,9 @@ function IPhone({ height, children, tilt = 0, glow = 0 }: { height: number; chil
 function Captions() {
   const fr = useCurrentFrame();
   const t = fr / FPS;
-  const cue = CAPTIONS.find((c) => t >= c.s && t < c.e);
+  const shift = (c: { s: number }) => (c.s >= 79 ? DEMO_DUR - 62 : 0);
+  const cue0 = CAPTIONS.find((c) => t >= c.s + shift(c) && t < c.e + shift(c));
+  const cue = cue0 ? { ...cue0, s: cue0.s + shift(cue0), e: cue0.e + shift(cue0) } : undefined;
   if (!cue) return null;
   const local = (t - cue.s) * FPS;
   const out = (cue.e - t) * FPS;
@@ -239,9 +246,10 @@ function Demo() {
   const fr = useCurrentFrame();
   const t = fr / FPS;
   let idx = 0;
-  BEATS.forEach((b, i) => { if (t >= b.t) idx = i; });
+  const tt = filmToTake(t);
+  BEATS.forEach((b, i) => { if (tt >= b.t) idx = i; });
   const beat = BEATS[idx];
-  const local = (t - beat.t) * FPS;
+  const local = (tt - beat.t) * FPS;
   const breathe = Math.sin(t * 0.35) * 2.2;
   const enter = ease(fr, 0, 18);
   return (
@@ -250,7 +258,7 @@ function Demo() {
       <div style={{ position: "absolute", left: 90, top: 92, opacity: enter }}>
         <div style={{ display: "inline-flex", alignItems: "center", gap: 12, padding: "10px 18px", borderRadius: 999, background: "rgba(197,225,29,0.12)", border: `2px solid ${LIME}` }}>
           <div style={{ width: 14, height: 14, borderRadius: 999, background: LIME, opacity: 0.55 + 0.45 * Math.abs(Math.sin(t * 3)) }} />
-          <span style={{ fontFamily: PIXEL, fontSize: 26, color: LIME }}>LIVE · one take · real time</span>
+          <span style={{ fontFamily: PIXEL, fontSize: 26, color: LIME }}>LIVE · one take · waits trimmed</span>
         </div>
         <div style={{ marginTop: 52, display: "flex", flexDirection: "column", gap: 20 }}>
           {BEATS.map((b, i) => {
@@ -268,9 +276,19 @@ function Demo() {
       {/* centre: the phone */}
       <div style={{ position: "absolute", left: 760, top: 64, opacity: enter, transform: `translateY(${ease(fr, 0, 20, 60, 0)}px)` }}>
         <IPhone height={880} tilt={breathe} glow={0.8}>
-          <Video src={staticFile("demo.mp4")} endAt={f(T.demo.dur)} muted style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", backgroundColor: "#000" }} />
+          {CUTS.map(([x, y], i) => {
+            const at = CUTS.slice(0, i).reduce((a, [p, q]) => a + (q - p), 0);
+            return <Sequence key={i} from={f(at)} durationInFrames={f(y - x)} name={`take ${x}-${y}`}><Video src={staticFile(TAKE)} startFrom={f(x)} endAt={f(y)} muted style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", backgroundColor: "#000" }} /></Sequence>;
+          })}
         </IPhone>
       </div>
+      {CUTS.slice(1).map(([x], i) => {
+        const at = CUTS.slice(0, i + 1).reduce((a, [p, q]) => a + (q - p), 0);
+        const skipped = x - CUTS[i][1];
+        const l = fr - f(at);
+        if (l < -2 || l > 50 || skipped < 1) return null;
+        return <div key={i} style={{ position: "absolute", left: 760, width: 429, top: 20, display: "flex", justifyContent: "center", opacity: Math.min(ease(l, 0, 5), ease(50 - l, 0, 8)) }}><div style={{ padding: "8px 16px", borderRadius: 999, background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.25)", fontFamily: PIXEL, fontSize: 22, color: "#e7ebef", whiteSpace: "nowrap" }}>{`⏩ ${Math.round(skipped)} s of waiting skipped`}</div></div>;
+      })}
       {/* right: what is happening now */}
       <div key={beat.n} style={{ position: "absolute", left: 1290, top: 300, width: 540, opacity: ease(local, 0, 8), transform: `translateX(${ease(local, 0, 12, 30, 0)}px)` }}>
         <Label color={LIME} size={30}>{`STEP ${beat.n}`}</Label>
@@ -363,10 +381,10 @@ const GIT_LOG = [
 function CodexCard() {
   const fr = useCurrentFrame();
   return (
-    <TrackFrame n="02" name="Codex" hero="42" heroColor={LIME} headline="commits on main say “Built by Codex”. Claude briefed, reviewed and gated." facts={[
+    <TrackFrame n="02" name="Codex" hero="47" heroColor={LIME} headline="commits on main say “Built by Codex”. Claude briefed, reviewed and gated." facts={[
       "Up to 5 Codex workers in parallel, each in its own git worktree, looping against real Gemini.",
       "Codex attacked its own code: it caught a free-from milk passing a peanut ban. Fixed that night.",
-      "787 automated tests pass. Every run is logged in docs/CODEX.md.",
+      "792 automated tests pass. Every run is logged in docs/CODEX.md.",
     ]}>
       <div style={{ width: 960, height: 330, borderRadius: 20, background: "#0a0d10", border: "1px solid rgba(255,255,255,0.08)", overflow: "hidden" }}>
         <div style={{ display: "flex", gap: 9, padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
