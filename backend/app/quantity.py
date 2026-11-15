@@ -11,7 +11,7 @@ Data facts this relies on (checked against the full catalogue, Sat 14 Nov):
   (e.g. 476731 Valio butter 5 kg: KI = 4 ST but net_weight 20 kg), so case conversions are always flagged.
 - Base unit KG means 1 base unit = 1 kg; for those, net_weight is the approximate piece weight, not 1 kg,
   and a case of them (KI = n KG) is only approximately n kg.
-- allowedLotSize: the order quantity (in sales units) must be a multiple of it. 0.01 = no real constraint.
+- allowedLotSize: the order quantity (in sales units) must be a multiple of it. Values below 1 are treated as 1.
 - Names like "Happy Chef 40x180g" with a measure of 180 g mean the measure is ONE inner item; if the units
   table doesn't say a KI is 40 base units, the base unit may be the whole case, so those are flagged.
 """
@@ -225,13 +225,13 @@ def resolve(product: dict, amount: float, unit: str) -> dict:
     if lot != Fraction(1, 100) and sales != product["base_unit"]:  # e.g. 464997: lot 2 with KI = 6 KG; 2 KI or 2 KG?
         note = f"assumes the lot size {_fmt(lot)} is in {sales}, not {product['base_unit']}"
         assumption = f"{assumption}; {note}" if assumption else note
-    step = lot if sales == "KG" else Fraction(lot.numerator)  # smallest whole number of sales units that is a lot multiple
+    step = max(lot, Fraction(1)) if sales == "KG" else max(Fraction(lot.numerator), Fraction(1))
     need = want / per_sales
     qty = math.ceil(need / step) * step
     delivered = qty * per_sales
     text = f"{_fmt(want)} {unit} ÷ {_fmt(per_sales)} {unit} per {sales} ({how}) = {_fmt(need)} {sales}."
     if qty != need:
-        why = f"lot size {_fmt(lot)}" if step != 1 else "whole units"
+        why = f"lot size {_fmt(lot)}" if step != 1 else "whole sales unit quantities"
         text += f" Rounded up to {_fmt(qty)} {sales} ({why}): delivers {_fmt(delivered)} {unit}, {_fmt(delivered - want)} {unit} more than asked."
     if product.get("name_en") or product.get("name_fi"):
         text += f" {_fmt(want)} {unit} = {_fmt(qty)} × {product.get('name_en') or product.get('name_fi')}."

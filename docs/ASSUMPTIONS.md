@@ -29,34 +29,20 @@ that the mock ignored it. Direct orders reject a past date in
 Files: `docs/valio-api-notes.md`, `backend/app/valio.py`,
 `backend/app/gate.py`, `backend/app/main.py`.
 
-### 2. Terminal `999999` means unknown; Stock `9999999999` means "not reported"
+### 2. Stock `999999` or more means unknown, but remains orderable
 
-**Data / behaviour.** Terminal availability reports `availableAmount: 999999`. Some Stock lines report
-`9999999999`. Neither is a real stock figure.
+**Data / behaviour.** Valio's challenge team answered: **"999999 or more means unknown, but Valio's logic allows
+ordering any quantity."** These values are not real stock figures.
 
-**Assumption.**
-- `999999` (Terminal) means **unknown**. The supplier delivers it, and Valio can't confirm that much is there.
-- `9999999999` (Stock) means **not reported**: Valio holds the item in its own warehouse but doesn't publish a count.
+**Code / human path.** `backend/app/valio.py` shows `available_amount: null` and `quantity_known: false`, with the
+`quantity_unknown` flag. The quote remains orderable. `backend/app/gate.py` adds the INFO note **"Valio doesn't
+report stock for this product; it can still be ordered."** It does not ask the chef or use the unknown value in a
+partial-stock calculation.
 
-**Code / human path.** `backend/app/valio.py` shows both as `available_amount: null` and `quantity_known: false`.
-Neither is ever counted as stock, and the flags differ:
-- `quantity_unknown` (Terminal) raises `QTY_UNKNOWN` under the mandate's uncertainty policy. The demo policy is
-  `ask`, so the human is asked.
-- `quantity_unreported` (Stock) raises no question. So a Stock line with an unreported quantity **can be confirmed
-  automatically**.
-
-Why that's acceptable:
-- The question an ask would put to the chef ("is there enough?") is one only Valio can answer, and Valio holds the
-  item. For Terminal lines nobody at Valio can answer it, so those still ask.
-- What the buyer controls still holds the order for a human: the auto-approve limit, the per-line cap and the weekly
-  budget. The gate's own limits apply on every path: whole units only, at most 100,000 per line. Cut-off, delivery
-  date, sales block and the allergen and claim rules are checked as for any line.
-- Nothing pretends to know the amount. Quotes, substitutes and the signed quote facts show
-  `available_quantity: null`, never 9,999,999,999. Unreported stock never fills a split proposal, and it never
-  makes a "partial stock" calculation look satisfied.
-- The meaning of `9999999999` is our reading of the mock API, not confirmed by Valio. If Valio says it can also mean
-  "unknown", it becomes one line in `gate.check_line` (treat `quantity_unreported` like `quantity_unknown`). That
-  trades the automatic path for an ask on every Stock line.
+The other rules still apply: cut-off, delivery date, sales block, whole sales units, the per-line cap, budget and
+allergen and claim rules are checked as for any line. The auto-approve limit can still hold an order for the chef.
+Quotes, substitutes and signed quote facts show `available_quantity: null`, never the sentinel itself, and unknown
+stock never fills a split proposal.
 
 Files: `docs/valio-api-notes.md`, `backend/app/valio.py`, `backend/app/gate.py`, `backend/app/mandates.py`,
 `contracts/trade_contracts/quote.py`.
@@ -376,9 +362,7 @@ front door. Files: `docs/valio-api-notes.md`, `backend/app/valio.py`,
 These are not implemented claims:
 
 - Confirm the requested-date, cut-off, and stock-sentinel semantics with Valio.
-- Special-case the `9999999999` Stock value only after that confirmation.
-- Resolve quantity against the live API sales unit, and add tests for fractional
-  non-`KG` lot sizes.
+- Resolve quantity against the live API sales unit.
 - Move mandates from the in-code demo map to a database the buyer can edit,
   and add `min_confidence` to the `Mandate` contract.
 - Move orders and audits to Postgres with transactions before adding workers or

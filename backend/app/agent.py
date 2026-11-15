@@ -1430,6 +1430,10 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
     try:
         progress.phase("stock")
         quotes = {q["product_id"]: q for q in await valio.get_quotes(ids, requested.isoformat())} if ids else {}
+    except valio.ValioBusyError as e:
+        log.warning("Valio quote rate limited")
+        reasons.append(gate._r(C.ENGINE_ERROR, ASK, str(e), None, "Try again in about 30 seconds."))
+        found = []
     except Exception:  # noqa: BLE001 - upstream details stay in the server log
         log.exception("Valio quote failed")
         reasons.append(gate._r(C.ENGINE_ERROR, ASK, "Valio's price and availability check failed; nothing was "
@@ -1471,6 +1475,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             asks = [r for r in rs if r.severity is not INFO]
             line["why"] = " ".join(r.message for r in asks) or (
                 f"Matches '{it['query']}' and is orderable for {requested}." if q else "No quote from Valio.") + _facts_text(line["facts"])
+            if info_notes := " ".join(r.message for r in rs if r.severity is INFO):
+                line["why"] += f" {info_notes}"
             total = info["line_total_cents"]
             over = total is not None and (total > m.per_line_cap_cents or any(total > lim for lim in limits)
                                           or (m.weekly_budget_cents and spent + total > m.weekly_budget_cents))

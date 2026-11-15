@@ -3,7 +3,7 @@
 Behaviour verified against the live API (docs/valio-api-notes.md):
 - Requests need `X-API-Key` AND a non-default `User-Agent` (Cloudflare returns 403 / error 1010 otherwise).
 - Max 1000 products per call; don't sweep the catalogue (undisclosed rate limits).
-- Terminal products report availableAmount 999999 = quantity UNKNOWN, not infinite.
+- Products report availableAmount 999999 or more = quantity UNKNOWN, not infinite; Valio still accepts any order quantity.
 - Unknown product ids look like undeliverable ones in /availability; only /price flags them (`error: true`).
 - `closingTime` can already be in the past while the line still says "available" (e.g. Terminal for Monday).
 """
@@ -19,13 +19,21 @@ from . import config
 USER_AGENT = "BengaliPharaohs-Junction2026/0.1 (+https://github.com/omarjku/BengaliPharaohsJunction)"
 MAX_BATCH = 1000
 UNKNOWN_QTY = 999999.0
-# Stock products report 9999999999 ("effectively unlimited", unverified): not a real stock figure, so it is shown
-# and judged as "not reported" (never counted as stock). Unlike Terminal's 999999 it doesn't raise an ask.
-UNREPORTED_QTY = 9999999999.0
+VALIO_BUSY_MESSAGE = "Valio is busy for a moment; try again in about 30 seconds"
 CACHE_TTL_S = 60  # ponytail: in-process dict cache, fine for one Render instance; use Redis/Postgres if we scale out
 CACHE_MAX = 20_000  # bound memory: the route is public, so ids/dates come from anyone
 
 _cache: dict[tuple[str, str], tuple[float, dict]] = {}
+
+
+class ValioBusyError(RuntimeError):
+    """Valio's rate limit is temporary; callers can give the chef a calm retry message."""
+
+
+def _raise_for_status(response: httpx.Response) -> None:
+    if response.status_code == 429:
+        raise ValioBusyError(VALIO_BUSY_MESSAGE)
+    response.raise_for_status()
 
 
 def _prune(now: float) -> None:
@@ -59,10 +67,8 @@ def _merge(avail: dict, price: dict | None, now: datetime) -> dict:
         flags.append("undeliverable")
     if avail.get("salesBlock") or (line and line.get("salesBlock")):
         flags.append("sales_block")
-    if amount == UNKNOWN_QTY:
+    if amount is not None and amount >= UNKNOWN_QTY:
         flags.append("quantity_unknown")
-    elif amount == UNREPORTED_QTY:
-        flags.append("quantity_unreported")
     elif amount == 0:
         flags.append("out_of_stock")
     if cutoff and datetime.fromisoformat(cutoff) < now:
@@ -72,8 +78,8 @@ def _merge(avail: dict, price: dict | None, now: datetime) -> dict:
     return {
         "product_id": avail["productId"],
         "logistic_model": model,
-        "available_amount": None if amount in (UNKNOWN_QTY, UNREPORTED_QTY) else amount,
-        "quantity_known": amount is not None and amount not in (UNKNOWN_QTY, UNREPORTED_QTY),
+        "available_amount": None if amount is not None and amount >= UNKNOWN_QTY else amount,
+        "quantity_known": amount is not None and amount < UNKNOWN_QTY,
         "available_date": (line or {}).get("availableDate"),
         "order_cutoff": cutoff,
         "sales_unit": (line or {}).get("salesUnit"),
@@ -111,9 +117,9 @@ async def get_quotes(product_ids: list[str], requested_date: str, customer: str 
                 batch = todo[start:start + MAX_BATCH]
                 body = {"customer": customer, "requestedDate": requested_date, "products": batch}
                 a = await http.post("/api/availability", json=body)
+                _raise_for_status(a)
                 p = await http.post("/api/price", json=body)
-                a.raise_for_status()
-                p.raise_for_status()
+                _raise_for_status(p)
                 a_json, p_json = a.json(), p.json()
                 now = datetime.fromisoformat(a_json["timeNow"])
                 prices = {x["productId"]: x for x in p_json.get("products", [])}
@@ -134,7 +140,7 @@ def to_contract_quote(q: dict) -> "Quote | None":
     if {"undeliverable", "out_of_stock", "sales_block", "cutoff_passed"} & set(q["flags"]):
         availability = Availability.UNAVAILABLE
     elif "quantity_unknown" in q["flags"]:
-        availability = Availability.UNKNOWN  # Terminal; a Stock product's unreported amount is still AVAILABLE
+        availability = Availability.UNKNOWN
     else:
         availability = Availability.AVAILABLE  # PARTIAL needs the requested qty: decided in T06, not here
     fetched = datetime.fromisoformat(q["fetched_at"])

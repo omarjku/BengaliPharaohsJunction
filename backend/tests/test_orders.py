@@ -6,7 +6,7 @@ import pytest
 from conftest import NOW, PAST, REQ, quote, store_mandate, outcome
 from fastapi.testclient import TestClient
 
-from app import orders
+from app import orders, valio
 from app.main import app
 
 c = TestClient(app, raise_server_exceptions=False, headers={"X-Agent-Key": "agent-chef", "X-Approver-Key": "appr-chef"})
@@ -196,3 +196,13 @@ def test_valio_failure_is_503_without_leaking_details(shop, monkeypatch):
     [entry] = audit()  # the failure is on the record (ENGINE_ERROR), without the upstream details
     assert entry["decision"]["primary_reason"]["code"] == "ENGINE_ERROR" and orders._store() == {}
     assert "secret" not in orders.AUDIT_FILE.read_text()
+
+
+def test_valio_429_is_a_calm_503_and_never_stores_order(shop, monkeypatch):
+    async def busy(*a, **k):
+        raise valio.ValioBusyError(valio.VALIO_BUSY_MESSAGE)
+
+    monkeypatch.setattr(valio, "get_quotes", busy)
+    r = order([("463335", 1)])
+    assert r.status_code == 503 and r.json()["detail"] == valio.VALIO_BUSY_MESSAGE
+    assert orders._store() == {}

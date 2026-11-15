@@ -84,10 +84,13 @@ class QuoteRequest(BaseModel):
 @app.post("/api/quotes")
 async def quotes(req: QuoteRequest) -> list[dict]:
     """Live price + availability from Valio for specific products, merged into one quote each,
-    with explicit trap flags (cutoff_passed, quantity_unknown, quantity_unreported, undeliverable, out_of_stock,
+    with explicit trap flags (cutoff_passed, quantity_unknown, undeliverable, out_of_stock,
     unknown_product). Money: `unit_price_cents` (integer, net of VAT); `price` is the same in euros, kept for
     compatibility."""
-    return await valio.get_quotes(req.product_ids, req.requested_date.isoformat())
+    try:
+        return await valio.get_quotes(req.product_ids, req.requested_date.isoformat())
+    except valio.ValioBusyError as e:
+        raise HTTPException(503, detail=str(e)) from e
 
 
 def _catalogue_ready() -> None:

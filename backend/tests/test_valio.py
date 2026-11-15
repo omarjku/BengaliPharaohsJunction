@@ -1,6 +1,11 @@
 """Offline checks for the quote merge: one case per trap seen on the live API (docs/valio-api-notes.md)."""
+import asyncio
 from datetime import datetime
 
+import httpx
+import pytest
+
+from app import valio
 from app.valio import _merge
 
 NOW = datetime.fromisoformat("2026-11-13T22:58:00+02:00")
@@ -26,6 +31,27 @@ def test_terminal_999999_means_unknown_quantity_and_past_cutoff_blocks():
     q = _merge(avail("Terminal", 999999.0, "2026-11-12T15:00:00+02:00"), PRICE, NOW)
     assert q["available_amount"] is None and not q["quantity_known"]
     assert {"quantity_unknown", "cutoff_passed"} <= set(q["flags"]) and not q["orderable"]
+
+
+def test_stock_at_or_above_999999_is_unknown_but_orderable():
+    q = _merge(avail("Stock", 1000000.0, None), PRICE, NOW)
+    assert q["available_amount"] is None and not q["quantity_known"]
+    assert q["flags"] == ["quantity_unknown"] and q["orderable"]
+
+
+def test_429_raises_busy_error_without_retrying(monkeypatch):
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        return httpx.Response(429, headers={"Retry-After": "30"})
+
+    monkeypatch.setattr(valio, "_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler),
+                                                                      base_url="http://valio"))
+    valio._cache.clear()
+    with pytest.raises(valio.ValioBusyError, match="try again in about 30 seconds"):
+        asyncio.run(valio.get_quotes(["1"], "d"))
+    assert calls == ["/api/availability"]
 
 
 def test_undeliverable_has_no_model_or_lines():
