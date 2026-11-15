@@ -28,12 +28,23 @@ RAW = {
     "reliability": DATA / "valio_aimo_junction26_delivery_reliability.csv",
 }
 ENDPOINT = {"products": "products", "carbon": "carbon-footprint", "reliability": "delivery-reliability"}
-SLIM_VERSION = 2
+SLIM_VERSION = 3
 
 # GS1 allergen codes seen in the data; only well-known ones are labelled, others stay as codes.
 ALLERGEN_NAMES = {"AM": "milk", "AE": "egg", "AF": "fish", "AN": "tree nuts", "AP": "peanuts", "AY": "soy",
                   "AW": "gluten (cereals)", "AC": "crustaceans", "AS": "sesame", "BC": "celery", "BM": "mustard",
                   "AU": "sulphites", "NL": "lupin", "UM": "molluscs", "UW": "wheat"}
+_INFERRED_WORDS = {
+    "AF": ("fish", "salmon", "lohi", "trout", "kirjolohi", "tuna", "tonnikala", "cod", "turska", "herring",
+           "silakka", "silli", "whitefish", "siika", "pike", "hauki", "perch", "ahven", "zander", "kuha",
+           "pollock", "seiti", "anchovy", "sardine", "mackerel", "makrilli", "char", "nieriä", "roe", "mäti"),
+    "AC": ("shrimp", "katkarapu", "prawn", "crab", "lobster"),
+    "UM": ("mussel", "simpukka", "squid"),
+    "AM": ("milk", "maito", "cream", "kerma", "cheese", "juusto", "butter", "voi", "yoghurt", "jogurtti", "rahka"),
+    "AE": ("egg", "kananmuna"),
+    "AW": ("wheat", "vehnä", "noodle", "pasta", "bread", "gluten"),
+    "UW": ("wheat", "vehnä", "noodle", "pasta", "bread"),
+}
 
 _products: dict[str, dict] = {}
 _ready = threading.Event()
@@ -46,6 +57,30 @@ def _text(items: list | None, lang: str) -> str | None:
         if x.get("language") == lang:
             return x.get("value")
     return None
+
+
+# Short words that are prefixes of unrelated words (eggplant, charcuterie, voimakas, code): whole words only.
+_WHOLE_WORDS = {"egg", "char", "cod", "roe", "voi", "pike", "tuna", "crab"}
+
+
+def _infer_allergens(p: dict, names: dict) -> list[str]:
+    hay = " ".join(str(value) for value in (names.get("en"), names.get("fi"), p.get("category")) if value).lower()
+    inferred = set()
+    for code, words in _INFERRED_WORDS.items():
+        for word in words:
+            tail = r"(?!\w)" if word in _WHOLE_WORDS else ""
+            match = re.search(rf"(?<!\w){re.escape(word)}{tail}", hay)
+            if not match:
+                continue
+            rest = hay[match.end():]
+            word_end = re.match(r"\w*", rest).group(0)
+            if re.search(r"t(o|ö)n|tt(o|ö)m", word_end) or re.match(r"\w*(\s+(and|&|ja)\s+\w+)?[\s-]*(free|vapaa)", rest):
+                continue
+            if code == "AM" and re.search(r"(?:coconut|oat|soy|almond|rice|peanut|kookos|kaura|soija|manteli|riisi|maapähkinä)\s*", hay[:match.start()]):
+                continue
+            inferred.add(code)
+            break
+    return sorted(inferred)
 
 
 def _slim(p: dict) -> dict:
@@ -67,6 +102,13 @@ def _slim(p: dict) -> dict:
             claims += [v["id"] for v in c.get("values", [])]
         elif c["name"] == "packagingMarkedLabel":
             labels += [v["id"] for v in c.get("values", [])]
+    allergen_data = "missing" if not any(allergens.values()) else "declared"
+    # Name-based guesses only fill a gap: when Valio declares allergens, its declaration wins (no false declines).
+    inferred = [] if allergen_data != "missing" else [code for code in _infer_allergens(p, {"en": _text(s.get("names"), "en"), "fi": _text(s.get("names"), "fi")})
+                if code not in set(allergens["contains"]) | set(allergens["may_contain"]) | set(allergens["free_from"])]
+    if allergen_data == "missing":
+        allergens["undeclared"] = sorted(ALLERGEN_NAMES)
+    allergens["inferred"] = inferred
     base = next((u for u in s.get("unitConversions") or [] if u.get("synkkaPackagingType") == "BASE_UNIT_OR_EACH"), {})
     return {
         "id": p["id"],
@@ -87,6 +129,7 @@ def _slim(p: dict) -> dict:
         "claims": claims,
         "labels": labels,
         "allergens": allergens,
+        "allergen_data": allergen_data,
         "deposits": p.get("deposits") or [],
         "substitutes": [x["substituteProduct"] for x in p.get("substitutions") or []],
         "vat": s.get("vatCode"),
@@ -214,7 +257,9 @@ def search(query: str = "", claims: list[str] | None = None, exclude_allergens: 
     for p in _products.values():
         if need - set(p["claims"]):
             continue
-        risky = set(p["allergens"]["contains"]) | (set(p["allergens"]["may_contain"]) if strict_may_contain else set())
+        allergens = p.get("allergens") or {}
+        risky = (set(allergens.get("contains") or []) | set(allergens.get("inferred") or []) |
+                 (set(allergens.get("may_contain") or []) if strict_may_contain else set()))
         if avoid & risky or (category and p["category"] != category):
             continue
         hay = " ".join(filter(None, [p["name_en"], p["name_fi"], p["brand"]])).lower()
