@@ -1,0 +1,6 @@
+node_modules/
+out/
+public/rec/
+public/veo/
+public/*.wav
+public/*.mp3
