@@ -488,7 +488,7 @@ def _card_assumptions(card: dict) -> list[dict]:
         name = _name(line.get("product"))
         amount = requested.get("amount") if isinstance(requested, dict) else None
         unit = requested.get("unit") if isinstance(requested, dict) else None
-        result.append({"text": quantity.humanize_text(" ".join(str(x) for x in (amount, unit, name) if x is not None),
+        result.append({"text": quantity_mod.humanize_text(" ".join(str(x) for x in (amount, unit, name) if x is not None),
                                                        line.get("product") or {}),
                       "p_yes": score, "kept": bool(line.get("chosen"))})
     return result

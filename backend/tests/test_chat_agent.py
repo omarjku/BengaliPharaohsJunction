@@ -659,3 +659,12 @@ def test_confirmation_turn_guards_judge_the_earlier_request_text(monkeypatch):
     except Exception:  # noqa: BLE001 - the turn is cut short on purpose; only the guard matters here
         pass
     assert any("approve everything" in text for text in seen)
+
+
+def test_card_assumptions_humanize_units_without_shadowing_the_quantity_module():
+    """A card line with a confidence and an amount builds an assumption text (phone replay: AttributeError on 'dict')."""
+    from app import chat_agent
+    card = {"lines": [{"product": {"id": "1", "name_en": "Valio butter 500 g"}, "confidence": 0.9, "chosen": True,
+                       "quantity": {"requested": {"amount": 5, "unit": "kg"}, "quantity": 10, "sales_unit": "ST"}}]}
+    out = chat_agent._card_assumptions(card)
+    assert out and out[0]["p_yes"] == 0.9 and "butter" in out[0]["text"].lower()
