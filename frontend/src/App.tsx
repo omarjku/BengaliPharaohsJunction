@@ -24,6 +24,7 @@ import { useVoice, voiceSupported } from './useVoice'
 import { usePhaseLine } from './usePhaseLine'
 import { DictationMic, MicButton, VoiceStatus } from './Voice'
 import { HeaderMenu } from './HeaderMenu'
+import { Icon } from './icons'
 import './Keys.css'
 import { PhotoButton } from './PhotoButton'
 import { Composer } from './Composer'
@@ -503,7 +504,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
               <DoorGlyph /> Front Door
             </span>
             <span className="brand-for">{view === 'valio' ? 'Valio Aimo' : buyer ? buyerLabel(buyer) : ''}</span>
-            <HeaderMenu onSwitchLang={onSwitchLang} />
+            <HeaderMenu onSwitchLang={onSwitchLang} onKeys={needsSetup ? undefined : () => keysDialog.current?.showModal()} />
           </div>
         </div>
         <div className="top-nav">
@@ -511,16 +512,13 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
             {!needsSetup &&
               (['order', 'history', 'kitchen', 'rules'] as const).map((v) => (
                 <button key={v} type="button" className="link" aria-current={view === v ? 'page' : undefined} onClick={() => setView(v)}>
+                  <Icon name={v} size={18} />
                   {u.nav[v]}
                 </button>
               ))}
-            {!needsSetup && (
-              <button type="button" className="link" onClick={() => keysDialog.current?.showModal()}>
-                {u.nav.keys}
-              </button>
-            )}
             {adminKey && (
               <button type="button" className="link" aria-current={view === 'valio' ? 'page' : undefined} onClick={() => setView('valio')}>
+                <Icon name="valio" size={18} />
                 {u.valio.nav}
               </button>
             )}

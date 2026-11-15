@@ -58,6 +58,57 @@ used as a fallback when live evidence is unavailable.
 `craci_error`, `github_error`, or `timeout`. The signing-keys document keeps
 the same object in its `build` field.
 
+## What CRACI's network trace taught us
+
+The trace included `generativelanguage.googleapis.com`. The CI workflow did not
+explicitly set `GEMINI_API_KEY`, so a runner-level key could make a backend route
+call Gemini even though the ordinary tests replace Gemini with fakes. The
+`backend-tests / Run backend tests` step is the affected surface: the backend
+has real Gemini REST clients for agent, rules, vision, and voice. The
+`packages-tests / Run package tests` step uses replay fixtures for the compiler;
+`compiler/tests/record_fixtures.py` is a manual recorder, not a pytest test, and
+the provenance step only calls GitHub and CRACI.
+
+Both test steps now set `GEMINI_API_KEY` to an explicit empty string; package
+tests also set `LLM_MODE=replay`. A real Gemini call is an explicit local/demo
+action, never an ambient CI side effect.
+
+## The door defends itself using CRACI evidence
+
+With `BUILD_TRUST_GATE=1` (the default), the front door reads only its
+unexpired in-memory CRACI evidence cache. If cached evidence has status `ok`
+and one or more non-allowlisted HIGH/CRITICAL findings, an otherwise automatic
+order becomes `pending_approval` with reason code `BUILD_NOT_TRUSTED`; a human
+can approve orders while the build is repaired. Zero findings leave automatic
+orders unchanged. Missing, expired, or refreshing evidence is `unavailable`
+and does not block ordering, and the trust check never waits for network I/O.
+
+## What CRACI found and what we did
+
+The build at `8958ae5` reported 7 HIGH and 0 CRITICAL findings. Local audits
+map those HIGH findings to these runtime dependencies (Starlette is transitive
+through FastAPI):
+
+| Package | Installed | Advisory | Fixed in | Scope |
+| --- | --- | --- | --- | --- |
+| `cryptography` | 44.0.0 | CVE-2024-12797 | 44.0.1 | runtime |
+| `cryptography` | 44.0.0 | CVE-2026-26007 | 46.0.5 | runtime |
+| `cryptography` | 44.0.0 | CVE-2026-69247 | 50.0.0 | runtime |
+| `cryptography` | 44.0.0 | CVE-2026-69249 | 49.0.0 | runtime |
+| `starlette` | 0.46.2 | CVE-2025-62727 | 0.49.1 | runtime |
+| `starlette` | 0.46.2 | CVE-2026-48818 | 1.1.0 | runtime |
+| `starlette` | 0.46.2 | CVE-2026-54283 | 1.3.1 | runtime |
+
+We upgraded `fastapi` 0.115.12 → 0.133.0 so the framework accepts the fixed
+Starlette line, pinned `starlette` to 1.3.1, and upgraded `cryptography`
+44.0.0 → 50.0.0. Fresh-environment backend and package tests remain green.
+The post-fix local audits show 0 HIGH/CRITICAL: pip-audit still reports the
+lower-severity `python-dotenv` 1.1.0 finding (fixed in 1.2.2) and dev/test
+`pytest` 8.3.5 finding (fixed in 9.0.3); npm audit still reports 7 moderate
+`typescript-eslint`/`minimatch` entries and offers no non-forced fix. We did
+not use a forced npm override. The live evidence page will show the new counts
+after the next deploy and CRACI refresh; it currently reports `unavailable`.
+
 ## Verifying the digest
 
 Use `craci_job_ids` in the order returned. Fetch each raw CycloneDX SBOM, then
@@ -77,6 +128,14 @@ assert digest.hexdigest() == build["sbom_sha256"]
 Inspect the network trace destinations and vulnerability lists separately;
 the digest covers SBOM bytes only. A missing or failed fetch is reported as
 unavailable, never silently presented as verified.
+
+## Signed provenance
+
+To prove which audited build signed an order:
+
+1. Verify the order's `signed_statement` and `signature` with `POST /api/verify` (or the Ed25519 key in `/.well-known/front-door-keys.json`). Continue only when the result is `valid: true`.
+2. Read `signed_statement.build.commit` and `signed_statement.build.sbom_sha256`; these values are covered by the order signature.
+3. Fetch `signed_statement.build.evidence_url` (`/.well-known/front-door-build.json`) and compare its `commit` and `sbom_sha256` to the signed values. If `evidence_status` is `unavailable`, the signed commit remains identifiable but the missing digest is not evidence of a verified SBOM.
 
 
 ## Security notes

@@ -2,6 +2,9 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ApiError, compileRules, getKeys, getMandate, MOCK, saveMandate } from './api'
 import { buyerLabel, errorText } from './format'
 import { KitchenChip } from './KitchenChip'
+import { Fold } from './Fold'
+import { openFold } from './foldOpen'
+import { usePolishCopy } from './polishCopy'
 import './RulesProfile.css'
 import { useCopy } from './i18n'
 import type { CompileResult, Mandate, RuleCat } from './types'
@@ -28,6 +31,8 @@ const initials = (label: string) =>
 export function Rules({ refreshKey, onAction, onAnnounce, kitchen, onSwitch }: Props) {
   const c = useCopy()
   const t = c.UI.rules
+  const pc = usePolishCopy()
+  const pr = pc.rules
   const approverKey = getKeys().approverKey
   const canRead = MOCK || Boolean(approverKey)
   const [current, setCurrent] = useState<Mandate | null | undefined>(undefined) // undefined = loading
@@ -188,7 +193,7 @@ export function Rules({ refreshKey, onAction, onAnnounce, kitchen, onSwitch }: P
       {current === undefined && !loadError && <p className="note empty">{t.loading}</p>}
       {current === null && <p className="note empty">{t.none}</p>}
       {current && (
-        <>
+        <Fold icon="rules" title={pr.mine} hint={pr.mineHint} defaultOpen>
           <div className="rp-desc">
             {kitchen && <p>{t.rpKitchenLine(buyerLabel(kitchen))}</p>}
             {lines[0] && <p>{t.rpRulesLine(lines.length, lines[0].text)}</p>}
@@ -214,15 +219,19 @@ export function Rules({ refreshKey, onAction, onAnnounce, kitchen, onSwitch }: P
             ))}
           </ul>
           {text !== null && (
-            <button type="button" className="rp-pill" onClick={() => document.getElementById('rules-text')?.focus()}>
+            <button type="button" className="rp-pill" onClick={() => {
+              openFold('fold-change')
+              requestAnimationFrame(() => document.getElementById('rules-text')?.focus())
+            }}>
               {t.rpToTell}
             </button>
           )}
-        </>
+        </Fold>
       )}
 
       {text !== null && (
-        <form className="ask section-gap" onSubmit={submit}>
+        <Fold id="fold-change" icon="pencil" title={pr.change} hint={pr.changeHint}>
+        <form className="ask" onSubmit={submit}>
           <label className="ask-label" htmlFor="rules-text">
             {t.tell}
           </label>
@@ -244,7 +253,6 @@ export function Rules({ refreshKey, onAction, onAnnounce, kitchen, onSwitch }: P
             </button>
           </div>
         </form>
-      )}
 
       {busy === 'check' && (
         <div className="working">
@@ -358,8 +366,8 @@ export function Rules({ refreshKey, onAction, onAnnounce, kitchen, onSwitch }: P
                 ))}
               </ul>
               <div className="actions">
-                <button type="button" className="btn" onClick={save} disabled={busy !== null}>
-                  {busy === 'save' ? t.saving : t.yesSave}
+                <button type="button" className="btn" data-win={pc.win.save} onClick={save} disabled={busy !== null}>
+                  <span className="btn-label">{busy === 'save' ? t.saving : t.yesSave}</span>
                 </button>
                 <button type="button" className="btn plain" onClick={() => setConfirming(false)}>
                   {t.goBack}
@@ -368,8 +376,8 @@ export function Rules({ refreshKey, onAction, onAnnounce, kitchen, onSwitch }: P
             </div>
           ) : (
             <div className="decide">
-              <button type="button" className="btn" onClick={save} disabled={busy !== null || open.length > 0 || unreadable}>
-                {busy === 'save' ? t.saving : t.save}
+              <button type="button" className="btn" data-win={pc.win.save} onClick={save} disabled={busy !== null || open.length > 0 || unreadable}>
+                <span className="btn-label">{busy === 'save' ? t.saving : t.save}</span>
               </button>
               <button type="button" className="btn plain" onClick={() => setProposal(null)}>
                 {t.discard}
@@ -380,8 +388,13 @@ export function Rules({ refreshKey, onAction, onAnnounce, kitchen, onSwitch }: P
         </section>
       )}
 
+        </Fold>
+      )}
+
       {/* HOOK: weekly menus are maintained alongside the chef's ordering rules. */}
-      <WeeklyMenus />
+      <Fold icon="calendar" title={pr.menus} hint={pr.menusHint}>
+        <WeeklyMenus />
+      </Fold>
     </>
   )
 }

@@ -25,6 +25,7 @@ from . import config, craci_evidence
 
 ALG = "Ed25519"
 ISSUER = "valio-front-door"
+EVIDENCE_URL = "/.well-known/front-door-build.json"
 log = logging.getLogger(__name__)
 
 
@@ -55,7 +56,19 @@ def _load() -> Ed25519PrivateKey:
 _KEY = _load()
 _PUB = _KEY.public_key()
 _PUB_RAW = _PUB.public_bytes(Encoding.Raw, PublicFormat.Raw)
-KID = "fd-" + hashlib.sha256(_PUB_RAW).hexdigest()[:16]
+
+
+def _render_commit() -> str | None:
+    return os.getenv("RENDER_GIT_COMMIT") or None
+
+
+def kid_for_commit(commit: str | None) -> str:
+    material = _PUB_RAW + b"\0" + (commit or "").encode("utf-8")
+    return "fd-" + hashlib.sha256(material).hexdigest()[:16]
+
+
+LEGACY_KID = "fd-" + hashlib.sha256(_PUB_RAW).hexdigest()[:16]
+KID = kid_for_commit(_render_commit())
 
 
 def canonical(obj) -> bytes:
@@ -63,11 +76,24 @@ def canonical(obj) -> bytes:
 
 
 def sign(statement: dict) -> dict:
-    return {"kid": KID, "alg": ALG, "value": b64url(_KEY.sign(canonical(statement)))}
+    build = statement.get("build")
+    commit = build.get("commit") if isinstance(build, dict) else None
+    kid = kid_for_commit(commit) if isinstance(build, dict) else KID
+    return {"kid": kid, "alg": ALG, "value": b64url(_KEY.sign(canonical(statement)))}
 
 
 def verify(statement: dict, signature: dict) -> bool:
-    if signature.get("kid") != KID or signature.get("alg") != ALG:
+    if signature.get("alg") != ALG:
+        return False
+    build = statement.get("build")
+    if isinstance(build, dict):
+        commit = build.get("commit")
+        if commit is not None and not isinstance(commit, str):
+            return False
+        expected_kid = kid_for_commit(commit)
+        if signature.get("kid") != expected_kid:
+            return False
+    elif signature.get("kid") not in {KID, LEGACY_KID}:
         return False
     try:
         _PUB.verify(_unb64url(str(signature.get("value", ""))), canonical(statement))
@@ -94,6 +120,26 @@ def build_provenance() -> dict:
         wait=False,  # public pages never wait on GitHub or CRACI; a background refresh fills the cache
     )
     return live if live.get("status") == "ok" else (_read_build_provenance() or live)
+
+
+def signed_build_provenance() -> dict:
+    """Return only cached/live provenance fields that are safe to bind to an order signature."""
+    commit = _render_commit()
+    try:
+        live = craci_evidence.fetch_live_evidence(
+            commit,
+            os.getenv("CRACI_API_TOKEN", ""),
+            wait=False,
+        )
+    except Exception:  # noqa: BLE001 - evidence must never make an order fail
+        live = {"commit": commit, "ci_run": None, "sbom_sha256": None, "status": "unavailable"}
+    return {
+        "commit": live.get("commit", commit),
+        "ci_run": live.get("ci_run"),
+        "sbom_sha256": live.get("sbom_sha256"),
+        "evidence_status": "ok" if live.get("status") == "ok" else "unavailable",
+        "evidence_url": EVIDENCE_URL,
+    }
 
 
 def jwks() -> dict:

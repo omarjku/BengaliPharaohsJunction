@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useCopy } from './i18n'
+import { Icon } from './icons'
+import { usePolishCopy } from './polishCopy'
 import './Header.css'
 
 type Theme = 'light' | 'dark'
@@ -9,10 +11,12 @@ function currentTheme(): Theme {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'
 }
 
-// The menu button (three lines) and its panel: language and appearance. Opens and closes with a short slide and fade.
-export function HeaderMenu({ onSwitchLang }: { onSwitchLang: () => void }) {
+// The menu button (three lines) and its panel. Settings live here in labelled groups, each with a small icon:
+// language, appearance, and kitchen access (the keys). Opens and closes with a short slide and fade.
+export function HeaderMenu({ onSwitchLang, onKeys }: { onSwitchLang: () => void; onKeys?: () => void }) {
   const c = useCopy()
   const m = c.UI.hmenu
+  const pm = usePolishCopy().menu
   const [open, setOpen] = useState(false)
   const [theme, setTheme] = useState<Theme>(currentTheme)
   const root = useRef<HTMLDivElement>(null)
@@ -58,24 +62,47 @@ export function HeaderMenu({ onSwitchLang }: { onSwitchLang: () => void }) {
         <span className="hmenu-bars" aria-hidden="true" />
       </button>
       <div id="hmenu-panel" className={`hmenu-panel${open ? ' open' : ''}`} inert={!open}>
-        <p className="hmenu-label">{m.language}</p>
-        <div className="hmenu-seg" role="group" aria-label={m.language}>
-          <button type="button" aria-pressed={c.LANG === 'fi'} onClick={() => c.LANG !== 'fi' && onSwitchLang()}>
-            {m.fi}
-          </button>
-          <button type="button" aria-pressed={c.LANG === 'en'} onClick={() => c.LANG !== 'en' && onSwitchLang()}>
-            {m.en}
-          </button>
+        <div className="hmenu-group">
+          <p className="hmenu-label"><Icon name="globe" size={16} />{m.language}</p>
+          <div className="hmenu-seg" role="group" aria-label={m.language}>
+            <button type="button" aria-pressed={c.LANG === 'fi'} onClick={() => c.LANG !== 'fi' && onSwitchLang()}>
+              {m.fi}
+            </button>
+            <button type="button" aria-pressed={c.LANG === 'en'} onClick={() => c.LANG !== 'en' && onSwitchLang()}>
+              {m.en}
+            </button>
+          </div>
         </div>
-        <p className="hmenu-label">{m.theme}</p>
-        <div className="hmenu-seg" role="group" aria-label={m.theme}>
-          <button type="button" aria-pressed={theme === 'light'} onClick={() => pick('light')}>
-            {m.light}
-          </button>
-          <button type="button" aria-pressed={theme === 'dark'} onClick={() => pick('dark')}>
-            {m.dark}
-          </button>
+        <div className="hmenu-group">
+          <p className="hmenu-label"><Icon name="sun" size={16} />{m.theme}</p>
+          <div className="hmenu-seg" role="group" aria-label={m.theme}>
+            <button type="button" aria-pressed={theme === 'light'} onClick={() => pick('light')}>
+              {m.light}
+            </button>
+            <button type="button" aria-pressed={theme === 'dark'} onClick={() => pick('dark')}>
+              {m.dark}
+            </button>
+          </div>
         </div>
+        {onKeys && (
+          <div className="hmenu-group">
+            <p className="hmenu-label"><Icon name="key" size={16} />{pm.access}</p>
+            <button
+              type="button"
+              className="hmenu-row"
+              onClick={() => {
+                setOpen(false)
+                onKeys()
+              }}
+            >
+              <span className="hmenu-row-text">
+                <span className="hmenu-row-title">{pm.keys}</span>
+                <span className="hmenu-row-hint">{pm.keysHint}</span>
+              </span>
+              <Icon name="chevron" size={16} />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

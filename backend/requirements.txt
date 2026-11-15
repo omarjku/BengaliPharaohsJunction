@@ -1,9 +1,10 @@
-fastapi==0.115.12
+fastapi==0.133.0
+starlette==1.3.1
 uvicorn[standard]==0.34.2
 python-dotenv==1.1.0
 httpx==0.28.1
 ijson==3.3.0
-cryptography==44.0.0
+cryptography==50.0.0
 av==19.0.2  # voice: decodes browser recordings (wheels bundle ffmpeg)
 websockets>=14  # voice: Gemini Live (additional_headers needs >= 14; uvicorn[standard] installs it too)
 ../contracts

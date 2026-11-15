@@ -1,0 +1,21 @@
+/* A page made of Folds: hairline-separated rows; each opens in place. Builds on the base <details> rules in index.css. */
+.folds { display: grid; gap: 0; min-width: 0; }
+.fold { border-block-start: 1px solid var(--line); }
+.fold + .fold { border-block-start: 0; }
+.fold > .fold-head { gap: var(--s3); padding-block: var(--s4); justify-content: flex-start; border-radius: var(--radius); }
+.fold-icon {
+  flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+  background: var(--wash); color: var(--accent); transition: background-color 200ms ease, color 200ms ease, transform 200ms var(--ease-out);
+}
+.fold[open] > .fold-head .fold-icon { background: var(--accent); color: var(--surface); }
+.fold-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.fold-title { font: var(--t-body); font-weight: 600; text-wrap: balance; }
+.fold-hint { font: var(--t-small); color: var(--ink-2); }
+.fold[open] > .fold-head .fold-hint { color: var(--ink-3); }
+.fold-body { display: grid; gap: var(--s6); min-width: 0; padding-block: var(--s2) var(--s6); }
+.fold > .fold-head:active .fold-icon { transform: scale(0.94); }
+@media (hover: hover) and (pointer: fine) {
+  .fold:not([open]) > .fold-head:hover .fold-icon { background: color-mix(in srgb, var(--accent) 14%, var(--wash)); }
+}
+.fold-head .kitchen-simulated { min-height: 28px; }
+@media (prefers-reduced-motion: reduce) { .fold-icon { transition: none; } }

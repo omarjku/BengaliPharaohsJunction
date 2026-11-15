@@ -302,6 +302,7 @@ export const UI = {
     orderedFor: (d: string) => `Ordered for ${d}.`,
     frontDoor: (s: string) => `Sent to Valio’s front door: ${DOOR_STATUS[s] ?? s.replace(/_/g, ' ')}.`,
     seeHistory: 'See it in History',
+    signedByBuild: 'Signed by build',
     rejected: 'Rejected. Nothing was ordered.',
     of: (amount: string, name: string) => `${amount} of ${name}`,
     products: (n: number) => `${n} products`,
