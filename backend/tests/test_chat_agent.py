@@ -782,3 +782,26 @@ def test_sentence_initial_ordered_is_a_claim():
     from app.chat_agent import UNVERIFIED_ORDER_CLAIM as C
     assert C.search("Ordered 20 litres of milk.")
     assert C.search("Done. Ordered 5 kg butter.")
+
+
+def test_pinned_product_must_pass_the_same_allergen_filter_as_search(monkeypatch):
+    """A product_id the model passes is kept only if it passes the excluded-allergen filter; otherwise search runs."""
+    import asyncio
+    from app import agent, catalogue
+    trout = {"id": "trout-pin", "name_en": "Rainbow trout fillet", "claims": [], "category": "fish",
+             "allergens": {"contains": [], "may_contain": [], "free_from": [], "undeclared": [], "inferred": ["AF"]}}
+    monkeypatch.setattr(catalogue, "get", lambda pid: trout if pid == "trout-pin" else None)
+    async def at_risk(*_a, **_k):
+        return {}
+    monkeypatch.setattr(agent.diet, "at_risk", at_risk)
+    async def no_expand(_q):
+        return []
+    monkeypatch.setattr(agent.expand, "queries", no_expand)
+    monkeypatch.setattr(catalogue, "search", lambda *a, **k: [])
+    monkeypatch.setattr(catalogue, "synonym_queries", lambda q: [], raising=False)
+    item = {"query": "rainbow trout", "amount": 5, "unit": "kg", "product_id": "trout-pin", "claims": [],
+            "exclude_allergens": []}
+    ids, _ = asyncio.run(agent.candidates("5 kg rainbow trout", dict(item), {"AF"}, {}, [], []))
+    assert "trout-pin" not in ids
+    ids, _ = asyncio.run(agent.candidates("5 kg rainbow trout", dict(item), set(), {}, [], []))
+    assert ids == ["trout-pin"]

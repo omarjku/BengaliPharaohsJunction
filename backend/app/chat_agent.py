@@ -711,7 +711,10 @@ async def _change_order(args: dict, buyer_id: str, requested_date: date | None, 
         product_id = str(product["id"])
         for value in (item.get("name"), _name(product)):
             if value:
-                product_ids[" ".join(str(value).split()).casefold()] = product_id
+                key = " ".join(str(value).split()).casefold()
+                # a name that points at two different products is ambiguous: pin neither (normal search decides)
+                product_ids[key] = product_id if product_ids.get(key, product_id) == product_id else None
+    product_ids = {key: pid for key, pid in product_ids.items() if pid}  # scoped to this change call only
     product_token = agent._FORCED_PRODUCT_IDS.set(product_ids)
     try:
         guard = await _turn_guard(text)

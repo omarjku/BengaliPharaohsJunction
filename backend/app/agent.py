@@ -959,8 +959,6 @@ async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str,
                      diets: list[str] | None = None, profile_diets: list[str] | None = None) -> tuple[list[str], bool]:
     """Catalogue hits with claims required only for at-risk ingredients, then narrowed by Gemini."""
     requested_product_id = str(item.get("product_id") or "").strip()
-    if requested_product_id and catalogue.get(requested_product_id):
-        return [requested_product_id], True
     tags = _diet_tags(item, diets)
     if risks is None:
         risks = await diet.at_risk([item["query"]], tags)
@@ -977,6 +975,17 @@ async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str,
     item["claims"] = required_claims
 
     excl = sorted(set(item["exclude_allergens"]) | excluded)
+    # A product the agent already quoted keeps its identity, but only if it passes the same diet, allergen and claim
+    # filters a search would apply; otherwise the normal search runs (the gate still checks the line either way).
+    if requested_product_id and (forced := catalogue.get(requested_product_id)):
+        allergens = forced.get("allergens") or {}
+        diet_excluded = {allergen for tag in tags for allergen in DIETARY[tag][1]}
+        hits_allergen = set(excl) & (set(allergens.get("contains") or []) | set(allergens.get("inferred") or []))
+        if (not any(diet.contradicts(forced, tag) for tag in tags) and not hits_allergen
+                and not diet_excluded & set(allergens.get("may_contain") or [])
+                and not set(required_claims) - set(forced.get("claims") or [])):
+            return [requested_product_id], True
+        item.pop("product_id", None)
     words = item["query"].split()
     singular = " ".join(map(_singular, words))
     tries = list(dict.fromkeys([item["query"], singular] + SYNONYMS.get(singular.lower(), [])
