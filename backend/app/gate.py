@@ -368,9 +368,10 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
             rs.append(_r(C.DATA_MISSING, ASK, f"{cat.get('name_en') or c} is not known to be in the same category.", c,
                          "Not offered as a substitute.", category=cat.get("category")))
         al = cat.get("allergens") or {}
-        contains = set(al.get("contains") or []) | set(al.get("inferred") or [])
-        unknown = [a for a in sorted(excluded) if a in (al.get("undeclared") or []) or
-                   (not (contains or al.get("may_contain")) and a not in (al.get("free_from") or []))]
+        declared = set(al.get("contains") or []) | set(al.get("may_contain") or [])  # name guesses never count as a declaration
+        missing = cat.get("allergen_data") == "missing" or not (declared or al.get("free_from"))
+        unknown = [a for a in sorted(excluded) if missing or a in (al.get("undeclared") or []) or
+                   (not declared and a not in (al.get("free_from") or []))]
         if unknown:  # a substitute must be KNOWN safe, whatever the uncertainty policy says about the order itself
             rs.append(_r(C.ALLERGEN_DATA_MISSING, ASK, f"{cat.get('name_en') or c} has no allergen declaration covering "
                          f"{', '.join(unknown)}.", c, "Not offered as a substitute.", allergens=", ".join(unknown)))
