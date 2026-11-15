@@ -6,6 +6,7 @@ import { useCopy, type Copy } from './i18n'
 import type { AgentRun, AlternativeOrder, Line, OrderInput, OrderResponse, Substitute } from './types'
 import './RunResult.css'
 import { Compare } from './Compare'
+import { heldLine } from './heldLine'
 
 type Props = {
   run: AgentRun
@@ -214,7 +215,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
 
   // "Needs your OK" with more than one deliverable option: they become cards; pick one, then approve it.
   // Labels come from the data only: Best match = the agent's pick, Cheaper = a lower total, Local = origin FI.
-  const held = awaitingApproval ? (chosen[0] ?? null) : guess
+  const held = awaitingApproval ? heldLine(order, run.lines, chosen[0] ?? null) : guess
   const pickable = held ? [held, ...others.filter(orderable)] : []
   const sel = pickable.find((l) => l.product.id === (selected ?? held?.product.id)) ?? null
   const tags = (l: Line) =>
@@ -231,12 +232,21 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
       // another option instead of the held order: the held one is rejected, the chosen one goes to the front door
       setPlacing(sel.product.id)
       picked.current = sel.product.id
-      return run_('place', async () => {
+      return run_('place', approved(async () => {
         await decideOrder(order!.order_id!, 'reject')
         return placeOrder({ requested_date: requestedDate, lines: [lineOrder(sel)] })
-      })
+      }))
     }
-    return place([lineOrder(sel)], sel.product.id)
+    setPlacing(sel.product.id)
+    picked.current = sel.product.id
+    return run_('place', approved(() => placeOrder({ requested_date: requestedDate, lines: [lineOrder(sel)] })))
+  }
+  // "Approve selected" is the chef's approval: if the front door holds the chosen option for sign-off (e.g. no
+  // reliability data), approve it in the same tap instead of showing another "Needs your OK" (approver key only).
+  const approved = (go: () => Promise<OrderResponse>) => async () => {
+    const res = await go()
+    if (!MOCK && res.status === 'pending_approval' && res.order_id && getKeys().approverKey) return decideOrder(res.order_id, 'approve')
+    return res
   }
   // POST /api/profile/memories (approver key): a near-tie breaker only, never past the checks or the limits.
   async function remember(scope: 'this_order' | 'always') {
