@@ -74,7 +74,7 @@ TOOLS = [{"functionDeclarations": [
 
 APPROVAL_REQUEST = re.compile(r"\b(?:approve\s+(?:this|it|everything|all)|can\s+you\s+approve|sign\s*off\s+(?:this|it)|"
                               r"godkänn\s+(?:det|allt)|hyväksy\s+(?:se|kaikki))\b", re.I)
-UNVERIFIED_ORDER_CLAIM = re.compile(r"\b(?:ordered|order\s+(?:is|was)\s+confirmed|order\s+has\s+been\s+placed|placed\s+the\s+order)\b", re.I)
+UNVERIFIED_ORDER_CLAIM = re.compile(r"(?:^|[.!:]\s+)ordered\b|\b(?:I(?:'ve|\s+have)?\s+ordered|(?:has|have)\s+been\s+ordered|(?:is|was|are|were)\s+(?:now\s+)?ordered|order\s+(?:is|was)\s+(?:now\s+)?confirmed|order\s+has\s+been\s+placed|placed\s+(?:the|your)\s+order)\b", re.I)  # claims only: "what needs to be ordered?" is a question, not a claim
 DELEGATION = re.compile(r"^\s*(?:assume|you decide|whatever is normal|sama kuin yleensä|just do it)\s*[.!]*\s*$", re.I)
 ORDINAL_CHOICE = re.compile(r"^\s*(?:the\s+)?(first|second|third|1|2|3)\s*(?:one|option)?\s*[.!]*\s*$", re.I)
 CONFIRMATION = re.compile(r"^\s*(?:yes|yeah|yep|sure|ok|okay|go ahead|do it|kyllä|joo|juu)\b", re.I)
@@ -997,7 +997,7 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
                     raise RuntimeError("Gemini returned neither text nor a tool call")
                 if last_search_result:
                     reply = _search_result_reply(last_search_result)
-                if not cards and UNVERIFIED_ORDER_CLAIM.search(reply) \
+                if not cards and UNVERIFIED_ORDER_CLAIM.search(reply) and not reply.rstrip().endswith("?") \
                         and not re.search(r"\b(?:not|no|haven't|hasn't|couldn't|can't)\b", reply, re.I):
                     reply = "I haven't placed or confirmed an order. I can only say that after the order tool reports it."
                 low = _low_assumption_question(assumption_rows, assumption_questions, threshold)

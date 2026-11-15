@@ -668,3 +668,19 @@ def test_card_assumptions_humanize_units_without_shadowing_the_quantity_module()
                        "quantity": {"requested": {"amount": 5, "unit": "kg"}, "quantity": 10, "sales_unit": "ST"}}]}
     out = chat_agent._card_assumptions(card)
     assert out and out[0]["p_yes"] == 0.9 and "butter" in out[0]["text"].lower()
+
+
+def test_unverified_order_claim_catches_claims_not_questions():
+    from app.chat_agent import UNVERIFIED_ORDER_CLAIM as C
+    for claim in ("I've ordered 10 L of milk.", "Your milk has been ordered.", "The order is confirmed.",
+                  "I placed the order for Monday.", "The butter was ordered."):
+        assert C.search(claim), claim
+    for fine in ("What needs to be ordered for 700 people?", "What would you like to order?",
+                 "Which products should be ordered first", "I can help you order potatoes."):
+        assert not C.search(fine), fine
+
+
+def test_sentence_initial_ordered_is_a_claim():
+    from app.chat_agent import UNVERIFIED_ORDER_CLAIM as C
+    assert C.search("Ordered 20 litres of milk.")
+    assert C.search("Done. Ordered 5 kg butter.")
