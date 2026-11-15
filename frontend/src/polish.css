@@ -1,0 +1,124 @@
+/* Polish pass: small, shared refinements on top of the existing tokens. Loaded last (main.tsx).
+   Rules of this file: tokens only, both themes, motion only on transform/opacity, hover effects only where a
+   real pointer hovers, and everything off under prefers-reduced-motion. */
+:root { --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1); }
+
+/* Type: balanced headings, no orphaned last words, and a selection colour that belongs to the brand. */
+h1, h2, h3, .title, .answer-text { text-wrap: balance; }
+p, li { text-wrap: pretty; }
+::selection { background: color-mix(in srgb, var(--lime) 60%, transparent); color: var(--lime-ink); }
+.ico { flex: none; display: block; }
+
+/* Every pressable thing answers the press. */
+.link, .rp-cat, .rp-pill, .kc-card, .hmenu-row, .hmenu-seg button { transition: transform 160ms var(--ease-out), background-color 160ms ease, color 160ms ease; }
+.link:active, .rp-cat:active, .rp-pill:active, .kc-card:active, .hmenu-row:active { transform: scale(0.97); }
+@media (hover: hover) and (pointer: fine) {
+  .link:hover { background: var(--wash); color: var(--ink); }
+  .top nav .link:hover { background: none; }
+}
+
+/* A page arrives with a short fade (opacity only: tabs are used often, so nothing moves). */
+main > section:not([hidden]) { animation: view-in 180ms ease; }
+@keyframes view-in { from { opacity: 0; } }
+
+/* --- Tabs: an icon over each label, in equal columns, so the row scans like a native tab bar. */
+.top nav .link { display: inline-flex; align-items: center; gap: 6px; padding-inline: var(--s3); }
+.top nav .link .ico { opacity: 0.75; transition: opacity 160ms ease, color 160ms ease, transform 200ms var(--ease-out); }
+.top nav .link[aria-current='page'] .ico { color: var(--accent); opacity: 1; }
+.top nav .link:active .ico { transform: scale(0.9); }
+@media (max-width: 520px) {
+  .top-nav { padding-inline: var(--s2); }
+  .top nav { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0; }
+  .top nav .link { flex-direction: column; gap: 2px; min-height: 54px; padding: 6px 2px; font: var(--t-tiny); justify-content: center; }
+  .top nav .link[aria-current='page'] { font-weight: 600; }
+}
+
+/* --- The menu: labelled groups, each with a small icon. */
+.hmenu-panel { width: min(19rem, calc(100vw - 2 * var(--s4))); padding: var(--s3); display: grid; gap: var(--s2); }
+.hmenu-group { padding: var(--s3); border-radius: 12px; background: color-mix(in srgb, var(--wash) 55%, var(--surface)); display: grid; gap: var(--s2); }
+.hmenu-group .hmenu-label, .hmenu-group .hmenu-label:not(:first-child) { margin: 0; display: flex; align-items: center; gap: 6px; font: var(--t-tiny); font-weight: 600; letter-spacing: 0.02em; color: var(--ink-2); }
+.hmenu-group .hmenu-label .ico { color: var(--accent); }
+.hmenu-group .hmenu-seg { background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.hmenu-row {
+  display: flex; align-items: center; gap: var(--s3); width: 100%; min-height: var(--tap); padding: var(--s2) var(--s3);
+  border: 0; border-radius: 9px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink);
+  text-align: start; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.hmenu-row-text { flex: 1; min-width: 0; display: grid; }
+.hmenu-row-title { font: var(--t-small); font-weight: 600; }
+.hmenu-row-hint { font: var(--t-tiny); color: var(--ink-2); }
+.hmenu-row > .ico { color: var(--ink-3); transition: transform 200ms var(--ease-out); }
+.hmenu-row:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
+@media (hover: hover) and (pointer: fine) {
+  .hmenu-row:hover { background: var(--wash); }
+  .hmenu-row:hover > .ico { transform: translateX(2px); }
+}
+/* The groups arrive one after another when the menu opens (30 ms apart). */
+.hmenu-panel .hmenu-group { opacity: 0; transform: translateY(-4px); transition: opacity 200ms ease, transform 240ms var(--ease-out); }
+.hmenu-panel.open .hmenu-group { opacity: 1; transform: none; }
+.hmenu-panel.open .hmenu-group:nth-child(2) { transition-delay: 30ms; }
+.hmenu-panel.open .hmenu-group:nth-child(3) { transition-delay: 60ms; }
+
+/* --- Send: the arrow is alive while there's something to send. A small lift every couple of seconds; under a
+   real pointer it launches through the top of the button and a new one rises from below, in a loop. */
+.composer-send { overflow: hidden; }
+.composer.has-text .composer-send svg { animation: send-ready 2.6s var(--ease-in-out) infinite; }
+@keyframes send-ready {
+  0%, 62%, 100% { transform: translateY(0); }
+  74% { transform: translateY(-3px); }
+  86% { transform: translateY(1px); }
+}
+@keyframes send-launch {
+  0% { transform: translateY(0); opacity: 1; }
+  42% { transform: translateY(-22px); opacity: 0; }
+  43% { transform: translateY(22px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+@media (hover: hover) and (pointer: fine) {
+  .composer.has-text .composer-send:hover:not(:disabled) svg { animation: send-launch 900ms var(--ease-out) infinite; }
+}
+.composer.has-text .composer-send:active:not(:disabled) svg { animation: send-launch 420ms var(--ease-out) 1; }
+
+/* --- Win labels: under a real pointer, a primary button's label turns into the outcome ("Lock it in ✓").
+   The win text sits on top of the label, so the button never changes size. */
+.btn[data-win] { position: relative; }
+.btn[data-win] > .btn-label { display: inline-block; transition: opacity 180ms ease, transform 220ms var(--ease-out), filter 180ms ease; }
+.btn[data-win]::after {
+  content: attr(data-win); position: absolute; inset: 0; display: grid; place-items: center; white-space: nowrap;
+  opacity: 0; transform: translateY(8px); transition: opacity 180ms ease, transform 220ms var(--ease-out); pointer-events: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .btn[data-win]:hover:not(:disabled) > .btn-label, .btn[data-win]:focus-visible:not(:disabled) > .btn-label { opacity: 0; transform: translateY(-8px); filter: blur(2px); }
+  .btn[data-win]:hover:not(:disabled)::after, .btn[data-win]:focus-visible:not(:disabled)::after { opacity: 1; transform: none; }
+}
+
+/* --- Landing: the hint becomes a welcome when you reach for the door, and stays while it swings open. */
+.door-hint { display: grid; justify-items: center; }
+.door-hint > span { grid-area: 1 / 1; transition: opacity 220ms ease, transform 260ms var(--ease-out), filter 220ms ease; }
+.door-hint-win { opacity: 0; transform: translateY(6px); color: #c5e11d; }
+.door.open + .door-hint .door-hint-idle { opacity: 0; transform: translateY(-6px); filter: blur(2px); }
+.door.open + .door-hint .door-hint-win { opacity: 1; transform: none; }
+@media (hover: hover) and (pointer: fine) {
+  .door:hover + .door-hint .door-hint-idle, .door:focus-visible + .door-hint .door-hint-idle { opacity: 0; transform: translateY(-6px); filter: blur(2px); }
+  .door:hover + .door-hint .door-hint-win, .door:focus-visible + .door-hint .door-hint-win { opacity: 1; transform: none; }
+}
+
+/* --- Cards and lists: quiet lift under a pointer, and rows that arrive in order (40 ms apart, first six). */
+@media (hover: hover) and (pointer: fine) {
+  .kc-card:hover, .rp-card:hover { box-shadow: 0 6px 18px rgb(28 31 35 / 0.08); }
+}
+.rp-card { transition: box-shadow 200ms ease; }
+.rp-list > li { animation: row-in 260ms var(--ease-out) both; }
+.rp-list > li:nth-child(2) { animation-delay: 40ms; }
+.rp-list > li:nth-child(3) { animation-delay: 80ms; }
+.rp-list > li:nth-child(4) { animation-delay: 120ms; }
+.rp-list > li:nth-child(5) { animation-delay: 160ms; }
+.rp-list > li:nth-child(n + 6) { animation-delay: 200ms; }
+@keyframes row-in { from { opacity: 0; transform: translateY(6px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  main > section:not([hidden]), .rp-list > li, .composer.has-text .composer-send svg { animation: none !important; }
+  .link, .rp-cat, .rp-pill, .kc-card, .hmenu-row, .hmenu-panel .hmenu-group, .btn[data-win] > .btn-label, .btn[data-win]::after,
+  .door-hint > span, .top nav .link .ico { transition: none !important; }
+  .link:active, .rp-cat:active, .rp-pill:active, .kc-card:active, .hmenu-row:active { transform: none; }
+}

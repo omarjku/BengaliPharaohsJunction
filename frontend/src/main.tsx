@@ -5,6 +5,7 @@ import { useState } from 'react'
 import App from './App.tsx'
 import Landing from './Landing.tsx'
 import { isTryEntry } from './api'
+import './polish.css' // last, so the polish pass sits on top of every component sheet
 
 function Root() {
   const skip = new URLSearchParams(location.search).has('app') || isTryEntry()
