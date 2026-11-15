@@ -99,6 +99,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   // A question wins: "How much cream?" and "Order again?" come with the run attached, but only the question is shown.
   const question = result?.question ? result : null
   const convo = question?.conversation_id ?? chatConversationId // the question can be answered right here (typed or spoken)
+  const chatThread = useRef<string | null>(null) // the chat's conversation id: sent with EVERY message so the agent keeps the whole thread
   const convoRef = useRef(convo)
   useEffect(() => {
     convoRef.current = convo
@@ -309,8 +310,9 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
       const have = pantry.current.length ? { have: pantry.current } : {}
       const input = to
         ? { text: '', follow_up: { to, answer: words.trim() }, ...have }
-        : { text: words.trim(), ...(when ? { requested_date: when } : {}), ...have } // the day comes from the words, or the agent asks
+        : { text: words.trim(), ...(when ? { requested_date: when } : {}), ...have, ...(chatThread.current ? { conversation_id: chatThread.current } : {}) } // the day comes from the words, or the agent asks
       const res = await chatAgent(input)
+      if (res.conversation_id) chatThread.current = res.conversation_id // the same thread next turn (the backend starts a fresh one after 30 idle minutes)
       if (res.requested_date) setDate(res.requested_date)
       if (res.reply) push({ kind: 'agent', text: res.reply })
       setChatConversationId(res.question ? res.conversation_id : null)
