@@ -111,7 +111,7 @@ def test_amountless_product_becomes_held_proposal(shop1, monkeypatch):  # noqa: 
                                     "text": "One base per guest-sized batch.", "source": "gemini"}]
     assert any(ln["chosen"] and ln["quantity"]["requested"] == {"amount": 10.0, "unit": "pcs"}
                for ln in body["lines"])
-    assert body["question"].startswith("I assumed 10 pcs pizza base") and body["conversation_id"]
+    assert body["question"].startswith("I assumed 10 pieces pizza base") and body["conversation_id"]
     assert any(r["code"] == "QTY_AMBIGUOUS" and "One base per guest-sized batch" in r["message"] for r in _reasons(body))
 
     changed = c.post("/api/agent/ask", headers={"X-Agent-Key": "agent-lk"},

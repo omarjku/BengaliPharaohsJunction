@@ -64,7 +64,7 @@ def test_partial_stock_suggests_the_available_amount(shop):
     res = run([("462775", 100)])
     assert res.status == "refused" and codes(res) == ["STOCK_PARTIAL"]
     r = res.decision.reasons[0]
-    assert r.facts == {"available": 51.0, "requested": 100} and "51 ST of Arla milk 1 l + 49 ST" in r.suggested_fix
+    assert r.facts == {"available": 51.0, "requested": 100} and "51 piece of Arla milk 1 l + 49 piece" in r.suggested_fix
 
 
 def test_unknown_product_is_declined(shop):

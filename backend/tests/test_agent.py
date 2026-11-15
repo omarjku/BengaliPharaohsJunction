@@ -407,9 +407,9 @@ def test_grounding_needs_whole_words_and_a_real_query():
 
 def test_unit_grounding_cannot_be_spoofed():
     milk = {"query": "milk", "amount": 20.0, "unit": "L"}
-    assert agent.ungrounded("20 L milk", dict(milk, unit="KI")) == "the unit KI"  # #4 catalogue codes
+    assert agent.ungrounded("20 L milk", dict(milk, unit="KI")) == "the unit case"
     assert agent.ungrounded("12 kg lactose-free milk", dict(milk, amount=12.0)) == "the unit L for milk"  # #4
-    assert agent.ungrounded("20 L milk", dict(milk, unit="pcs")) == "the unit pcs for milk"  # #4 pcs over a unit
+    assert agent.ungrounded("20 L milk", dict(milk, unit="pcs")) == "the unit pieces for milk"  # #4 pcs over a unit
     assert agent.ungrounded("20l milk", milk) is None
     assert agent.ungrounded("12 eggs", {"query": "egg", "amount": 12.0, "unit": "pcs"}) is None
 

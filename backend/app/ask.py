@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 
 from trade_contracts import Decision, ReasonCode as C
 
-from . import agent, auth, catalogue, conversation, gate, kitchen, mandates, menu, orders, profile, progress, understand, urgent
+from . import agent, auth, catalogue, conversation, gate, kitchen, mandates, menu, orders, profile, progress, quantity as quantity_mod, understand, urgent
 
 TZ = ZoneInfo("Europe/Helsinki")
 log = logging.getLogger(__name__)
@@ -269,8 +269,9 @@ def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict
             item = items[assumed]
             line = next((ln for ln in out.get("lines", []) if ln.get("item") == assumed and ln.get("product")), None)
             unit = item.get("unit") or (agent.natural_unit(line["product"])[0] if line else None)
-            out["question"] = (f"I assumed {item['amount']:g} {unit} {item['query']}: {item['amount_assumption']} "
-                               f"Use that amount, or reply with a different amount in {unit}?")
+            spoken_unit = quantity_mod.human_unit(line["product"] if line else item, unit)
+            out["question"] = (f"I assumed {item['amount']:g} {spoken_unit} {item['query']}: {item['amount_assumption']} "
+                               f"Use that amount, or reply with a different amount in {spoken_unit}?")
             out["options"] = agent.amount_options(line["product"] if line else item)
             kind, state = "amount", {"request": out["request"], "item": assumed, "options": out["options"],
                                       "amount_question": out["question"], "unit": unit}
@@ -320,7 +321,8 @@ def _finish(out: dict, text: str, requested: date | None, buyer_id: str) -> dict
             name = line.get("name") or product.get("name_en") or product.get("name_fi") or "item"
             amount = quantity.get("amount") if isinstance(quantity, dict) else line.get("amount")
             unit = quantity.get("unit") if isinstance(quantity, dict) else line.get("unit")
-            rendered.append(f"{amount:g} {unit} {name}" if isinstance(amount, (int, float)) and unit
+            spoken_unit = quantity_mod.human_unit(product, unit)
+            rendered.append(f"{amount:g} {spoken_unit} {name}" if isinstance(amount, (int, float)) and unit
                             else str(name))
         status = "Ordered" if order.get("status") == "confirmed" else "Needs your OK"
         out["speak"] = f"{status}: {', '.join(rendered)}."
@@ -364,8 +366,9 @@ def _next_steps(out: dict, text: str, when: str | None, buyer_id: str) -> list[d
         if it.get("amount_assumed") and line:
             kind = "amount"
             unit = it.get("unit") or agent.natural_unit(line["product"])[0]
-            question = (f"I assumed {it['amount']:g} {unit} {it['query']}: {it['amount_assumption']} "
-                        f"Use that amount, or reply with a different amount in {unit}?")
+            spoken_unit = quantity_mod.human_unit(line["product"], unit)
+            question = (f"I assumed {it['amount']:g} {spoken_unit} {it['query']}: {it['amount_assumption']} "
+                        f"Use that amount, or reply with a different amount in {spoken_unit}?")
             step_options = agent.amount_options(line["product"])
         elif it["amount"] is None and line:
             kind, unit = "amount", agent.natural_unit(line["product"])[0]
@@ -511,7 +514,8 @@ def _choose_pending_value(entry: dict, value):
 
 
 def _request_item_clause(item: dict) -> str:
-    amount = f"{item['amount']:g} {item['unit']} " if item.get("amount") is not None and item.get("unit") else ""
+    amount = (f"{item['amount']:g} {quantity_mod.human_unit(item, item['unit'])} "
+              if item.get("amount") is not None and item.get("unit") else "")
     return f"{amount}{item.get('query') or item.get('name') or 'product'}"
 
 
@@ -703,7 +707,8 @@ async def _answer(entry: dict, answer: str, buyer_id: str) -> tuple[dict, str, d
             if not _line_grounded(entry):
                 return _line_refused(entry), text, requested
             item = dict(entry["request"]["items"][entry["item"]], query=choice[:120], source="")
-            amount = f"{item['amount']:g} {item['unit']} " if item.get("amount") is not None and item.get("unit") else ""
+            amount = (f"{item['amount']:g} {quantity_mod.human_unit(item, item['unit'])} "
+                      if item.get("amount") is not None and item.get("unit") else "")
             merged = f"{amount}{choice}"  # only this line: the other lines' text would read as unparsed (guard)
             one = {**entry["request"], "items": [item]}
             return await _flow(merged, requested, buyer_id, parsed=(one, True)), merged, requested
@@ -881,6 +886,12 @@ def _cart_reply(text: str, card: dict | None, snapshot: dict | None = None) -> s
     fi = conversation.language(text) == "fi"
     orders = [order for order in (snapshot or {}).get("orders") or [] if isinstance(order, dict)]
 
+    def spoken_unit(line: dict) -> str:
+        product = catalogue.get(str(line.get("product_id"))) if line.get("product_id") else None
+        raw_quantity = line.get("quantity") if isinstance(line.get("quantity"), dict) else {}
+        requested = raw_quantity.get("requested") if isinstance(raw_quantity.get("requested"), dict) else raw_quantity
+        return quantity_mod.human_unit(product or {}, line.get("unit") or requested.get("unit"))
+
     def price_sentence(line: dict) -> str:
         price = line.get("unit_price_cents")
         if price is None and line.get("price_cents") is not None:
@@ -908,8 +919,12 @@ def _cart_reply(text: str, card: dict | None, snapshot: dict | None = None) -> s
             return price_sentence(price_target[1]) if price_target else "Prices are fixed by Valio, and no priced item matches that question."
         if re.search(r"\b(?:how much|amount|määrä|paljonko)\b", low) and target:
             line = target[1]
-            return (f"Tilauksessasi on {line.get('amount')} {line.get('unit') or 'yksikköä'} tuotetta {line.get('name')}."
-                    if fi else f"There are {line.get('amount')} {line.get('unit') or 'units'} of {line.get('name')} in your order.")
+            raw_quantity = line.get("quantity") if isinstance(line.get("quantity"), dict) else {}
+            requested = raw_quantity.get("requested") if isinstance(raw_quantity.get("requested"), dict) else raw_quantity
+            amount = requested.get("amount", line.get("amount"))
+            unit = spoken_unit(line) if (line.get("unit") or requested.get("unit")) else ("yksikköä" if fi else "units")
+            return (f"Tilauksessasi on {amount} {unit} tuotetta {line.get('name')}."
+                    if fi else f"There are {amount} {unit} of {line.get('name')} in your order.")
         if re.search(r"\b(?:did you add|is .* in|included|lisäsit|onko)\b", low) and target:
             return (f"Kyllä, {target[1].get('name')} on tilauksessasi." if fi
                     else f"Yes, {target[1].get('name')} is in your order.")
@@ -918,7 +933,7 @@ def _cart_reply(text: str, card: dict | None, snapshot: dict | None = None) -> s
         if re.search(r"\b(?:entire|whole|full|all|entire order|order now|cart)\b", low) or not target:
             parts = []
             for order in orders[:5]:
-                named = ", ".join(f"{line.get('amount')} {line.get('unit') or 'units'} {line.get('name')}"
+                named = ", ".join(f"{line.get('amount')} {spoken_unit(line) if line.get('unit') else 'units'} {line.get('name')}"
                                   for line in order.get("lines") or [])
                 parts.append(f"{order.get('requested_date')} ({order.get('status')}): {named or 'no lines'}"
                              f", EUR {(order.get('total_cents') or 0) / 100:.2f}")
@@ -967,8 +982,9 @@ def _cart_reply(text: str, card: dict | None, snapshot: dict | None = None) -> s
                                                if isinstance(card.get("order"), dict) else None)
         status_text = {"pending_approval": "waiting for your approval", "confirmed": "confirmed"}.get(
             status, "in the current cart")
-        return (f"{amount_text} × {target['name']} ({amount_text} {unit}), {status_text}." if not fi else
-                f"{amount_text} × {target['name']} ({amount_text} {unit}), {status_text}.")
+        spoken = spoken_unit(target) if unit else ("units" if not fi else "yksikköä")
+        return (f"{amount_text} × {target['name']} ({amount_text} {spoken}), {status_text}." if not fi else
+                f"{amount_text} × {target['name']} ({amount_text} {spoken}), {status_text}.")
     names = ", ".join(line["name"] for line in lines[:5] if line.get("name"))
     status = card.get("order_status")
     suffix = f" ({status.replace('_', ' ')})" if status else ""
@@ -1534,7 +1550,8 @@ def _held_injection_reply(action: dict) -> str:
     item = next(iter((action.get("slots") or {}).get("items") or []), {})
     amount = item.get("amount")
     unit = item.get("unit")
-    label = " ".join(str(x) for x in (f"{amount:g}" if isinstance(amount, (int, float)) else amount, unit,
+    spoken_unit = quantity_mod.human_unit(item, unit)
+    label = " ".join(str(x) for x in (f"{amount:g}" if isinstance(amount, (int, float)) else amount, spoken_unit,
                                        item.get("name")) if x)
     return f"{label}: held for you; {agent.INJECTION_NOTE}"
 
