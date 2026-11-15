@@ -29,7 +29,7 @@ export function ChoiceChips({ choices, onChoose, disabled = false }: {
 // - voice only: the thread hidden, the big orb in the middle
 // - voice + text: the thread, a small orb docked above the bar
 // Tapping the orb, or the labelled toggle, switches the voice layouts. Logic lives in App; this only arranges.
-export function Conversation({ voiceOn, layout, onToggle, thread, bigOrb, smallOrb, status, composer }: {
+export function Conversation({ voiceOn, layout, onToggle, thread, bigOrb, smallOrb, status, cartDock, composer }: {
   voiceOn: boolean
   layout: VoiceLayout
   onToggle: () => void
@@ -37,12 +37,13 @@ export function Conversation({ voiceOn, layout, onToggle, thread, bigOrb, smallO
   bigOrb: ReactNode
   smallOrb: ReactNode
   status: ReactNode // the voice status line (listening, the tool running, an error)
+  cartDock?: ReactNode
   composer: ReactNode
 }) {
   const t = useCopy().UI.conv
   const showThread = !voiceOn || layout === 'thread'
   return (
-    <div className={`conv${voiceOn ? ` voice-on voice-${layout}` : ''}`}>
+    <div className={`conv${voiceOn ? ` voice-on voice-${layout}` : ''}${cartDock ? ' has-cart' : ''}`}>
       {voiceOn && (
         <div className="conv-toggle">
           <button type="button" className="link" aria-pressed={layout === 'thread'} onClick={onToggle}>
@@ -66,6 +67,7 @@ export function Conversation({ voiceOn, layout, onToggle, thread, bigOrb, smallO
             <div className="conv-status">{status}</div>
           </div>
         )}
+        {cartDock && <div className="conv-cart-dock">{cartDock}</div>}
         {composer}
       </div>
     </div>

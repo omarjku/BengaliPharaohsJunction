@@ -1,37 +1,3 @@
-/* The decision card (Zoha's layout, our content). Only the shared tokens from index.css, so her token changes flow
-   through. Tone: dc-good (ordered), dc-warn (needs your OK), dc-bad (not ordered), dc-neutral. */
-/* The card keeps .answer's border, shadow and entrance; the strip runs edge to edge, the body has the padding. */
-.answer.dc { padding: 0; display: block; overflow: hidden; }
-.dc-strip {
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s4);
-  padding: var(--s3) var(--s5); border-block-end: 1px solid var(--line); background: var(--paper);
-}
-.dc-good .dc-strip { background: color-mix(in srgb, var(--good) 8%, var(--surface)); }
-.dc-warn .dc-strip { background: var(--warn-wash); }
-.dc-bad .dc-strip { background: color-mix(in srgb, var(--bad) 7%, var(--surface)); }
-.dc-strip .status { margin: 0; }
-.dc-when { font: var(--t-small); color: var(--ink-2); margin: 0; }
-.dc-body { display: grid; gap: var(--s4); padding: var(--s5); }
-.dc-body > * { min-width: 0; }
-.dc-rule { font: var(--t-small); color: var(--ink-2); margin: 0; }
-
-/* Items: a table on wide screens, stacked rows on a phone. */
-.dc-table { width: 100%; border-collapse: collapse; font: var(--t-small); }
-.dc-table th, .dc-table td { padding: var(--s2) 0; text-align: end; border-block-end: 1px solid var(--line); vertical-align: top; }
-.dc-table thead th { color: var(--ink-3); font-weight: 500; }
-.dc-table th:first-child { text-align: start; font-weight: 500; padding-inline-end: var(--s3); }
-.dc-table td { padding-inline-start: var(--s3); white-space: nowrap; }
-@media (max-width: 600px) {
-  .dc-strip, .dc-body { padding-inline: var(--s4); }
-  .dc-table thead { display: none; }
-  .dc-table tr { display: grid; grid-template-columns: 1fr auto; gap: var(--s1) var(--s3); padding-block: var(--s2); border-block-end: 1px solid var(--line); }
-  .dc-table th, .dc-table td { border: 0; padding: 0; }
-  .dc-table th[scope='row'] { grid-column: 1 / -1; }
-  .dc-table td { text-align: start; color: var(--ink-2); }
-  .dc-table td::before { content: attr(data-label) ' '; color: var(--ink-3); }
-  .dc-table td:last-child { grid-column: 1 / -1; color: var(--ink); font-weight: 600; }
-}
-
 /* Options to pick from: one card each, the picked one outlined in the accent. */
 .dc-options { border: 0; margin: 0; padding: 0; display: grid; gap: var(--s2); grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr)); }
 .dc-legend { font: var(--t-small); font-weight: 600; color: var(--ink-2); margin-block-end: var(--s2); padding: 0; }
@@ -53,12 +19,5 @@
 .btn.dc-decline { color: var(--bad); }
 .dc-qty { display: grid; gap: var(--s2); }
 .dc-qty-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3); }
-/* Phone: the main action gets a full row; the quieter ones (Change quantity, Decline) share the row under it. */
-@media (max-width: 600px) {
-  .dc .decide { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); }
-  .dc .decide .btn:first-of-type { grid-column: 1 / -1; width: 100%; }
-  .dc .decide .hint { grid-column: 1 / -1; }
-}
-
 /* "Remember this choice?" after picking another option. */
 .dc-remember { display: grid; gap: var(--s2); padding: var(--s3) var(--s4); border-radius: var(--radius); background: var(--paper); border: 1px solid var(--line); }

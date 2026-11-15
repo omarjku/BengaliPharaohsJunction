@@ -333,6 +333,7 @@ export const UI = {
     signOff: (who: string | null, approved: boolean, time: string) =>
       `${who ?? 'Sinä'} ${who ? (approved ? 'hyväksyi' : 'hylkäsi') : approved ? 'hyväksyit' : 'hylkäsit'} · klo ${time.replace(':', '.')}`,
     done: 'Tilattu ✓',
+    needsApproval: 'Hyväksyntäsi tarvitaan',
     approve: (m: string) => `Hyväksy · ${m}`,
     approving: 'Hyväksytään…',
     reject: 'Hylkää',
@@ -342,6 +343,7 @@ export const UI = {
     ordering: 'Tilataan…',
     orderIt: (m: string) => `Tilaa tämä · ${m}`,
     notThis: 'Ei tämä',
+    proposal: 'Ehdotus',
     decidedBy: (rule: string) => `Ratkaisi: ${rule}.`,
     ruleWords: {
       AUTO: 'sääntösi, kaikki rajat alittuvat', SPEND_OVER_LIMIT: 'tilausrajasi', LINE_OVER_CAP: 'tuotekohtainen rajasi',
@@ -420,6 +422,8 @@ export const UI = {
     rank: { best: 'Paras vastine', better: 'Hyvä vastine', good: 'Käy myös' } as Record<string, string>,
     perUnit: (unit: string) => `/ ${unit}`,
     onTimeShort: (p: number) => `ajallaan ${p} %`,
+    deposit: 'Palautuspantti',
+    check: (p: string) => `Tarkista · ${p}`,
   },
   menu: {
     aria: 'Ehdotettu ostoskori',
