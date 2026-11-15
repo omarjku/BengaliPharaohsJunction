@@ -20,7 +20,7 @@ from trade_contracts import (Alternative, Decision, Mandate, Quote, Reason, Reas
                              eur_to_cents)
 from trade_contracts.common import RuleKind, UncertaintyPolicy
 
-from . import catalogue, valio
+from . import catalogue, quantity, valio
 
 RULES_VERSION = "t07-front-door-0.2"
 HELSINKI = ZoneInfo("Europe/Helsinki")
@@ -106,7 +106,9 @@ def _qty(x: float) -> str:
 
 
 def _r(code: C, severity: Severity, message: str, pid: str | None = None, fix: str | None = None, **facts) -> Reason:
-    return Reason(code=code, severity=severity, message=message, facts=facts, suggested_fix=fix, product_id=pid)
+    product = catalogue.get(pid) if pid else None
+    return Reason(code=code, severity=severity, message=quantity.humanize_text(message, product), facts=facts,
+                  suggested_fix=quantity.humanize_text(fix, product) if fix else fix, product_id=pid)
 
 
 def _unknown(policy: UncertaintyPolicy, code: C, message: str, pid: str | None, fix: str, **facts) -> Reason:
@@ -385,7 +387,8 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
             differs = _differs(old, cat)
             tier = "good" if differs else TIERS[i]
             name = cat.get("name_en") or cat.get("name_fi") or c
-            amount = "unknown amount" if not q["quantity_known"] else f"{_qty(q['available_amount'])} {q['sales_unit']} available"
+            spoken_unit = quantity.human_unit(cat, q["sales_unit"])
+            amount = "unknown amount" if not q["quantity_known"] else f"{_qty(q['available_amount'])} {spoken_unit} available"
             why = _why_safe(cat, old, excluded, need) + (f" Differs: {'; '.join(differs)}." if differs else "")
             subs.append({"product_id": c, "replaces": replaces, "tier": tier, "why_safe": why, "name": name,
                          "differs": differs,
@@ -394,7 +397,7 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
                          "available": q["available_amount"] if q["quantity_known"] else None})
             alts.append((tier, Alternative(product_id=c, summary=(
                 f"{tier.upper()} instead of {replaces}: {name}. Safe: {why} Orderable for {requested} (cut-off "
-                f"{q['order_cutoff']}), {eur(eur_to_cents(q['price']))} per {q['sales_unit']} net, {amount}."))))
+                f"{q['order_cutoff']}), {eur(eur_to_cents(q['price']))} per {spoken_unit} net, {amount}."))))
     alts.sort(key=lambda x: _TIER_ORDER[x[0]])  # the contract allows 3: best first across refused lines
     return [a for _, a in alts[:MAX_ALTERNATIVES]], bad, subs, quotes
 
@@ -492,8 +495,10 @@ def _alternative_order(lines: list, info: list[dict], rejected: list[str], quote
         if not parts:
             return None
         out += parts
-        splits.append(f"{_qty(parts[0]['quantity'])} {parts[0]['unit']} of {parts[0]['name']} + "
-                      f"{_qty(parts[1]['quantity'])} {parts[1]['unit']} of {parts[1]['name']} ({parts[1]['tier']} substitute)")
+        splits.append(f"{_qty(parts[0]['quantity'])} {quantity.human_unit(catalogue.get(parts[0]['product_id']) or {}, parts[0]['unit'])} "
+                      f"of {parts[0]['name']} + {_qty(parts[1]['quantity'])} "
+                      f"{quantity.human_unit(catalogue.get(parts[1]['product_id']) or {}, parts[1]['unit'])} "
+                      f"of {parts[1]['name']} ({parts[1]['tier']} substitute)")
     if len(out) > MAX_ORDER_LINES:
         return None
     keep = ("product_id", "name", "quantity", "unit", "unit_price_cents", "line_total_cents", "replaces")

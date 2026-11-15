@@ -35,6 +35,7 @@ class Reason(ContractModel):
 
 
 class Alternative(ContractModel):
+    item: int | None = Field(default=None, ge=0, description="Request item index this alternative belongs to.")
     product_id: str = Field(min_length=1)
     summary: str = Field(min_length=1, description="Why this is offered instead.")
 
