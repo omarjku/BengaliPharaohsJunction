@@ -869,7 +869,15 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
     shown_text = next((str(row.get("text") or "") for row in reversed(history)
                        if row.get("role") == "assistant" and row.get("text")), "")
     _, _note = agent.strip_auto_approval(original_text)
-    _TURN.set({"steer": await agent.steering(original_text), "note": _note, "text": original_text,
+    _steer = await agent.steering(original_text)
+    if request_text != original_text:
+        # The order is built from the EARLIER request ("yes" only confirms it), so the guards must judge that text too
+        # (security review): keep the more cautious steering score and any auto-approval note from either.
+        _, _earlier_note = agent.strip_auto_approval(request_text)
+        _note = _note or _earlier_note
+        _earlier_steer = await agent.steering(request_text)
+        _steer = max((v for v in (_steer, _earlier_steer) if v is not None), default=None)
+    _TURN.set({"steer": _steer, "note": _note, "text": original_text,
                "original": original_text, "request_text": request_text, "shown_text": shown_text,
                "confirmation": bool(CONFIRMATION.match(original_text) and history)})
     if APPROVAL_REQUEST.search(text):
