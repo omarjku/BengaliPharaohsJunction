@@ -221,3 +221,13 @@ def test_reasons_sorted_and_decision_round_trips(shop):
     sev = [r.severity.value for r in res.decision.reasons]
     assert sev[0] == "DECLINE" and sev == sorted(sev, key=["DECLINE", "ASK_HUMAN", "INFO"].index)
     assert type(res.decision).model_validate_json(res.decision.model_dump_json()) == res.decision
+
+
+def test_name_inferred_allergen_never_passes_a_ban_even_with_approve_policy(shop):
+    """Security review: missing Valio data + a fish name must not slip through an 'approve the unverifiable' mandate."""
+    shop.products["462016"] = dict(shop.products["103"], id="462016", name_en="RAINBOW TROUT FILLET C",
+                                     allergens={"contains": [], "may_contain": [], "free_from": [],
+                                                "undeclared": [], "inferred": ["AF"]}, allergen_data="missing")
+    shop.quotes["462016"] = quote("462016")
+    res = run([("462016", 1)], mandate(rules=[("excluded_allergen", "AF")], uncertainty_policy="approve"))
+    assert res.status != "confirmed"

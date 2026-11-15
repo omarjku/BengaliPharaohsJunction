@@ -272,16 +272,16 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
         if code in contains:
             rs.append(_r(C.ALLERGEN_CONTAINS, DECLINE, f"{name} contains {catalogue.ALLERGEN_NAMES.get(code, code)}, "
                          "which your mandate excludes.", pid, "Pick an alternative without it.", allergen=code))
-        elif data_missing and code in inferred:
-            rs.append(_unknown(m.uncertainty_policy, C.ALLERGEN_DATA_MISSING, f"{name} appears to contain "
-                               f"{catalogue.ALLERGEN_NAMES.get(code, code)} from its name, but Valio lists no "
-                               "allergen data, so your rule can't be verified.", pid,
-                               "Check the label, or pick a product with allergen data.", allergen=code,
-                               source="product_name", inferred=True))
         elif word:  # allergen data doesn't list it, but the name does: refuse, no signature can override that
             rs.append(_r(C.ALLERGEN_CONTAINS, DECLINE, f"Name says {word}; your rules exclude "
                          f"{catalogue.ALLERGEN_NAMES.get(code, code)} ({name}).", pid,
                          "Pick an alternative whose label rules it out.", allergen=code, source="product_name", word=word))
+        elif data_missing and code in inferred:  # a name-based guess never relaxes a ban: at least ask, never INFO
+            rs.append(_unknown(m.uncertainty_policy if m.uncertainty_policy is UncertaintyPolicy.DECLINE else UncertaintyPolicy.ASK, C.ALLERGEN_DATA_MISSING, f"{name} appears to contain "
+                               f"{catalogue.ALLERGEN_NAMES.get(code, code)} from its name, but Valio lists no "
+                               "allergen data, so your rule can't be verified.", pid,
+                               "Check the label, or pick a product with allergen data.", allergen=code,
+                               source="product_name", inferred=True))
         elif code in may_contain:  # (name hits were refused above)
             rs.append(_r(C.ALLERGEN_MAY_CONTAIN, ASK, f"{name} may contain {catalogue.ALLERGEN_NAMES.get(code, code)}.",
                          pid, "Approve if traces are acceptable, or pick an alternative.", allergen=code))
