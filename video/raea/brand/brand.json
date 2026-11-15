@@ -1,0 +1,34 @@
+{
+  "palette": {
+    "primary": "#00607a",
+    "accent": "#c5e11d",
+    "surface": "#fbfaf7",
+    "text_on_surface": "#1c1f23",
+    "text_on_accent": "#0b2f3a"
+  },
+  "contrast": {
+    "text_on_surface": 15.2,
+    "text_on_accent": 10.4,
+    "accent_on_surface": 1.5
+  },
+  "colors": [
+    { "name": "teal", "hex": "#00607a", "css": "--brand-accent" },
+    { "name": "lime", "hex": "#c5e11d", "css": "--brand-lime" },
+    { "name": "ink", "hex": "#1c1f23", "css": "--brand-text" },
+    { "name": "paper", "hex": "#fbfaf7", "css": "--brand-background" }
+  ],
+  "fonts": {
+    "heading": "system-ui",
+    "body": "system-ui"
+  },
+  "radius": "12px",
+  "source": {
+    "by_hand": {
+      "palette": "frontend/src/index.css in this repository",
+      "fonts": "frontend/src/index.css in this repository",
+      "radius": "frontend/src/index.css in this repository"
+    }
+  },
+  "logos": []
+}
+

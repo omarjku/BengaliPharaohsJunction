@@ -1,0 +1,64 @@
+1
+00:00:00,000 --> 00:00:05,000
+Zoha — It’s 06:00. Five hundred guests arrive today.
+
+2
+00:00:05,000 --> 00:00:08,200
+Zoha — The delivery cut-off is closing. One wrong guess could stop service.
+
+3
+00:00:08,300 --> 00:00:13,800
+Omar — So the chef takes one photo. Front Door reads it and checks Valio.
+
+4
+00:00:14,000 --> 00:00:18,600
+Omar — Then it puts the decision back in the chef’s hands.
+
+5
+00:00:19,000 --> 00:00:24,000
+Zoha — Gemini reads the handwriting, finds the seven items, and keeps the exception visible.
+
+6
+00:00:25,000 --> 00:00:32,000
+Omar — The agent checks price, stock, delivery date, and pack sizes.
+
+7
+00:00:33,000 --> 00:00:39,000
+Omar — The score is a check on what the chef meant.
+
+8
+00:00:40,000 --> 00:00:47,000
+Zoha — The milk line is above the kitchen’s 1,500 euro limit. The door holds the cart.
+
+9
+00:00:48,000 --> 00:00:55,000
+Omar — A short or uncertain line is not silently replaced. The card explains the safe next choice.
+
+10
+00:00:56,000 --> 00:01:01,000
+Zoha — The agent cannot approve. The chef can.
+
+11
+00:01:02,000 --> 00:01:09,000
+Omar — The order is confirmed, signed, and recorded for the kitchen and Valio.
+
+12
+00:01:31,000 --> 00:01:39,000
+Zoha — The Decisions score sets when the agent may act alone. Code still controls money, stock, dates, and approval.
+
+13
+00:01:39,300 --> 00:01:44,500
+Omar — Codex built the core we just used: the engine, the Gemini agent, and the safety paths.
+
+14
+00:01:44,700 --> 00:01:49,000
+Zoha — CRACI runs the build checks and ties the order to its build evidence.
+
+15
+00:01:49,400 --> 00:01:53,000
+Omar — The order is confirmed.
+
+16
+00:01:53,000 --> 00:01:57,000
+Zoha — At 06:00, the chef is still in control.
+

@@ -1,0 +1,6 @@
+out/
+styles.gen.ts
+assets/
+node_modules/
+
+media/demo.mp4
