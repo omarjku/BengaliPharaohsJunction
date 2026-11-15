@@ -1,6 +1,8 @@
 /* The conversation screen. The bar is pinned to the bottom (safe area included); the thread scrolls above it. */
 .conv { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); padding-block-end: 140px; }
 .conv.voice-on.voice-thread { padding-block-end: 210px; }
+.conv.has-cart { padding-block-end: 216px; }
+.conv.has-cart.voice-on.voice-thread { padding-block-end: 286px; }
 .conv-toggle { display: flex; justify-content: flex-end; }
 .conv-thread { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); align-content: start; }
 .conv-thread > * { min-width: 0; }
@@ -21,6 +23,7 @@
 }
 .conv-bar > .voice-status:empty { display: none; }
 .conv-dock { display: flex; align-items: center; gap: var(--s3); margin-block-end: var(--s2); }
+.conv-cart-dock { margin-block-end: var(--s2); }
 
 /* Messages (same look as .bubble in index.css): the chef's on the right in teal, the agent's on the left on white. */
 .msg { max-width: min(85%, 34rem); overflow-wrap: anywhere; }

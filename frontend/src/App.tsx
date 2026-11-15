@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { ApiError, chatAgent, createSandbox, getAdminKey, getHealth, getKeys, getSandboxSession, KEYS_FROM_LINK, applyLinkKeys, checkLinkKeys, isTryEntry, MOCK, sandboxSessionLive, setAdminKey, setKeys, setSandboxSession, getOrder, transcribe, VOICE_READY, type ApiKeys } from './api'
 import { AuditLog, Recent } from './AuditLog'
-import { buyerLabel, errorText, nextMonday } from './format'
+import { buyerLabel, errorText, nextMonday, type Tone } from './format'
 import { groupHistory } from './history'
 import { COPIES, CopyContext, initialLang, rememberLang, useCopy, type Lang } from './i18n'
 import { MenuResult } from './Menu'
 import { Rules } from './Rules'
 import { RunResult } from './RunResult'
-import type { AskResponse, AuditEntry, ChatCard, MenuRun, Reason } from './types'
+import type { AskResponse, AuditEntry, ChatCard, MenuRun, OrderResponse, Reason } from './types'
 import { UrgentOptions } from './Urgent'
 import { ValioView } from './Valio'
 
@@ -33,6 +33,7 @@ import { useOnboarded } from './onboardingApi'
 import { Kitchen } from './Kitchen'
 import { onboardingSkippedFor, skipOnboardingFor, useKitchen } from './useKitchen'
 import { Conversation, type VoiceLayout } from './Conversation'
+import { CartDock } from './Cart'
 import { Calendar } from './Calendar'
 import { Orb } from './Orb'
 import { useLive } from './useLive'
@@ -104,6 +105,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
   }, [convo])
   // ONE thread for text and voice: the chef's messages, the agent's lines, the decision cards, errors.
   const [thread, setThread] = useState<Item[]>([])
+  const [menuCartSummaries, setMenuCartSummaries] = useState<Record<number, { auditId: string; items: number; totalCents: number }>>({})
   const nextId = useRef(0)
   const push = useCallback((it: NewItem) => setThread((t) => [...t, { ...it, id: ++nextId.current } as Item]), [])
   const pantry = useRef<string[]>([]) // what the kitchen has for this order only (a pantry photo); sent with the next requests
@@ -392,12 +394,94 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
       const at = t.findIndex((x) => x.id === id)
       const before = t[at - 1]
       if (at < 1 || !before || before.kind !== 'agent') return t
-      return t.map((x, i) => (i === at - 1 ? { ...x, text: u.conv.cartNow(c.money(p.cart_total_cents)) } : x))
+      return t.map((x, i) => {
+        if (i === at - 1) return { ...x, text: u.conv.cartNow(c.money(p.cart_total_cents)) }
+        if (x.id === id && x.kind === 'res' && x.res.intent === 'menu') return { ...x, res: { ...x.res, ...p } }
+        return x
+      })
     })
+  }
+  const updateMenuCartSummary = useCallback((id: number, next: { auditId: string; items: number; totalCents: number }) => {
+    setMenuCartSummaries((current) => {
+      const previous = current[id]
+      if (previous?.auditId === next.auditId && previous.items === next.items && previous.totalCents === next.totalCents) return current
+      return { ...current, [id]: next }
+    })
+  }, [])
+  function updateCartOrder(id: number, order: OrderResponse, menu?: MenuRun) {
+    setThread((items) =>
+      items.map((item) => {
+        if (item.id !== id || item.kind !== 'res') return item
+        if (menu) {
+          const res: AskResponse = {
+            intent: 'order',
+            request: { summary: menu.menu.dishes.map((dish) => dish.name).join(', '), items: menu.ingredients },
+            lines: menu.lines,
+            decision: menu.decision,
+            order,
+            audit_id: order.audit_id,
+            reply: menu.reply,
+            choices: menu.choices,
+            changes: menu.changes,
+            confidence_threshold: menu.confidence_threshold,
+          }
+          return { ...item, res }
+        }
+        return item.res.intent === 'order' ? { ...item, res: { ...item.res, order } } : item
+      }),
+    )
   }
   const empty = thread.length === 0 && !running
   const lastRes = [...thread].reverse().find((it) => it.kind === 'res')?.id ?? null
   const [opened, setOpened] = useState<Set<number>>(new Set()) // earlier cards the chef reopened
+  const activeCart = useMemo(() => {
+    for (const item of [...thread].reverse()) {
+      if (item.kind !== 'res' || item.res.question || !('lines' in item.res)) continue
+      const response = item.res
+      if (response.intent === 'menu' && 'cart_total_cents' in response) {
+        const summary = menuCartSummaries[item.id]
+        const current = summary?.auditId === response.audit_id ? summary : null
+        const items = current?.items ?? new Set(response.order_lines.map((line) => line.product_id)).size
+        if (!items) continue
+        return {
+          id: `cart-${response.audit_id}`,
+          status: u.result.proposal,
+          tone: 'neutral' as Tone,
+          items,
+          total: c.money(current?.totalCents ?? response.cart_total_cents),
+          delivery: c.day(item.date),
+        }
+      }
+      if (response.intent === 'order' && 'order' in response) {
+        const order = response.order
+        let tone: Tone = 'neutral'
+        let status = u.status.sent
+        if (order?.status === 'confirmed') [tone, status] = ['good', u.status.ordered]
+        else if (order?.status === 'pending_approval') [tone, status] = ['warn', u.result.needsApproval]
+        else if (order?.status === 'refused') [tone, status] = ['bad', u.status.notOrdered]
+        else if (order?.status === 'rejected') [tone, status] = ['bad', u.status.rejected]
+        else if (response.decision.outcome === 'ASK_HUMAN') [tone, status] = ['warn', u.result.needsApproval]
+        else if (response.decision.outcome === 'DECLINE') [tone, status] = ['bad', u.status.notOrdered]
+        const lines = order?.lines ?? response.lines.filter((line) => line.chosen)
+        if (!lines.length) continue
+        return {
+          id: `cart-${response.audit_id}`,
+          status,
+          tone,
+          items: lines.length,
+          total: c.money(order?.total_cents ?? lines.reduce((sum, line) => sum + (line.line_total_cents ?? 0), 0)),
+          delivery: c.day(item.date),
+        }
+      }
+    }
+    return null
+  }, [thread, menuCartSummaries, c, u])
+  function openCart(id: string) {
+    const cart = document.getElementById(id)
+    if (!cart) return
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    cart.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
+  }
 
   // One response in the thread. Only the newest is a full, actionable card; earlier ones fold to their status and
   // headline (kept mounted, so a card's own state, e.g. an approval just made, survives), tap to reopen. A question
@@ -436,7 +520,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
     if (!isMenu && !isRun) return null
     const urgent = r.urgent_options
     const after = urgent && urgent.length > 0 ? <UrgentOptions options={urgent} /> : null
-    const open = latest || opened.has(it.id)
+    const open = latest || opened.has(it.id) || activeCart?.id === `cart-${r.audit_id}`
     const status =
       isRun && r.order
         ? { confirmed: u.status.ordered, pending_approval: u.status.yourCall, refused: u.status.notOrdered, rejected: u.status.rejected }[r.order.status]
@@ -454,7 +538,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         )}
         <div hidden={!open}>
           {isMenu ? (
-            <MenuResult plan={r} covers={r.covers ?? null} requestedDate={it.date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} after={after} menuText={it.asked} have={it.have} onReplanned={(p) => replanned(it.id, p)} />
+            <MenuResult plan={r} covers={r.covers ?? null} requestedDate={it.date} onAction={refreshAudit} onBusy={setDeciding} onAnnounce={setAnnounce} after={after} menuText={it.asked} have={it.have} onReplanned={(p) => replanned(it.id, p)} onCartChange={(order) => updateCartOrder(it.id, order, r)} onCartSummaryChange={(summary) => updateMenuCartSummary(it.id, summary)} />
           ) : (
             <RunResult
               run={r}
@@ -466,6 +550,7 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
               onHistory={() => setView('history')}
               onPlain={(need) => void ask(`${lastRequest.current} (regular, not ${need})`, undefined, it.date)} // the backend reads "regular" / "not gluten…" as the buyer's own words
               onAskFor={(next) => void ask(next, undefined, it.date)} // same delivery day as the result it came from
+              onCartChange={(order) => updateCartOrder(it.id, order)}
               after={after}
             />
           )}
@@ -624,6 +709,18 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
                     <p role="status" className={live.state === 'error' ? 'bad' : undefined}>
                       {live.muted ? u.conv.muted : live.state === 'connecting' ? u.talk.connecting : (live.tool ?? u.talk.state[live.state])}
                     </p>
+                  }
+                  cartDock={
+                    activeCart ? (
+                      <CartDock
+                        status={activeCart.status}
+                        tone={activeCart.tone}
+                        items={activeCart.items}
+                        total={activeCart.total}
+                        delivery={activeCart.delivery}
+                        onOpen={() => openCart(activeCart.id)}
+                      />
+                    ) : undefined
                   }
                   thread={
                     <>

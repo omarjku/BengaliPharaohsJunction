@@ -312,6 +312,7 @@ export const UI = {
       days === 0 ? 'Arrives today.' : days === 1 ? 'Arrives tomorrow.' : days > 1 && days < 8 ? `Arrives ${weekdayName}, in ${days} days.` : `Arrives ${date}.`,
     signOff: (who: string | null, approved: boolean, time: string) => `${who ?? 'You'} ${approved ? 'approved' : 'rejected'} · ${time}`,
     done: 'Ordered ✓',
+    needsApproval: 'Needs your OK',
     approve: (m: string) => `Approve · ${m}`,
     approving: 'Approving…',
     reject: 'Reject',
@@ -321,6 +322,7 @@ export const UI = {
     ordering: 'Ordering…',
     orderIt: (m: string) => `Order it · ${m}`,
     notThis: 'Not this one',
+    proposal: 'Proposal',
     decidedBy: (rule: string) => `Decided by ${rule}.`,
     ruleWords: {
       AUTO: 'your rules: within every limit', SPEND_OVER_LIMIT: 'your order limit', LINE_OVER_CAP: 'your per-product limit',
@@ -399,6 +401,8 @@ export const UI = {
     rank: { best: 'Best match', better: 'Good match', good: 'Also works' } as Record<string, string>,
     perUnit: (unit: string) => `per ${unit}`,
     onTimeShort: (p: number) => `${p}% on time`,
+    deposit: 'Returnable deposit',
+    check: (p: string) => `Check · ${p}`,
   },
   menu: {
     aria: 'Proposed cart',

@@ -31,6 +31,10 @@
 /* Pantry: what the kitchen already has, and the coverage of the cart in one sentence. */
 .mt-have { margin-block: var(--s1); }
 .mt-coverage { color: var(--ink-2); margin-block-end: var(--s2); }
+.menu-cart-review > summary { padding-inline: var(--s1); }
+.menu-cart-review > .feed { margin-block: var(--s3) 0; border-inline: 0; border-radius: 0; background: transparent; }
+.menu-cart-review > .feed .feed-head { padding-inline: 0; }
+.menu-cart-review > .feed .feed-note { padding-inline: 0; }
 
 /* Cart as a notification-style feed (layout after Watermelon UI notification-1) */
 .feed { background: var(--surface); border: 1px solid var(--line); border-radius: 24px; overflow: hidden; margin-block: var(--s3); }
