@@ -56,8 +56,9 @@ export function headline(r: Reason, threshold = CONFIDENT_AT): string {
     case 'DATE_NOT_HONOURED':
       return 'Valio can’t deliver this on the day you picked.'
     case 'LOW_RELIABILITY': {
-      const rel = num(f.reliability)
-      if (rel !== null) return `This one arrives on time only ${Math.round(rel * 100)}% of the time.`
+      const rel = num(f.reliability), floor = num(f.min_reliability)
+      if (rel !== null) return `This one arrives on time only ${Math.round(rel * 100)}% of the time` +
+        (floor !== null ? `, below the ${Math.round(floor * 100)}% you want.` : '.')
       break
     }
     case 'MANDATE_MISSING':

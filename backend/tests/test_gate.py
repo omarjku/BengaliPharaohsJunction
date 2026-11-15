@@ -75,6 +75,7 @@ def test_unknown_product_is_declined(shop):
 
 def test_out_of_stock_undeliverable_sales_block(shop):
     shop.quotes["106"]["flags"].append("sales_block")
+    shop.products["106"]["delivery_reliability"] = 1.0  # this test is about the sales block, not on-time delivery
     res = run([("104", 1), ("105", 1), ("106", 1)])
     assert res.status == "refused"
     assert codes(res, "104") == ["STOCK_NONE"] and codes(res, "105") == ["UNDELIVERABLE"]
