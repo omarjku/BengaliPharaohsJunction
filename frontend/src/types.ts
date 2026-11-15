@@ -286,7 +286,7 @@ type AskMeta = {
   cards?: AskCard[]
   confidence_threshold?: number
 }
-export type AskInput = { text: string; requested_date?: string; follow_up?: { to: string; answer: string }; have?: string[] }
+export type AskInput = { text: string; requested_date?: string; follow_up?: { to: string; answer: string }; have?: string[]; conversation_id?: string }
 export type ChatCard = (AgentRun & { intent?: 'order' }) | (MenuRun & { intent?: 'menu' })
 export type ChatResponse = {
   reply: string

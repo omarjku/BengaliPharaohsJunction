@@ -220,7 +220,8 @@ def cart_state(request: dict, lines: list[dict] | None = None, held_items: list[
 # workflow state; these buyer-scoped files are only the small amount of recent conversation context needed to understand
 # the next message.
 TURNS_TTL_S = 30 * 60
-MAX_TURNS = 10
+MAX_TURNS = 10  # the legacy per-buyer reading context (/ask, understand.py)
+MAX_CHAT_TURNS = 400  # a chat conversation (own conversation_id) keeps its WHOLE thread: user, reply and tool rows
 MAX_TURN_TEXT = 1_000
 _turns_lock = threading.Lock()
 
@@ -327,10 +328,21 @@ def compact_card(body: dict | None) -> dict | None:
     return result
 
 
-def _pruned_history(data: dict, now: float) -> tuple[dict, bool]:
+def _pruned_history(data: dict, now: float, scoped: bool = False) -> tuple[dict, bool]:
+    """Expire by age. A chat conversation (scoped) expires as a whole when it has been idle for the TTL, so a long
+    conversation never loses its early turns while it is still going; the legacy per-buyer context ages per row."""
     changed = False
     cutoff = now - TURNS_TTL_S
     rows = []
+    keep = MAX_CHAT_TURNS if scoped else MAX_TURNS
+    if scoped:
+        times = [row.get("time") for row in data.get("turns", []) if isinstance(row, dict)]
+        try:
+            idle = bool(times) and max(float(t) for t in times) < cutoff
+        except (TypeError, ValueError):
+            idle = True
+        if idle:
+            data["turns"], changed = [], True
     for row in data.get("turns", []):
         if not isinstance(row, dict) or row.get("role") not in {"user", "assistant"}:
             changed = True
@@ -340,14 +352,17 @@ def _pruned_history(data: dict, now: float) -> tuple[dict, bool]:
         except (TypeError, ValueError):
             changed = True
             continue
-        if timestamp < cutoff:
+        if timestamp < cutoff and not scoped:
             changed = True
             continue
         text = _bounded_text(row.get("text"))
         if text != row.get("text"):
             changed = True
-        rows.append({"role": row["role"], "text": text, "time": timestamp})
-    bounded = rows[-MAX_TURNS:]
+        kept = {"role": row["role"], "text": text, "time": timestamp}
+        if row.get("kind") == "tool":
+            kept["kind"] = "tool"  # a tool call result, so it can be rendered compactly when the thread gets long
+        rows.append(kept)
+    bounded = rows[-keep:]
     if bounded != rows:
         changed = True
     data["turns"] = bounded
@@ -388,16 +403,19 @@ def _write_history(path, data: dict) -> None:
 
 
 def record_turn(buyer_id: str, role: str, text: str, card: dict | None = None,
-                pending: dict | None = None, conversation_id: str | None = None) -> None:
+                pending: dict | None = None, conversation_id: str | None = None, kind: str | None = None) -> None:
     """Atomically append one bounded turn and optionally replace the buyer's compact last card."""
     if role not in {"user", "assistant"}:
         raise ValueError("role must be user or assistant")
     now = time.time()
     path = _history_path(buyer_id, conversation_id)
     with _turns_lock:
-        data, _ = _pruned_history(_read_history(path), now)
-        data["turns"].append({"role": role, "text": _bounded_text(text), "time": now})
-        data["turns"] = data["turns"][-MAX_TURNS:]
+        data, _ = _pruned_history(_read_history(path), now, conversation_id is not None)
+        row = {"role": role, "text": _bounded_text(text), "time": now}
+        if kind == "tool":
+            row["kind"] = "tool"
+        data["turns"].append(row)
+        data["turns"] = data["turns"][-(MAX_CHAT_TURNS if conversation_id is not None else MAX_TURNS):]
         if card is not None:
             projected = compact_card(card)
             if projected and any(key in projected for key in ("lines", "ingredients", "held_lines",
@@ -423,7 +441,7 @@ def turns(buyer_id: str, conversation_id: str | None = None) -> list[dict]:
     path = _history_path(buyer_id, conversation_id)
     with _turns_lock:
         data = _read_history(path)
-        data, changed = _pruned_history(data, now)
+        data, changed = _pruned_history(data, now, conversation_id is not None)
         if changed and path.exists():
             _write_history(path, data)
         return list(data.get("turns", []))
@@ -435,7 +453,7 @@ def last_card(buyer_id: str, conversation_id: str | None = None) -> dict | None:
     path = _history_path(buyer_id, conversation_id)
     with _turns_lock:
         data = _read_history(path)
-        data, changed = _pruned_history(data, now)
+        data, changed = _pruned_history(data, now, conversation_id is not None)
         if changed and path.exists():
             _write_history(path, data)
         card = data.get("last_card")
@@ -447,7 +465,7 @@ def pending_state(buyer_id: str, conversation_id: str | None = None) -> dict | N
     now = time.time()
     path = _history_path(buyer_id, conversation_id)
     with _turns_lock:
-        data, changed = _pruned_history(_read_history(path), now)
+        data, changed = _pruned_history(_read_history(path), now, conversation_id is not None)
         if changed and path.exists():
             _write_history(path, data)
         value = data.get("pending_state")
@@ -460,7 +478,7 @@ def is_stale(buyer_id: str, conversation_id: str) -> bool:
     with _turns_lock:
         data = _read_history(path)
         had_turns = bool(data.get("turns"))
-        data, changed = _pruned_history(data, time.time())
+        data, changed = _pruned_history(data, time.time(), True)
         if changed and path.exists():
             _write_history(path, data)
         return had_turns and not data.get("turns")
