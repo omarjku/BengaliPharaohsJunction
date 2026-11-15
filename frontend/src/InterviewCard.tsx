@@ -81,6 +81,7 @@ export function InterviewCard() {
         return [...current, { role, text, final }]
       }),
       onResult: () => {},
+      onWarning: (message) => setError(message),
       onInterviewPreview: (next) => {
         setPreview(next)
         setPreviewValues(Object.fromEntries(next.proposed.map((item) => [item.id, emptyValue(item.value)])))
@@ -89,6 +90,10 @@ export function InterviewCard() {
         endRef.current()
       },
       onError: (message) => setError(message),
+      onSessionEnded: (message) => {
+        setError(message)
+        endRef.current()
+      },
     },
     orbRef,
     { denied: t.failed, closed: t.failed },
