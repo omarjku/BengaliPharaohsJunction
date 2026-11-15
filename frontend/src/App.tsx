@@ -228,6 +228,15 @@ function Screen({ onSwitchLang }: { onSwitchLang: () => void }) {
         push({ kind: 'res', res: r, date: r.requested_date ?? date })
       },
       onError: (message) => push({ kind: 'error', text: message, reask: null }),
+      onWarning: (message) => {
+        push({ kind: 'agent', text: message })
+        setAnnounce(message)
+      },
+      onSessionEnded: (message) => {
+        push({ kind: 'agent', text: message })
+        setAnnounce(message)
+        talk.end()
+      },
     },
     orbRef,
     { denied: u.talk.denied, closed: u.talk.closed },
