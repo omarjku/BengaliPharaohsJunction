@@ -52,7 +52,7 @@ const BEATS = [
   { t: 5, n: "02", title: "A photo of a handwritten list", detail: "Seven lines in Finnish, written at the pass. One line is a planted order to the AI." },
   { t: 13, n: "03", title: "Gemini reads it", detail: "Every item, amount and unit. The planted line is flagged and ignored." },
   { t: 21, n: "04", title: "Live Valio facts", detail: "Real product, live price, stock, delivery day and pack size for each line." },
-  { t: 30, n: "05", title: "Held for the chef", detail: "Over the kitchen's €1,500 limit. The reason is on the card, not hidden." },
+  { t: 30, n: "05", title: "Held for the chef", detail: "Every order waits for the chef's tap, even when the agent is sure. Your money, your call." },
   { t: 38, n: "06", title: "A change in plain words", detail: "“Change the potatoes to 30 kilograms.” The card updates and stays held." },
   { t: 47, n: "07", title: "The chef approves", detail: "Only the chef's tap can approve. The agent never can." },
   { t: 53, n: "08", title: "Ordered · signed", detail: "Signed with Ed25519, tied to the build that made it, kept in the audit log." },
@@ -62,17 +62,17 @@ const BEATS = [
 const CAPTIONS: { s: number; e: number; who: "Omar" | "Zoha"; text: string }[] = [
   { s: 0.4, e: 3.9, who: "Zoha", text: "Six in the morning. Five hundred guests on Monday." },
   { s: 4.2, e: 7.4, who: "Zoha", text: "Valio's cut-off is at ten, and nothing is ordered yet." },
-  { s: 11.4, e: 14.3, who: "Omar", text: "Front Door lets an AI agent order from Valio" },
-  { s: 14.3, e: 17.3, who: "Omar", text: "while the chef keeps the final say." },
+  { s: 11.4, e: 14.3, who: "Omar", text: "Front Door lets an AI agent prepare Valio orders" },
+  { s: 14.3, e: 17.3, who: "Omar", text: "and the chef approves every single one." },
   { s: 18.0, e: 22.0, who: "Omar", text: "This is one live take, in real time, on my phone." },
   { s: 22.5, e: 27.5, who: "Zoha", text: "Omar photographs a handwritten list in Finnish." },
   { s: 30.5, e: 37.5, who: "Zoha", text: "Gemini reads every line, and ignores the note telling it to approve everything." },
   { s: 38.5, e: 46.5, who: "Omar", text: "Each item is checked against Valio: product, price, stock and delivery day." },
-  { s: 47.5, e: 54.5, who: "Zoha", text: "It's over the kitchen's limit, so the door holds it for the chef." },
+  { s: 47.5, e: 54.5, who: "Zoha", text: "Even when the agent is sure, the order waits for the chef. It's your money: reliable beats fast." },
   { s: 55.5, e: 63.5, who: "Omar", text: "I change the potatoes by voice. The card updates, still held." },
   { s: 64.5, e: 70.5, who: "Zoha", text: "Only the chef can approve. The agent can't, by design." },
   { s: 71.0, e: 78.5, who: "Omar", text: "Ordered and signed, with the build that signed it on record." },
-  { s: 80.0, e: 87.5, who: "Zoha", text: "Gemini scores its own doubt. Below 0.70, it asks the chef instead of guessing." },
+  { s: 80.0, e: 87.5, who: "Zoha", text: "Gemini scores its own doubt. Below 0.70 it asks instead of guessing, and the chef still approves." },
   { s: 88.5, e: 95.8, who: "Omar", text: "Codex built the engine and attacked it. Forty-two commits on main." },
   { s: 97.0, e: 104.5, who: "Zoha", text: "CRACI runs our CI, so every order knows which build signed it." },
   { s: 105.5, e: 109.5, who: "Omar", text: "The order is in before the cut-off." },
@@ -215,7 +215,7 @@ function TitleCard() {
         <div>
           <Label color={TEAL_DEEP} size={30}>Valio Aimo · Trusted Trade Agents</Label>
           <div style={{ marginTop: 16, fontSize: 150, fontWeight: 800, letterSpacing: "-0.045em", lineHeight: 0.88 }}>Front Door</div>
-          <div style={{ marginTop: 22, fontSize: 44, fontWeight: 500, color: "#3a4048", lineHeight: 1.15 }}>An AI agent orders from Valio. <span style={{ color: TEAL_DEEP, fontWeight: 700 }}>The chef decides.</span></div>
+          <div style={{ marginTop: 22, fontSize: 44, fontWeight: 500, color: "#3a4048", lineHeight: 1.15 }}>An AI agent prepares the Valio order. <span style={{ color: TEAL_DEEP, fontWeight: 700 }}>The chef approves every one.</span></div>
         </div>
       </div>
       <div style={{ position: "absolute", left: 150, top: 520, opacity: ease(fr, 26, 36) }}><Label color="#5d6670" size={26}>Built in 48 hours with</Label></div>
@@ -317,12 +317,12 @@ function GeminiCard() {
   const W = 960;
   const pts = [
     { v: 0.115, label: "“coffee milk”", verdict: "asks the chef", color: AMBER, d: 24 },
-    { v: 0.897, label: "“lactose-free milk”", verdict: "orders it", color: LIME, d: 36 },
+    { v: 0.897, label: "“lactose-free milk”", verdict: "proposes it", color: LIME, d: 36 },
   ];
   return (
-    <TrackFrame n="01" name="Gemini" hero="0.70" heroColor={TEAL} headline="The Decisions API scores how sure the agent is. The kitchen sets the bar." facts={[
+    <TrackFrame n="01" name="Gemini" hero="0.70" heroColor={TEAL} headline="The Decisions API scores how sure the agent is. Unsure means it asks; it never spends." facts={[
+      "Our choice: reliable beats fast. Even a confident agent only proposes; the chef taps Approve.",
       "Gemini reads the handwritten Finnish list and talks over the same tools; it never touches money.",
-      "Up to 40 assumptions scored in one Decisions call, each a calibrated yes-probability.",
       "0 unsafe auto-orders in 164 chat tests, including 10 injection attempts.",
     ]}>
       <div style={{ position: "relative", width: W, height: 330, borderRadius: 20, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", padding: "0" }}>
@@ -331,7 +331,7 @@ function GeminiCard() {
         <div style={{ position: "absolute", left: 40 + (W - 80) * 0.7 - 2, top: 108, width: 4, height: 96, background: "#fff" }} />
         <div style={{ position: "absolute", left: 40 + (W - 80) * 0.7 - 120, top: 76, width: 240, textAlign: "center", fontFamily: PIXEL, fontSize: 24, color: "#fff" }}>kitchen bar 0.70</div>
         <div style={{ position: "absolute", left: 40, top: 128, fontFamily: PIXEL, fontSize: 22, color: AMBER }}>ASK THE CHEF</div>
-        <div style={{ position: "absolute", right: 40, top: 128, fontFamily: PIXEL, fontSize: 22, color: LIME }}>ACT</div>
+        <div style={{ position: "absolute", right: 40, top: 128, fontFamily: PIXEL, fontSize: 22, color: LIME }}>PROPOSE</div>
         {pts.map((p) => {
           const x = 40 + (W - 80) * p.v * ease(fr, p.d, p.d + 16);
           return (
