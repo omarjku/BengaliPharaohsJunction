@@ -619,6 +619,27 @@ _UNIT_WORDS = {"l": {"l", "litre", "litres", "liter", "liters", "litra", "litraa
                "g": {"g", "gram", "grams", "grammaa"}}
 _MEASURE_WORDS = set().union(*_UNIT_WORDS.values())
 _SPLIT = r",(?!\d)|;|\n|\b(?:and|ja)\b"
+_AMOUNT_START = re.compile(
+    r"(?<![\w.,])\d[\d,.]*\s*(?:kg|g|l|dl|cl|ml|kpl|pcs|x|st|cases?|bottles?|packs?|pieces?|cartons?|crates?|bags?|"
+    r"litres?|liters?|litra\w*|kilo\w*|grams?|laatikko\w*|pullo\w*|pussi\w*)\b", re.I)
+
+
+def split_clauses(text: str) -> list[str]:
+    """Clauses of an order: split at commas, ';', new lines and 'and'/'ja', and ALSO where a second amount starts
+    inside one clause ('70 kg of potatoes 70 kg of salmon', a list spoken or typed without commas). The first amount
+    of a clause never splits, so a product with its size ('Valio milk 1 l') stays one item."""
+    out = []
+    for chunk in re.split(_SPLIT, str(text)):
+        if chunk is None:
+            continue
+        starts = [m.start() for m in _AMOUNT_START.finditer(chunk)]
+        cut = [s for s in starts[1:] if re.search(r"[^\W\d_]\s*$", chunk[:s])]  # a new amount right after a word
+        prev = 0
+        for c in cut:
+            out.append(chunk[prev:c])
+            prev = c
+        out.append(chunk[prev:])
+    return out
 
 
 def _numbers(text: str) -> set[float]:
@@ -728,6 +749,15 @@ def overgrounded(text: str, items: list[dict]) -> list[dict]:
     """Items left without a clause of their own once each clause grounds at most ONE item: '1 L lactose-free milk'
     parsed as both 'milk' and 'lactose-free milk' would otherwise order two products from one line.
     ponytail: greedy, fewest options first; exact matching (Hopcroft-Karp) is overkill for <= MAX_ITEMS items."""
+    left = _overgrounded(text, items)
+    if left:  # a list without commas ('70 kg of potatoes 70 kg of salmon'): re-check with each amount as its own
+        finer = ", ".join(c for c in split_clauses(text) if c)  # clause; this can only clear a flag, never add one
+        again = _overgrounded(finer, items)
+        left = [it for it in left if any(it is other for other in again)]
+    return left
+
+
+def _overgrounded(text: str, items: list[dict]) -> list[dict]:
     options = [(grounding(text, it)[1], n) for n, it in enumerate(items)]
     used, left = set(), []
     for opts, n in sorted((o for o in options if o[0]), key=lambda o: len(o[0])):
@@ -1116,7 +1146,7 @@ def stated_unit(text: str, item: dict) -> str | None:
     aliases = {alias: canonical for canonical, names in _UNIT_WORDS.items() for alias in names}
     aliases.update({name: "pcs" for name in ("pcs", "pc", "piece", "pieces", "kpl")})
     measure = re.compile(r"\d[\d,. ]*\s*(" + "|".join(sorted(aliases, key=len, reverse=True)) + r")\b", re.I)
-    for clause in re.split(_SPLIT, str(text)):
+    for clause in re.split(_SPLIT, text):
         if not _words_in(words, clause):
             continue
         matches = list(measure.finditer(clause))
