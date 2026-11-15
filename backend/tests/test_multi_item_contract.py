@@ -30,7 +30,7 @@ def test_item_summary_covers_mixed_outcomes_without_cross_item_alternatives():
 
     assert [row["item"] for row in summaries] == [0, 1, 2, 3, 4]
     assert [row["status"] for row in summaries] == ["chosen", "out_of_stock", "needs_unit", "no_match", "chosen"]
-    assert all(set(row) == {"item", "query", "amount", "unit", "status", "chosen_product_id", "reason"}
+    assert all(set(row) == {"item", "query", "amount", "unit", "status", "chosen_product_id", "reason", "summary"}
                for row in summaries)
     assert summaries[1]["chosen_product_id"] == "salmon-1"
     assert summaries[3]["chosen_product_id"] is None

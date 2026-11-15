@@ -1212,10 +1212,20 @@ def _item_summaries(request: dict, lines: list[dict], reasons_by_item: dict[int,
             reason = {"chosen": "Ready to order.", "held": "Held for your approval.",
                       "no_match": "No matching product was found.", "needs_unit": "The quantity or unit needs confirmation.",
                       "out_of_stock": "The requested quantity is not available."}[status]
+        held = _candidate_offer(candidate) if candidate else None
+        competing = [_candidate_offer(line) for line in item_lines
+                      if line is not candidate and _stock_signature(line.get("quote")) !=
+                      _stock_signature(candidate.get("quote") if candidate else None)]
+        summary = _offer_summary(held, "Card holds" if chosen else "Candidate") if held else reason
+        if competing and held:
+            summary += "; " + "; ".join(_offer_summary(option, "competing candidate") for option in competing)
+        if reason and summary != reason:
+            summary += f" {quantity.humanize_text(reason, candidate.get('product') if candidate else None)}"
         summaries.append({"item": item_number, "query": item.get("query"), "amount": item.get("amount"),
                           "unit": item.get("unit"), "status": status,
                           "chosen_product_id": ((candidate.get("product") or {}).get("id") if candidate else None),
-                          "reason": quantity.humanize_text(reason, candidate.get("product") if candidate else None)})
+                          "reason": quantity.humanize_text(reason, candidate.get("product") if candidate else None),
+                          "summary": summary})
     return summaries
 
 
@@ -1260,6 +1270,40 @@ def _selection_preferences(buyer_id: str) -> tuple[set[str], set[str]]:
 
 def _name(p: dict) -> str:
     return p.get("name_en") or p.get("name_fi") or p["id"]
+
+
+def _stock_signature(quote: dict | None) -> tuple:
+    quote = quote if isinstance(quote, dict) else {}
+    amount = quote.get("available_amount")
+    return ("unknown", bool(quote.get("orderable"))) if amount is None else ("known", amount, bool(quote.get("orderable")))
+
+
+def _stock_text(product: dict | None, quote: dict | None) -> str:
+    quote = quote if isinstance(quote, dict) else {}
+    amount = quote.get("available_amount")
+    if amount is None:
+        return "Valio stock level unknown, orderable" if quote.get("orderable") else "Valio stock level unknown, not orderable"
+    unit = quantity.human_unit(product or {}, quote.get("sales_unit") or (product or {}).get("sales_unit"))
+    return f"{amount:g} {unit} available" if isinstance(amount, (int, float)) else f"{amount} {unit} available"
+
+
+def _candidate_offer(line: dict | None) -> dict | None:
+    if not isinstance(line, dict) or not isinstance(line.get("product"), dict):
+        return None
+    product, quote = line["product"], line.get("quote")
+    quote = quote if isinstance(quote, dict) else {}
+    unit = quantity.human_unit(product, quote.get("sales_unit") or product.get("sales_unit"))
+    return {"product_id": product.get("id"), "name": _name(product), "price": quote.get("price"),
+            "price_unit": unit, "available_amount": quote.get("available_amount"),
+            "stock": _stock_text(product, quote), "orderable": quote.get("orderable")}
+
+
+def _offer_summary(offer: dict | None, prefix: str) -> str:
+    if not offer:
+        return prefix
+    price = offer.get("price")
+    price_text = f"EUR {price:.2f}/{offer['price_unit']}" if isinstance(price, (int, float)) else "price unavailable"
+    return f"{prefix} {offer['name']} ({offer['product_id']}) at {price_text} ({offer['stock']})"
 
 
 def _offer(line: dict) -> str:

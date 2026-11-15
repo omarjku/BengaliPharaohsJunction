@@ -1,5 +1,6 @@
 """Offline contract tests for the text Gemini tool-calling agent."""
 import asyncio
+import json
 from datetime import date, datetime as real_datetime
 from uuid import uuid4
 
@@ -230,6 +231,82 @@ def test_propose_order_keeps_the_searched_product_id_and_quote(shop, monkeypatch
     assert chosen[0]["product"]["id"] == "462150"
     assert chosen[0]["quantity"]["requested"] == {"amount": 43, "unit": "kg"}
     assert chosen[0]["quote"]["price"] == 14.11
+
+
+def test_card_lines_tell_gemini_which_product_is_held_and_stock_competitors():
+    held = {"id": "461887", "name_en": "Kalavapriikki Salmon fillet C, 2 pcs frozen", "sales_unit": "KG"}
+    competing = {"id": "462150", "name_en": "SALMON FILLET C-CUT", "sales_unit": "KG"}
+    card = {"lines": [
+        {"item": 0, "chosen": True, "product": held,
+         "quantity": {"requested": {"amount": 50, "unit": "kg"}, "quantity": 50, "sales_unit": "KG"},
+         "quote": {"product_id": "461887", "price": 15.59, "sales_unit": "KG", "available_amount": None,
+                   "orderable": True}},
+        {"item": 0, "chosen": False, "product": competing,
+         "quantity": {"requested": {"amount": 50, "unit": "kg"}, "quantity": 50, "sales_unit": "KG"},
+         "quote": {"product_id": "462150", "price": 14.11, "sales_unit": "KG", "available_amount": 43,
+                   "orderable": True}},
+    ]}
+
+    line = chat_agent._card_lines(card)[0]
+
+    assert line["product_id"] == "461887"
+    assert "Card holds" in line["summary"]
+    assert "461887" in line["summary"] and "EUR 15.59/kg" in line["summary"]
+    assert "462150" in line["summary"] and "EUR 14.11/kg" in line["summary"]
+    assert "43 kg available" in line["summary"]
+    assert line["competing_candidates"][0]["product_id"] == "462150"
+
+
+def test_system_tells_gemini_to_reuse_the_product_id_it_mentioned():
+    system = chat_agent._system("chef", REQ)
+
+    assert "product_id" in system
+    assert "that exact product" in system
+
+
+def test_all_available_prefers_prior_candidate_whose_available_amount_was_quoted(shop, monkeypatch):
+    held = product("461887", "KALAVAPRIIKKI SALMON", unit="KG", claims=(), contains=("AF",))
+    competing = product("462150", "SALMON FILLET C-CUT", unit="KG", claims=(), contains=("AF",))
+    for item in (held, competing):
+        item.update(base_unit="KG", units={"KG": 1.0}, volume=None, net_weight=None)
+    shop.products.update({held["id"]: held, competing["id"]: competing})
+    shop.quotes.update({
+        "461887": quote("461887", amount=999999, price=15.59, unit="KG"),
+        "462150": quote("462150", amount=43, price=14.11, unit="KG"),
+    })
+    previous = {"tool": "propose_order", "result": {"lines": [{
+        "item": 0, "product": "KALAVAPRIIKKI SALMON", "product_id": "461887",
+        "literal_amount": "50 kg", "quote": {"price": 15.59, "price_unit": "kg",
+                                                   "available_amount": None, "stock": "Valio stock level unknown, orderable"},
+        "competing_candidates": [{"product_id": "462150", "name": "SALMON FILLET C-CUT", "price": 14.11,
+                                   "price_unit": "kg", "available_amount": 43, "stock": "43 kg available"}],
+        "summary": "Card holds KALAVAPRIIKKI SALMON (461887) at EUR 15.59/kg for 50 kg "
+                   "(Valio stock level unknown, orderable); competing candidate SALMON FILLET C-CUT "
+                   "(462150) at EUR 14.11/kg has 43 kg available."
+    }]}}
+    monkeypatch.setattr(chat_agent.conversation, "turns", lambda *_args, **_kwargs: [
+        {"role": "assistant", "text": json.dumps(previous)}
+    ])
+    monkeypatch.setattr(chat_agent, "_turn_guard",
+                        lambda _text: asyncio.sleep(0, result={"steer": 0.0, "note": None}))
+
+    async def decisions(_input, questions):
+        return {key: {"type": "noul", "noul": 0.95 if key != "steering" else 0.01}
+                for key in questions}
+
+    monkeypatch.setattr(chat_agent.agent, "_decisions", decisions)
+    token = chat_agent._TURN.set({"request_text": "Can't I order all of the available?",
+                                  "text": "Can't I order all of the available?", "conversation_id": "replay"})
+    try:
+        result = asyncio.run(chat_agent._propose_order(
+            {"items": [{"text": "salmon", "product_id": "461887", "amount": 43, "unit": "kg"}]},
+            "lapland-kitchen", REQ))
+    finally:
+        chat_agent._TURN.reset(token)
+
+    chosen = [line for line in result["card"]["lines"] if line.get("chosen")]
+    assert len(chosen) == 1
+    assert chosen[0]["product"]["id"] == "462150"
 
 
 def test_change_order_keeps_the_explicit_product_id_through_the_merged_cart(shop, monkeypatch):
