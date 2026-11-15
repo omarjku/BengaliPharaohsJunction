@@ -281,10 +281,11 @@ def test_bad_numeric_rule_via_route_is_not_503(shop):
 
 # 8. LOW.
 def test_alternatives_lookup_failure_means_no_alternatives(shop, monkeypatch):
-    real = shop.get_quotes
+    real, calls = shop.get_quotes, []
 
     async def flaky(ids, d, customer="123", fresh=False):
-        if not fresh:
+        calls.append(ids)
+        if len(calls) > 1:  # the order's own quote works; the (live) lookup of alternatives fails
             raise httpx.ConnectError("valio down")
         return await real(ids, d, customer, fresh)
     monkeypatch.setattr(valio, "get_quotes", flaky)

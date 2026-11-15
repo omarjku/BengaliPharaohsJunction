@@ -40,6 +40,10 @@ NUMERIC_RULES = (RuleKind.MAX_UNIT_PRICE_CENTS, RuleKind.MIN_DELIVERY_RELIABILIT
 # Claims worth keeping when looking for a substitute (dietary needs, not marketing claims like LOW_SODIUM_SALT).
 DIETARY_CLAIMS = {"FREE_FROM_LACTOSE", "FREE_FROM_GLUTEN", "VEGAN", "VEGETARIAN", "FREE_FROM_MILK"}
 MAX_ALTERNATIVES = 3
+# On-time floor used when the buyer's mandate has no MIN_DELIVERY_RELIABILITY rule of its own (a mandate that never
+# mentioned it must not mean "any supplier, however unreliable, is fine"). Same value as decision/trade_decision's
+# default_config.yaml min_reliability. A rule in the mandate (even a lower one, even 0) always wins over it.
+DEFAULT_MIN_RELIABILITY = 0.8
 TIERS = ("best", "better", "good")
 OTHER_KIND = "alternative"  # below "good": a different kind of product (horseradish for onion), offered only as a hint
 _TIER_ORDER = {**{t: i for i, t in enumerate(TIERS)}, OTHER_KIND: len(TIERS)}
@@ -143,6 +147,12 @@ def _num(v) -> float | None:
 def _nums(m: Mandate, kind: RuleKind) -> list[float]:
     """Valid numeric rule values; check() reports the invalid ones as MANDATE_INVALID."""
     return [f for v in _rules(m, kind) if (f := _num(v)) is not None]
+
+
+def reliability_floor(m: Mandate) -> tuple[float, bool]:
+    """(on-time floor, whether the mandate set it): the strictest valid MIN_DELIVERY_RELIABILITY rule, else the default."""
+    floors = _nums(m, RuleKind.MIN_DELIVERY_RELIABILITY)
+    return (max(floors), True) if floors else (DEFAULT_MIN_RELIABILITY, False)
 
 
 def _name_says(cat: dict, code: str) -> str | None:
@@ -294,15 +304,19 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
                                f"{catalogue.ALLERGEN_NAMES.get(code, code)}, so your rule can't be verified.", pid,
                                "Check the label, or pick a product with allergen data.", allergen=code))
 
-    for floor in _nums(m, RuleKind.MIN_DELIVERY_RELIABILITY):
-        rel = cat.get("delivery_reliability")
-        if rel is None:
+    floor, own_rule = reliability_floor(m)
+    rel = cat.get("delivery_reliability")
+    if rel is None:
+        if own_rule:  # no record only matters when the buyer asked for a floor (most products have none)
             rs.append(_unknown(m.uncertainty_policy, C.DATA_MISSING, f"No delivery-reliability data for {name}.", pid,
                                "Accept, or pick a product with a reliability record.", min_reliability=floor))
-        elif rel < floor:
-            rs.append(_r(C.LOW_RELIABILITY, ASK, f"{name} is delivered on time {rel:.0%} of the time, below your "
-                         f"{floor:.0%}.", pid, "Approve, or pick a more reliable product.",
-                         reliability=rel, min_reliability=floor))
+    elif rel < floor:
+        basis = "your" if own_rule else "the standard"
+        rs.append(_r(C.LOW_RELIABILITY, ASK, f"{name} ({cat.get('vendor') or 'supplier'}) delivered on time only "
+                     f"{rel:.0%} of the time, below {basis} {floor:.0%} on-time rule"
+                     + ("." if own_rule else " (you have set none of your own)."), pid,
+                     "Approve anyway, or pick a more reliable product.",
+                     reliability=rel, min_reliability=floor, floor_source="mandate" if own_rule else "default"))
     return rs, info
 
 
@@ -342,19 +356,27 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
     Returns (contract alternatives, rejected candidates, substitutes, {candidate id: quote})."""
     need = {str(c).strip().upper() for c in _rules(m, RuleKind.REQUIRED_CLAIM)}
     cands: dict[str, str] = {}  # candidate id -> the rejected product it replaces
+    floor, _ = reliability_floor(m)
     for pid in rejected:
         cat = catalogue.get(pid)
         if not cat:
             continue
+        old_rel = cat.get("delivery_reliability")
+        unreliable = old_rel is not None and old_rel < floor  # then only a KNOWN more reliable product is worth quoting
         claims = sorted((set(cat["claims"]) & DIETARY_CLAIMS) | need)
-        hits = cat["substitutes"] + [p["id"] for p in catalogue.search("", claims, sorted(excluded), True, cat["category"], 8)]
+        hits = cat["substitutes"] + [p["id"] for p in catalogue.search(
+            "", claims, sorted(excluded), True, cat["category"], 300 if unreliable else 8)]
         for c in hits:
+            other = catalogue.get(c) or {}
+            rel = other.get("delivery_reliability")
+            if unreliable and (rel is None or rel < floor or rel <= old_rel or not _same_kind_for_alternative(cat, other)):
+                continue
             if c not in skip and c not in m.blocklist and len(cands) < 10:
                 cands.setdefault(c, pid)
     if not cands:
         return [], [], [], {}
-    try:  # cached quotes are fine here: an alternative is only a suggestion, re-gated with fresh quotes when ordered
-        quotes = {q["product_id"]: q for q in await valio.get_quotes(list(cands), requested.isoformat())}
+    try:  # live quotes: the price and stock shown with an alternative are what Valio says now, not a 60 s old copy
+        quotes = {q["product_id"]: q for q in await valio.get_quotes(list(cands), requested.isoformat(), fresh=True)}
     except Exception:
         log.exception("alternatives lookup failed")  # the order's own verdict stands; just no alternatives
         return [], [], [], {}
@@ -581,12 +603,14 @@ async def check(lines: list, requested: date, m: Mandate | None, request_id: str
         order_rs.append(_r(C.MANDATE_EXPIRED, ASK, f"Your mandate expired at {m.expires_at.isoformat()}.", None,
                            "Approve this order by hand, or renew the mandate.", expires_at=m.expires_at.isoformat()))
 
-    rejected, info, line_rs = [], [], []
+    rejected, info, line_rs, unreliable = [], [], [], []
     for ln in lines:
         rs, li = check_line(ln.product_id, ln.quantity, quotes.get(ln.product_id), requested, m, excluded, now,
                             (approved_prices or {}).get(ln.product_id))
         info.append(li)
         line_rs += rs
+        if any(r.code is C.LOW_RELIABILITY for r in rs):
+            unreliable.append(ln.product_id)  # held for the chef (ASK), and a more reliable same-kind product is offered
         if any(_blocking(r) for r in rs):
             rejected.append(RejectedOption(product_id=ln.product_id, reasons=_sorted(rs)))
 
@@ -603,8 +627,9 @@ async def check(lines: list, requested: date, m: Mandate | None, request_id: str
                            budget_cents=m.weekly_budget_cents))
     order_rs.extend(forced_reasons or [])
 
-    alts, bad_alts, subs, sub_quotes = await _alternatives([ro.product_id for ro in rejected], set(ids), requested, m,
-                                                           excluded, now) if rejected else ([], [], [], {})
+    replace = list(dict.fromkeys([ro.product_id for ro in rejected] + unreliable))
+    alts, bad_alts, subs, sub_quotes = await _alternatives(replace, set(ids), requested, m, excluded,
+                                                           now) if replace else ([], [], [], {})
     alt_order = None
     if rejected and all({r.code for r in ro.reasons if _blocking(r)} == {C.STOCK_PARTIAL} for ro in rejected):
         alt_order = _alternative_order(lines, info, [ro.product_id for ro in rejected], quotes, subs, sub_quotes,

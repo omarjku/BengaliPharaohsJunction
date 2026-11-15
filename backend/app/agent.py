@@ -1563,6 +1563,29 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
         line["confidence"], line["confidence_reason"], line["_weakest"] = conf, why, weakest
         line["plausibility"] = p_ok
 
+    async def offer_substitutes(n: int, it: dict, replaced: list[str]) -> None:
+        """J4: substitutes for `replaced` (a blocked product, or a chosen one held for low delivery reliability) from the
+        front door's own finder (same category + dietary claims, re-quoted live), most acceptable first."""
+        try:
+            alternative_excluded = set(excluded) | set(it.get("exclude_allergens") or [])
+            subs = (await gate._alternatives(replaced, set(ids), requested, m, alternative_excluded, now))[0]
+        except Exception:  # noqa: BLE001 - no substitutes is still a valid answer
+            log.exception("substitute search failed")
+            subs = []
+        substitutes.extend({"product_id": candidate.product_id, "replaces": replaced[0]} for candidate in subs)
+        judged = await judge(canonical(it),
+                             [(catalogue.get(a.product_id) or {"id": a.product_id}, ["sub"]) for a in subs])
+        ranked = sorted(zip(subs, judged), key=lambda x: -(x[1][0] or 0))  # most acceptable first
+
+        def doubted(summary: str, conf) -> str:  # QA round 2 N4: below threshold = at most "good"
+            if conf is None or conf >= threshold:
+                return summary
+            return re.sub(r"^(BEST|BETTER) ", "GOOD ", summary) + " Gemini doubts this substitute."
+        alternatives.extend(a.model_copy(update={"item": n, "summary": doubted(a.summary, conf) + (
+            f" Gemini Decisions: {_pct(conf)} that it is an acceptable substitute"
+            + ("" if conf >= threshold else f", below your {threshold:.2f} threshold: check before accepting")
+            + "." if conf is not None else " Not checked by Gemini Decisions.")}) for a, (conf, *_) in ranked)
+
     for n, it, cands, amount_ok, scored in per_item:
         mark = len(reasons)
         try:
@@ -1631,24 +1654,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                                            **({"amount_question": count_question, "unit": it["unit"]}
                                               if count_question else {})))
                 reasons += best_asks
-                try:  # J4: substitutes from the front door's own finder (same category + dietary claims, re-quoted)
-                    alternative_excluded = set(excluded) | set(it.get("exclude_allergens") or [])
-                    subs = (await gate._alternatives(cands, set(ids), requested, m, alternative_excluded, now))[0]
-                except Exception:  # noqa: BLE001 - no substitutes is still a valid answer
-                    log.exception("substitute search failed")
-                    subs = []
-                substitutes.extend({"product_id": candidate.product_id, "replaces": cands[0]} for candidate in subs)
-                judged = await judge(canonical(it),
-                                     [(catalogue.get(a.product_id) or {"id": a.product_id}, ["sub"]) for a in subs])
-                ranked = sorted(zip(subs, judged), key=lambda x: -(x[1][0] or 0))  # most acceptable first
-                def doubted(summary: str, conf) -> str:  # QA round 2 N4: below threshold = at most "good"
-                    if conf is None or conf >= threshold:
-                        return summary
-                    return re.sub(r"^(BEST|BETTER) ", "GOOD ", summary) + " Gemini doubts this substitute."
-                alternatives += [a.model_copy(update={"item": n, "summary": doubted(a.summary, conf) + (
-                    f" Gemini Decisions: {_pct(conf)} that it is an acceptable substitute"
-                    + ("" if conf >= threshold else f", below your {threshold:.2f} threshold: check before accepting")
-                    + "." if conf is not None else " Not checked by Gemini Decisions.")}) for a, (conf, *_) in ranked]
+                await offer_substitutes(n, it, cands)
                 continue
             best["chosen"] = True
             chosen.append(best)
@@ -1669,6 +1675,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                                 and (ln["confidence"] or 0) > (best["confidence"] or 0)), None)
             best["usual"] = best["product"]["id"] in preferred or best["product"]["id"] in past_orders
             reasons += _label_reasons(it, best)
+            if any(r.code is C.LOW_RELIABILITY for r in best_asks):  # held for the chef: offer a more reliable one too
+                await offer_substitutes(n, it, [best["product"]["id"]])
             if best["usual"] and best["confidence"] is not None and best["confidence"] < threshold:
                 it["product_assumed"] = True
                 it["product_assumption"] = "your usual product"

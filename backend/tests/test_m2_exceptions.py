@@ -72,7 +72,7 @@ def peanut_shop(shop):
     shop.products["111"] = product("111", "Oat cookies", category="200", claims=(), contains=("AE",), rel=0.95)
     shop.products["112"] = product("112", "Finnish oat cookies", category="200", claims=(), contains=("AE",), rel=0.95)
     shop.products["112"]["origin"] = "fi"
-    shop.products["113"] = product("113", "Cheap unreliable cookies", category="200", claims=(), contains=("AE",), rel=0.5)
+    shop.products["113"] = product("113", "Cheap less reliable cookies", category="200", claims=(), contains=("AE",), rel=0.8)  # exactly the 80% default floor: still allowed
     shop.quotes.update({"110": quote("110", amount=0.0), "111": quote("111", price=2.0),
                         "112": quote("112", price=2.1), "113": quote("113", price=1.9)})
 
@@ -91,7 +91,7 @@ def test_substitutes_ranked_best_better_good_by_price_reliability_origin(shop):
     peanut_shop(shop)
     res = run([("110", 5)], [("excluded_allergen", "AP")])
     ranked = [(s["tier"], s["product_id"]) for s in res.substitutes]
-    # 112 is 5% dearer than 111 but Finnish; 113 is cheapest but on time only half the time
+    # 112 is 5% dearer than 111 but Finnish; 113 is cheapest but least reliable (80%)
     assert ranked == [("best", "112"), ("better", "111"), ("good", "113")]
     assert [a.product_id for a in res.decision.alternatives] == ["112", "111", "113"]
     assert res.decision.alternatives[0].summary.startswith("BEST instead of 110")

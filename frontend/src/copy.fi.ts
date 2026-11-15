@@ -70,8 +70,9 @@ export function headline(r: Reason, threshold = CONFIDENT_AT): string {
     case 'DATE_NOT_HONOURED':
       return 'Valio ei pysty toimittamaan tätä valitsemanasi päivänä.'
     case 'LOW_RELIABILITY': {
-      const rel = num(f.reliability)
-      if (rel !== null) return `Tämä tuote saapuu ajallaan vain ${Math.round(rel * 100)} % kerroista.`
+      const rel = num(f.reliability), floor = num(f.min_reliability)
+      if (rel !== null) return `Tämä tuote saapuu ajallaan vain ${Math.round(rel * 100)} % kerroista` +
+        (floor !== null ? `, alle toivomasi ${Math.round(floor * 100)} %.` : '.')
       break
     }
     case 'MANDATE_MISSING':
