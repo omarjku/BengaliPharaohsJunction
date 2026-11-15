@@ -156,6 +156,20 @@ def test_product_search_uses_requested_date_and_safety_filters(shop, monkeypatch
     assert seen["quote"] == (["463335"], "2026-11-20") and result["products"][0]["product_id"] == "463335"
 
 
+def test_product_search_discloses_missing_allergen_data_and_inferred_fish(shop, monkeypatch):
+    trout = dict(shop.products["463335"], id="462016", name_en="RAINBOW TROUT FILLET C",
+                 allergens={"contains": [], "may_contain": [], "free_from": [], "undeclared": [*chat_agent.catalogue.ALLERGEN_NAMES],
+                            "inferred": ["AF"]}, allergen_data="missing")
+    monkeypatch.setattr(chat_agent.catalogue, "search", lambda *args: [trout])
+    monkeypatch.setattr(chat_agent.valio, "get_quotes", lambda ids, requested_date, *args, **kwargs:
+                        asyncio.sleep(0, result=[dict(shop.quotes["463335"], product_id=ids[0])]))
+
+    result = asyncio.run(chat_agent._search_products({"query": "trout"}, "chef", date(2026, 11, 20)))
+
+    assert result["products"][0]["allergens"] == {"contains": [], "may_contain": [], "inferred": ["fish"]}
+    assert result["products"][0]["allergen_data"] == "missing"
+
+
 def test_chat_search_ranks_request_fit_and_amount_before_price(shop, monkeypatch):
     coffee = dict(shop.products["463335"], id="coffee", name_en="Valio coffee milk 1 l")
     milk = dict(shop.products["463335"], id="milk", name_en="Valio Eila milk 1 l lactose free")

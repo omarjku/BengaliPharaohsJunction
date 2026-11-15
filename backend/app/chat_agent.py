@@ -402,9 +402,15 @@ async def _search_products(args: dict, _buyer_id: str, _requested_date: date | N
         allergens = product.get("allergens") or {}
         words = [catalogue.ALLERGEN_NAMES.get(code, code) for code in allergens.get("contains", [])]
         may = [catalogue.ALLERGEN_NAMES.get(code, code) for code in allergens.get("may_contain", [])]
+        inferred = [catalogue.ALLERGEN_NAMES.get(code, code) for code in allergens.get("inferred", [])]
+        allergen_data = product.get("allergen_data")
+        if allergen_data is None and not any(allergens.get(key) for key in ("contains", "may_contain", "free_from", "undeclared")):
+            allergen_data = "missing"
         products.append({"product_id": product["id"], "name": _name(product), "pack_size": product.get("sales_unit"),
                          "unit_price": quote.get("price"), "comparison_price": quote.get("comparison_price"),
-                         "comparison_unit": quote.get("comparison_unit"), "allergens": {"contains": words, "may_contain": may},
+                         "comparison_unit": quote.get("comparison_unit"), "allergens": {"contains": words, "may_contain": may,
+                                                                                           "inferred": inferred},
+                         **({"allergen_data": allergen_data} if allergen_data else {}),
                          "diet_level": product.get("claims") or [], "orderable": quote.get("orderable"),
                          "next_delivery": quote.get("available_date")})
     return {"query": query, "products": products, "requested_amount": amount, "requested_unit": unit,
