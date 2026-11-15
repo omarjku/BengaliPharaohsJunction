@@ -125,6 +125,26 @@ def test_order_setup_uses_the_chat_tool_registry_and_quoted_kitchen_data(monkeyp
     assert "thinkingConfig" not in setup["generationConfig"]
 
 
+def test_order_setup_names_the_cards_and_history_locations():
+    prompt = live._setup("chef", "order")["setup"]["systemInstruction"]["parts"][0]["text"]
+
+    assert "Held orders are the cards in the conversation with an Approve button" in prompt
+    assert "past orders are in the History tab" in prompt
+
+
+def test_pending_order_instruction_includes_the_approve_action_and_waiting_count(monkeypatch):
+    monkeypatch.setattr(live.conversation, "current_order", lambda _buyer: {
+        "orders": [{"status": "pending_approval"}, {"status": "pending_approval"}],
+        "waiting_count": 2,
+    })
+    result = live._compact_tool_result({
+        "card": {"order": {"status": "pending_approval"}},
+        "status": "pending_approval",
+    }, "chef")
+
+    assert result["say"] == "Tap Approve on the order card on screen. 2 cards are waiting."
+
+
 def test_live_does_not_expose_voice_cancellation(monkeypatch):
     setup = live._setup("chef", "order")["setup"]
     names = [f["name"] for group in setup["tools"] for f in group["functionDeclarations"]]
@@ -500,8 +520,32 @@ def test_warm_session_clock_starts_at_first_text(talk, monkeypatch):
         time.sleep(0.2)  # longer than SESSION_S, but still inside the warm idle window
         ws.send_json({"type": "text", "text": "milk"})
         sent_at = time.monotonic()
-        assert ws.receive_json() == {"type": "error", "message": "The conversation reached its 5-minute limit."}
+        assert ws.receive_json() == {
+            "type": "error",
+            "message": "Talk ended after 5 minutes - tap Talk to continue; your order cards are kept",
+        }
         assert time.monotonic() - sent_at >= 0.08
+        with pytest.raises(WebSocketDisconnect) as e:
+            ws.receive_json()
+    assert e.value.code == 1000
+
+
+def test_talk_warns_before_the_five_minute_limit_and_ends_with_a_clear_message(talk, monkeypatch):
+    monkeypatch.setattr(live, "SESSION_S", 0.08)
+    monkeypatch.setattr(live, "WARNING_S", 0.03)
+    talk([])
+
+    with c.websocket_connect("/api/live") as ws:
+        ws.send_json({"type": "auth", "agent_key": "agent-chef"})
+        assert ws.receive_json() == {"type": "ready"}
+        assert ws.receive_json() == {
+            "type": "warning",
+            "message": "Talk ends in about 30 seconds. Finish your sentence; your order cards will stay on screen.",
+        }
+        assert ws.receive_json() == {
+            "type": "error",
+            "message": "Talk ended after 5 minutes - tap Talk to continue; your order cards are kept",
+        }
         with pytest.raises(WebSocketDisconnect) as e:
             ws.receive_json()
     assert e.value.code == 1000
