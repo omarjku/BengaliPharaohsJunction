@@ -113,20 +113,6 @@ def test_allergen_rule_without_data_or_unmappable_value_asks(shop):
     assert set(codes(res)) == {"ALLERGEN_DATA_MISSING", "MANDATE_INVALID"} and res.status == "pending_approval"
 
 
-def test_empty_fish_allergen_record_is_held_for_human_review(shop):
-    shop.products["462016"] = dict(shop.products["103"], id="462016", name_en="RAINBOW TROUT FILLET C",
-                                     allergen_data="missing",
-                                     allergens={"contains": [], "may_contain": [], "free_from": [], "undeclared": [],
-                                                "inferred": ["AF"]})
-    shop.quotes["462016"] = quote("462016")
-
-    res = run([("462016", 1)], mandate(rules=[("excluded_allergen", "AF")]))
-
-    assert res.status == "pending_approval" and res.decision.outcome == "ASK_HUMAN"
-    assert codes(res) == ["ALLERGEN_DATA_MISSING"]
-    assert "no allergen data" in res.decision.reasons[0].message.lower()
-
-
 def test_unrelated_free_from_does_not_verify_an_excluded_allergen(shop):
     shop.products["103"]["allergens"]["free_from"] = ["AM"]
     res = run([("103", 1)], mandate(rules=[("excluded_allergen", "AP")]))

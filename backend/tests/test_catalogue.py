@@ -38,28 +38,10 @@ def loaded(monkeypatch):
 
 def test_slim_extracts_claims_allergens_units_and_volume(loaded):
     assert loaded["claims"] == ["FREE_FROM_LACTOSE"]
-    assert loaded["allergens"] == {"contains": ["AM"], "may_contain": ["AN"], "free_from": ["AE"],
-                                    "undeclared": ["AP"], "inferred": []}
-    assert loaded["allergen_data"] == "declared"
+    assert loaded["allergens"] == {"contains": ["AM"], "may_contain": ["AN"], "free_from": ["AE"], "undeclared": ["AP"]}
     assert loaded["units"] == {"ST": 1.0, "KI": 5.0} and loaded["volume"] == {"unit": "LTR", "value": 1.0}
     assert loaded["substitutes"] == ["476240"] and loaded["name_fi"].endswith("laktoositon")
     assert loaded["deposits"] == [{"material": "4", "unit": "ST", "quantity": 5.0}]
-
-
-@pytest.mark.parametrize(("product_id", "name_en", "name_fi"), [
-    ("462016", "RAINBOW TROUT FILLET C", "KIRJOLOHIFILEE"),
-    ("462150", "SALMON FILLET C-CUT", "LOHIFILEE"),
-])
-def test_slim_marks_empty_allergen_data_and_infers_fish(product_id, name_en, name_fi):
-    raw = {**RAW, "id": product_id, "synkkaData": {**RAW["synkkaData"],
-        "names": [{"language": "en", "value": name_en}, {"language": "fi", "value": name_fi}],
-        "classifications": []}}
-
-    slim = catalogue._slim(raw)
-
-    assert slim["allergen_data"] == "missing"
-    assert slim["allergens"]["inferred"] == ["AF"]
-    assert set(slim["allergens"]["undeclared"]) == set(catalogue.ALLERGEN_NAMES)
 
 
 def test_load_rebuilds_slim_when_version_is_stale(monkeypatch, tmp_path):

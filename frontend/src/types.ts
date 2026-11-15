@@ -367,7 +367,6 @@ export type LiveEvent =
   | { type: 'transcript'; role: 'user' | 'agent'; text: string; final: boolean; turn_id?: number; cumulative?: boolean }
   | { type: 'tool'; name: string; status: 'running' | 'done'; label: string }
   | { type: 'result'; payload: AskResponse }
-  | { type: 'warning'; message: string }
   | { type: 'interrupted' }
   | { type: 'turn_complete' }
   | { type: 'error'; message: string }

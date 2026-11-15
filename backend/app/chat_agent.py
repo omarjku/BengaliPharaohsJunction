@@ -79,7 +79,6 @@ DELEGATION = re.compile(r"^\s*(?:assume|you decide|whatever is normal|sama kuin 
 ORDINAL_CHOICE = re.compile(r"^\s*(?:the\s+)?(first|second|third|1|2|3)\s*(?:one|option)?\s*[.!]*\s*$", re.I)
 CONFIRMATION = re.compile(r"^\s*(?:yes|yeah|yep|sure|ok|okay|go ahead|do it|kyllä|joo|juu)\b", re.I)
 NON_FOOD = re.compile(r"\b(?:lego(?:\s+sets?)?|macbook(?:\s+pro|\s+air)?|iphone|laptop|flights?|weather|poem|toy)\b", re.I)
-ALL_AVAILABLE = re.compile(r"\b(?:all|the whole|everything)\b[^.!?\n]{0,50}\bavailable\b|\bavailable\b[^.!?\n]{0,50}\b(?:all|everything)\b", re.I)
 
 
 def _choice_label(choice: Any) -> str:
@@ -217,8 +216,6 @@ After one search result, answer or propose; never repeat
 the same search with a new query just to fill space. For a follow-up such as "yes", use the current cart card and ask
 one precise clarification if the choice is still ambiguous. If the chef changes or removes a line from a current order,
 call change_order with the quoted order_id and the exact change; do not search the catalogue first. Use plan_menu for a menu.
-When the chef refers to a quantity or product you mentioned (for example, "the 43 kg", "all of the available", or
-"that one"), pass the product_id of that exact product in the tool call; do not use another candidate's product_id.
 Only show an order/cart card when the corresponding tool returned one. If a tool is held for approval, say it is held
 for the chef's on-screen approval. Do not call a nonexistent approval tool.
 
@@ -349,11 +346,6 @@ def _search_request(args: dict, query: str) -> tuple[str, str, float | None, str
     return request, request_query, amount, unit, claims, excludes
 
 
-def _price_unit(product: dict, quote: dict) -> str:
-    return quantity_mod.human_unit(product, product.get("sales_unit") or quote.get("sales_unit")
-                                   or quote.get("comparison_unit"))
-
-
 def _search_sort_key(product: dict, quote: dict, request_query: str, claims: list[str], amount, unit) -> tuple:
     name = " ".join(str(product.get(key) or "") for key in ("name_en", "name_fi", "brand")).lower()
     name_words = set(re.findall(r"[\wäöå]+", name))
@@ -407,23 +399,14 @@ async def _search_products(args: dict, _buyer_id: str, _requested_date: date | N
     products = []
     for product in hits:
         quote = quotes.get(product["id"]) or {}
-        price_unit = _price_unit(product, quote)
         allergens = product.get("allergens") or {}
         words = [catalogue.ALLERGEN_NAMES.get(code, code) for code in allergens.get("contains", [])]
         may = [catalogue.ALLERGEN_NAMES.get(code, code) for code in allergens.get("may_contain", [])]
-        inferred = [catalogue.ALLERGEN_NAMES.get(code, code) for code in allergens.get("inferred", [])]
-        allergen_data = product.get("allergen_data")
-        if allergen_data is None and not any(allergens.get(key) for key in ("contains", "may_contain", "free_from", "undeclared")):
-            allergen_data = "missing"
         products.append({"product_id": product["id"], "name": _name(product), "pack_size": product.get("sales_unit"),
                          "unit_price": quote.get("price"), "comparison_price": quote.get("comparison_price"),
-                         "comparison_unit": price_unit, "price_unit": price_unit,
-                         "allergens": {"contains": words, "may_contain": may, "inferred": inferred},
-                         **({"allergen_data": allergen_data} if allergen_data else {}),
+                         "comparison_unit": quote.get("comparison_unit"), "allergens": {"contains": words, "may_contain": may},
                          "diet_level": product.get("claims") or [], "orderable": quote.get("orderable"),
-                         "next_delivery": quote.get("available_date"),
-                         "available_amount": quote.get("available_amount"),
-                         "stock": agent._stock_text(product, quote)})
+                         "next_delivery": quote.get("available_date")})
     return {"query": query, "products": products, "requested_amount": amount, "requested_unit": unit,
             "requested_date": requested.isoformat(),
             "ranking": "Products are ranked by fit for the chef's request, amount/availability, then price. "
@@ -442,82 +425,9 @@ def _tool_items(items: list[dict]) -> tuple[str, dict]:
         amount = raw.get("amount")
         unit = raw.get("unit")
         row = agent._item(text, amount, unit, [], source=text)
-        if product:
-            row["product_id"] = str(product["id"])
         rows.append(row)
         phrases.append(" ".join(str(x) for x in (amount, unit, text) if x is not None))
     return "; ".join(phrases), {"summary": "; ".join(phrases), "items": rows}
-
-
-async def _clamp_to_available(items: list[dict], raw_items: list[dict], delivery: date) -> bool:
-    ids = [str(raw.get("product_id")) for raw in raw_items if isinstance(raw, dict) and raw.get("product_id")]
-    if not ids:
-        return False
-    try:
-        quotes = {quote["product_id"]: quote for quote in await valio.get_quotes(list(dict.fromkeys(ids)), delivery.isoformat())}
-    except Exception:  # the order engine will perform its normal quote check below
-        return False
-    changed = False
-    for item, raw in zip(items, raw_items):
-        if not isinstance(raw, dict) or not raw.get("product_id"):
-            continue
-        quote = quotes.get(str(raw["product_id"])) or {}
-        available = quote.get("available_amount")
-        if available is None or item.get("amount") is None or not item.get("unit"):
-            continue
-        product = catalogue.get(str(raw["product_id"]))
-        if not product:
-            continue
-        converted = agent.resolve(product, item["amount"], item["unit"])
-        if converted.get("quantity") is not None and converted["quantity"] > available:
-            # Valio's stock is in sales units (cases, packs, kg): order exactly that many sales units
-            item["amount"] = available
-            item["unit"] = quote.get("sales_unit") or product.get("sales_unit") or item["unit"]
-            changed = True
-    return changed
-
-
-def _previous_propose_lines(buyer_id: str, conversation_id: str | None) -> list[dict]:
-    if not conversation_id:
-        return []
-    for row in reversed(conversation.turns(buyer_id, conversation_id)):
-        if row.get("role") != "assistant":
-            continue
-        try:
-            summary = json.loads(str(row.get("text") or ""))
-        except (TypeError, ValueError):
-            continue
-        if summary.get("tool") != "propose_order":
-            continue
-        result = summary.get("result")
-        return [line for line in (result.get("lines") if isinstance(result, dict) else []) if isinstance(line, dict)]
-    return []
-
-
-def _prefer_prior_available_candidate(parsed_items: list[dict], raw_items: list[dict], buyer_id: str,
-                                      conversation_id: str | None) -> None:
-    previous_lines = _previous_propose_lines(buyer_id, conversation_id)
-    if not previous_lines:
-        return
-    for item_number, (item, raw) in enumerate(zip(parsed_items, raw_items)):
-        if not isinstance(raw, dict) or raw.get("amount") is None:
-            continue
-        try:
-            amount = float(raw["amount"])
-        except (TypeError, ValueError):
-            continue
-        for line in previous_lines:
-            if line.get("item") not in (None, item_number):
-                continue
-            held_id = str(raw.get("product_id") or "")
-            for candidate in line.get("competing_candidates") or []:
-                if not isinstance(candidate, dict) or not candidate.get("product_id"):
-                    continue
-                available = candidate.get("available_amount")
-                if candidate["product_id"] != held_id and isinstance(available, (int, float)) and amount == float(available):
-                    raw["product_id"] = str(candidate["product_id"])
-                    item["product_id"] = str(candidate["product_id"])
-                    break
 
 
 def _shown_suggestion(items: list[dict], shown_text: str) -> bool:
@@ -538,12 +448,8 @@ def _shown_suggestion(items: list[dict], shown_text: str) -> bool:
 
 
 def _reason_text(card: dict) -> list[str]:
-    lines = [line for line in card.get("lines") or [] if isinstance(line, dict)]
-    chosen = [line for line in lines if line.get("chosen")]
-    visible_ids = {(line.get("product") or {}).get("id") for line in (chosen or lines)}
     return [str(reason.get("message")) for reason in (card.get("decision") or {}).get("reasons", [])
-            if isinstance(reason, dict) and reason.get("severity") != "INFO"
-            and (not visible_ids or not reason.get("product_id") or reason.get("product_id") in visible_ids)]
+            if isinstance(reason, dict) and reason.get("severity") != "INFO"]
 
 
 def _card_lines(card: dict) -> list[dict]:
@@ -551,27 +457,12 @@ def _card_lines(card: dict) -> list[dict]:
     chosen = [line for line in lines if line.get("chosen")]
     if chosen:
         lines = chosen
-    by_item = {}
-    for line in [line for line in card.get("lines") or [] if isinstance(line, dict)]:
-        by_item.setdefault(line.get("item"), []).append(line)
     out = []
     for line in lines:
         product = line.get("product") or {}
         quantity = line.get("quantity") or {}
         requested = quantity.get("requested") if isinstance(quantity.get("requested"), dict) else quantity
         requested_unit = quantity_mod.human_unit(product, requested.get("unit")) if isinstance(requested, dict) else None
-        held = agent._candidate_offer(line)
-        competitors = [agent._candidate_offer(candidate) for candidate in by_item.get(line.get("item"), [])
-                       if candidate is not line and agent._stock_signature(candidate.get("quote")) !=
-                       agent._stock_signature(line.get("quote"))]
-        held_text = agent._offer_summary(held, "Card holds") if held else "Card product details unavailable"
-        summary = held_text
-        if requested and requested.get("amount") is not None and requested.get("unit"):
-            summary = f"{held_text} for {requested['amount']} {requested_unit}"
-        if competitors:
-            summary += "; " + "; ".join(agent._offer_summary(candidate, "competing candidate")
-                                         for candidate in competitors if candidate)
-        quote = line.get("quote") if isinstance(line.get("quote"), dict) else {}
         out.append({"item": line.get("item"), "product": _name(product), "product_id": product.get("id"),
                     "literal_amount": (f"{requested.get('amount')} {requested_unit}"
                                         if isinstance(requested, dict) and requested.get("amount") is not None
@@ -579,10 +470,7 @@ def _card_lines(card: dict) -> list[dict]:
                     "sales_unit_quantity": quantity.get("quantity"), "delivered_amount": quantity.get("delivered"),
                     "sales_unit": quantity.get("sales_unit"), "conversion": quantity.get("explanation"),
                     "unit": requested.get("unit") if isinstance(requested, dict) else None,
-                    "line_total_cents": line.get("line_total_cents"), "orderable": quote.get("orderable"),
-                    "price": quote.get("price"), "price_unit": held.get("price_unit") if held else None,
-                    "available_amount": quote.get("available_amount"), "stock": held.get("stock") if held else None,
-                    "summary": summary + ".", "competing_candidates": [candidate for candidate in competitors if candidate]})
+                    "line_total_cents": line.get("line_total_cents"), "orderable": (line.get("quote") or {}).get("orderable")})
     return out
 
 
@@ -620,7 +508,6 @@ def _tool_card(card: dict, kind: str) -> dict:
                for alternative in (card.get("decision") or {}).get("alternatives", [])
                if isinstance(alternative, dict) and alternative.get("product_id")]
     return {"card": card, "status": status, "items": card.get("items") or [], "lines": _card_lines(card),
-            "substitutions": card.get("substitutions") or [],
             "assumptions": assumptions,
             "hold_reasons": _reason_text(card),
             "missing_info": [r.get("message") for r in (card.get("decision") or {}).get("reasons", [])
@@ -682,21 +569,14 @@ async def _propose_order(args: dict, buyer_id: str, requested_date: date | None,
     date_assumed = delivery is None
     if date_assumed:
         delivery, _ = ask._delivery_assumption(datetime.now(HELSINKI).date())
-    turn = _TURN.get() or {}
-    request_text = str(turn.get("request_text") or turn.get("original") or text)
-    raw_items = args.get("items") or []
-    if ALL_AVAILABLE.search(request_text):
-        _prefer_prior_available_candidate(parsed["items"], raw_items, buyer_id, turn.get("conversation_id"))
-    if ALL_AVAILABLE.search(request_text) and await _clamp_to_available(parsed["items"], raw_items, delivery):
-        text = "; ".join(" ".join(str(value) for value in (item.get("amount"), item.get("unit"), item.get("query"))
-                           if value is not None) for item in parsed["items"])
-        request_text = text
     delivery_note = (f"Delivery: {delivery:%a} {delivery.day} {delivery:%b} "
                      "(assumed: next delivery day; change it if needed)") if date_assumed else None
     token = ask._DUPLICATE_GUARD_BYPASS.set(follow_up)
     try:
         guard = await _turn_guard(text)
         base_note = guard.get("note") or (VOICE_HOLD_NOTE if via == "voice" else None)
+        turn = _TURN.get() or {}
+        request_text = str(turn.get("request_text") or turn.get("original") or text)
         confirmed_suggestion = bool(turn.get("confirmation") and _shown_suggestion(
             args.get("items") or [], str(turn.get("shown_text") or "")))
         if turn.get("confirmation") and not confirmed_suggestion and not base_note:
@@ -774,26 +654,12 @@ async def _change_order(args: dict, buyer_id: str, requested_date: date | None, 
     action = {"intent": "change_cart", "slots": {"items": new_items, "date": when.isoformat()}}
     last_card = {"order_id": order_id, "requested_date": old.get("requested_date"), "order": old}
     token = ask._DUPLICATE_GUARD_BYPASS.set(follow_up)
-    product_ids = {}
-    for item in changes:
-        product = catalogue.get(str(item.get("product_id"))) if item.get("product_id") else None
-        if not product:
-            continue
-        product_id = str(product["id"])
-        for value in (item.get("name"), _name(product)):
-            if value:
-                key = " ".join(str(value).split()).casefold()
-                # a name that points at two different products is ambiguous: pin neither (normal search decides)
-                product_ids[key] = product_id if product_ids.get(key, product_id) == product_id else None
-    product_ids = {key: pid for key, pid in product_ids.items() if pid}  # scoped to this change call only
-    product_token = agent._FORCED_PRODUCT_IDS.set(product_ids)
     try:
         guard = await _turn_guard(text)
         request_note = guard.get("note") or (VOICE_HOLD_NOTE if via == "voice" else None)
         body = await ask._execute_action(action, text, when, buyer_id, datetime.now(HELSINKI).date(), "gemini",
                                           guard.get("steer"), last_card, 1.0, request_note=request_note)
     finally:
-        agent._FORCED_PRODUCT_IDS.reset(product_token)
         ask._DUPLICATE_GUARD_BYPASS.reset(token)
     if body.get("intent") != "order" or "lines" not in body:
         return {"status": "needs_info", "hold_reasons": [body.get("reply") or "The order was not changed."],
@@ -954,9 +820,8 @@ def _search_result_reply(result: dict) -> str:
     lines = ["Options in ranked order (fit, amount/availability, then price):"]
     for index, product in enumerate(products[:5], 1):
         price = product.get("unit_price")
-        unit = product.get("price_unit") or product.get("comparison_unit")
-        price_text = f" — €{price:.2f}/{unit}" if isinstance(price, (int, float)) and unit else ""
-        availability = product.get("stock") or ("orderable" if product.get("orderable") else "not currently orderable")
+        price_text = f" — €{price:.2f}/L" if isinstance(price, (int, float)) else ""
+        availability = "orderable" if product.get("orderable") else "not currently orderable"
         lines.append(f"{index}. {product.get('name') or product.get('product_id')}{price_text} ({availability})")
     return "\n".join(lines)
 
@@ -1019,8 +884,7 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
         _steer = max((v for v in (_steer, _earlier_steer) if v is not None), default=None)
     _TURN.set({"steer": _steer, "note": _note, "text": original_text,
                "original": original_text, "request_text": request_text, "shown_text": shown_text,
-               "confirmation": bool(CONFIRMATION.match(original_text) and history),
-               "conversation_id": conversation_id})
+               "confirmation": bool(CONFIRMATION.match(original_text) and history)})
     if APPROVAL_REQUEST.search(text):
         reply = "I can't approve orders for you; please approve the order on screen."
         conversation.record_turn(buyer_id, "user", original_text, conversation_id=conversation_id)
@@ -1113,7 +977,7 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
                                                           "kept": score >= threshold})
                                     card = dict(card, assumptions=existing)
                                 cards.append(card)
-                            compact = {key: result.get(key) for key in ("status", "awaiting_user", "items", "lines", "substitutions", "assumptions",
+                            compact = {key: result.get(key) for key in ("status", "awaiting_user", "items", "lines", "assumptions",
                                                                         "hold_reasons", "missing_info", "order_id", "question",
                                                                         "pending_slot", "choices")
                                        if result.get(key) not in (None, [], "")}

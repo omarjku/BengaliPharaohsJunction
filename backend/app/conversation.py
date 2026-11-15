@@ -467,16 +467,15 @@ def is_stale(buyer_id: str, conversation_id: str) -> bool:
 
 
 def current_order(buyer_id: str) -> dict:
-    """Orders still waiting for the chef (today or later), plus a short list of upcoming orders already confirmed."""
+    """Return bounded order facts for this buyer's coming delivery days, without catalogue search or price lookups."""
     from . import catalogue, orders
 
     today = datetime.now(HELSINKI).date()
-    rows, confirmed = [], []
+    rows = []
     for order in orders._store().values():
         if not isinstance(order, dict) or order.get("buyer_id") != buyer_id:
             continue
-        status = order.get("status")
-        if status not in {"open", "pending", "pending_approval", "confirmed"}:
+        if order.get("status") not in {"open", "pending", "pending_approval", "confirmed"}:
             continue
         try:
             requested = date.fromisoformat(str(order.get("requested_date")))
@@ -496,19 +495,11 @@ def current_order(buyer_id: str) -> dict:
                 "unit_price_cents": line.get("unit_price_cents"),
                 "line_total_cents": line.get("line_total_cents"),
             }.items() if value is not None})
-        row = {"order_id": str(order.get("id") or "")[:12], "requested_date": requested.isoformat(),
-               "status": status, "lines": lines, "total_cents": order.get("total_cents")}
-        if status == "confirmed":  # already ordered: a short list for "what's arriving Monday?", never "in the cart"
-            confirmed.append({"requested_date": row["requested_date"], "items": [line.get("name") for line in lines][:10]})
-        else:
-            rows.append(row)
+        rows.append({"order_id": str(order.get("id") or "")[:12], "requested_date": requested.isoformat(),
+                     "status": order.get("status"), "lines": lines, "total_cents": order.get("total_cents")})
     rows.sort(key=lambda row: (row["requested_date"], row["order_id"]))
     rows = rows[:20]
-    confirmed.sort(key=lambda row: row["requested_date"])
-    return {"orders": rows, "waiting_count": len(rows), "confirmed_count": len(confirmed),
-            "confirmed_upcoming": confirmed[:10],
-            "confirmed_note": ("Already ordered (not in the cart); details in the History tab" if confirmed else None),
-            "total_cents": sum(row.get("total_cents") or 0 for row in rows)}
+    return {"orders": rows, "total_cents": sum(row.get("total_cents") or 0 for row in rows)}
 
 
 # --- the spoken sentence

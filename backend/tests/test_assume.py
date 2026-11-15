@@ -200,7 +200,7 @@ def test_talk_ask_agent_holds_an_assumption_for_the_chef_tap(shop1, monkeypatch)
 
     assert out["order"]["status"] == "pending_approval"
     assert short["order_status"] == "pending_approval"
-    assert short["say"].endswith("Tap Approve on the order card on screen. 1 card is waiting.")
+    assert "held for the chef's tap" in short["say"].lower()
 
 
 def test_v2_standing_order_assumption_is_held_for_chef_tap(shop1, monkeypatch):  # noqa: F811
