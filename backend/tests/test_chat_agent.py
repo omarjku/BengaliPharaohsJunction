@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+from conftest import REQ, product, quote
 from app import chat_agent
 from app.main import app
 
@@ -177,6 +178,89 @@ def test_chat_search_ranks_request_fit_and_amount_before_price(shop, monkeypatch
         chat_agent._TURN.reset(token)
 
     assert result["products"][0]["product_id"] == "milk"
+
+
+def test_propose_order_keeps_the_searched_product_id_and_quote(shop, monkeypatch):
+    requested = product("462150", "SALMON FILLET C-CUT", unit="KG", claims=(), contains=("AF",))
+    alternative = product("461887", "KALAVAPRIIKKI SALMON", unit="KG", claims=(), contains=("AF",))
+    for item in (requested, alternative):
+        item.update(base_unit="KG", units={"KG": 1.0}, volume=None, net_weight=None)
+    shop.products.update({item["id"]: item for item in (requested, alternative)})
+    requested_quote = quote("462150", amount=43, price=14.11, unit="KG")
+    alternative_quote = quote("461887", amount=100, price=10.00, unit="KG")
+    shop.quotes.update({"462150": requested_quote, "461887": alternative_quote})
+    monkeypatch.setattr(chat_agent, "_turn_guard",
+                        lambda _text: asyncio.sleep(0, result={"steer": 0.0, "note": None}))
+    monkeypatch.setattr(chat_agent.catalogue, "search", lambda *_args: [alternative, requested])
+
+    async def rank_alternative_first(_item, _hits):
+        return ["461887", "462150"]
+
+    monkeypatch.setattr(chat_agent.agent, "match", rank_alternative_first)
+
+    async def decisions(_input, questions):
+        return {key: {"type": "noul", "noul": 0.95 if key != "steering" else 0.01}
+                for key in questions}
+
+    monkeypatch.setattr(chat_agent.agent, "_decisions", decisions)
+    token = chat_agent._TURN.set({"request_text": "Order all of the available salmon", "text": "Order all of the available salmon"})
+    try:
+        result = asyncio.run(chat_agent._propose_order(
+            {"items": [{"text": "salmon", "product_id": "462150", "amount": 50, "unit": "kg"}]},
+            "lapland-kitchen", REQ))
+    finally:
+        chat_agent._TURN.reset(token)
+
+    chosen = [line for line in result["card"]["lines"] if line.get("chosen")]
+    assert len(chosen) == 1
+    assert chosen[0]["product"]["id"] == "462150"
+    assert chosen[0]["quantity"]["requested"] == {"amount": 43, "unit": "kg"}
+    assert chosen[0]["quote"]["price"] == 14.11
+
+
+def test_change_order_keeps_the_explicit_product_id_through_the_merged_cart(shop, monkeypatch):
+    old = {"id": "order-1", "buyer_id": "chef", "status": "pending_approval", "requested_date": REQ.isoformat(),
+           "lines": [{"product_id": "463335", "name": "Eila milk 1 l", "quantity": 1, "unit": "L"}]}
+    monkeypatch.setattr(chat_agent.orders, "_store", lambda: {"order-1": old})
+    monkeypatch.setattr(chat_agent, "_turn_guard",
+                        lambda _text: asyncio.sleep(0, result={"steer": 0.0, "note": None}))
+    seen = {}
+
+    async def fake_execute(action, text, *_args, **_kwargs):
+        parsed, _ = chat_agent.ask._parsed_action(action, "gemini", text)
+        seen["items"] = parsed["items"]
+        return {"intent": "order", "lines": []}
+
+    monkeypatch.setattr(chat_agent.ask, "_execute_action", fake_execute)
+    asyncio.run(chat_agent._change_order(
+        {"order_id": "order-1", "changes": [{"product_id": "463335", "amount": 2, "unit": "L"}]},
+        "chef", REQ))
+
+    assert seen["items"][0]["product_id"] == "463335"
+
+
+def test_search_product_price_uses_the_product_sales_unit(shop, monkeypatch):
+    salmon = product("salmon-kg", "SALMON FILLET C-CUT", unit="KG", claims=(), contains=("AF",))
+    salmon.update(base_unit="KG", units={"KG": 1.0}, volume=None, net_weight=None)
+    salmon_quote = quote("salmon-kg", amount=43, price=18.01, unit="KG")
+    shop.products["salmon-kg"] = salmon
+    shop.quotes["salmon-kg"] = salmon_quote
+    monkeypatch.setattr(chat_agent.catalogue, "search", lambda *_args: [salmon])
+
+    result = asyncio.run(chat_agent._search_products({"query": "salmon"}, "chef", REQ))
+    reply = chat_agent._search_result_reply(result)
+
+    assert result["products"][0]["comparison_unit"] == "kg"
+    assert "18.01/kg" in reply
+    assert "/L" not in reply
+
+
+def test_card_hold_reasons_only_describe_products_on_the_card():
+    card = {"lines": [{"chosen": True, "product": {"id": "replacement"}}],
+            "decision": {"reasons": [{"severity": "ASK", "product_id": "rejected",
+                                         "message": "Only 43 kg of the requested product is available."}]}}
+
+    assert chat_agent._reason_text(card) == []
 
 
 def test_search_tool_declares_optional_safety_filters():
