@@ -805,3 +805,18 @@ def test_pinned_product_must_pass_the_same_allergen_filter_as_search(monkeypatch
     assert "trout-pin" not in ids
     ids, _ = asyncio.run(agent.candidates("5 kg rainbow trout", dict(item), set(), {}, [], []))
     assert ids == ["trout-pin"]
+
+
+def test_order_all_available_uses_valio_sales_units(monkeypatch):
+    """'All available' of a 12 L case product with 2 cases in stock is 2 cases, never '2 L'."""
+    import asyncio
+    from app import chat_agent, catalogue, valio, agent
+    product = {"id": "milk-case", "name_en": "Milk 12 L case", "sales_unit": "CS"}
+    monkeypatch.setattr(catalogue, "get", lambda pid: product if pid == "milk-case" else None)
+    async def quotes(ids, _day):
+        return [{"product_id": "milk-case", "available_amount": 2, "sales_unit": "CS"}]
+    monkeypatch.setattr(valio, "get_quotes", quotes)
+    monkeypatch.setattr(agent, "resolve", lambda p, amount, unit: {"quantity": 5 if unit == "l" else amount})
+    items = [{"query": "milk", "amount": 60, "unit": "l"}]
+    changed = asyncio.run(chat_agent._clamp_to_available(items, [{"product_id": "milk-case"}], __import__("datetime").date(2026, 11, 16)))
+    assert changed and items[0]["amount"] == 2 and items[0]["unit"] == "CS"

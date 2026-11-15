@@ -465,7 +465,9 @@ async def _clamp_to_available(items: list[dict], raw_items: list[dict], delivery
             continue
         converted = agent.resolve(product, item["amount"], item["unit"])
         if converted.get("quantity") is not None and converted["quantity"] > available:
+            # Valio's stock is in sales units (cases, packs, kg): order exactly that many sales units
             item["amount"] = available
+            item["unit"] = quote.get("sales_unit") or product.get("sales_unit") or item["unit"]
             changed = True
     return changed
 
