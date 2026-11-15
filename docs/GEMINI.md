@@ -6,6 +6,11 @@ transcripts, cards, structured results, and decision reasons. Gemini interprets
 language and adds uncertainty. Python and the front door remain authoritative for
 catalogue facts, prices, stock, quantities, dates, mandates, approval, and audit.
 
+Design choice: the chef approves every order. Decisions confidence decides when the
+agent asks (below the kitchen's 0.70 bar it asks instead of guessing); it never
+decides when the agent spends. The code's per-kitchen auto-approve limit, and how the
+chef sets it in the Rules tab, are described in the README.
+
 ## The main text brain: function-calling chat
 
 `POST /api/agent/chat` is driven by `backend/app/chat_agent.py`. Gemini receives a
@@ -23,6 +28,10 @@ function declarations, appends the complete returned model content unchanged (so
 sends all function responses for that turn together, and repeats until Gemini returns
 the answer. A provider or loop failure is surfaced or routed through the documented
 deterministic `/api/agent/ask` fallback; it is not hidden as a successful order.
+
+Since PR #129, every chat message carries its conversation id. A thread keeps up to
+400 rows and expires after 30 idle minutes; older turns become notes that keep every
+chef message, so the agent sees the whole conversation.
 
 Every turn is guarded with the chef's original words in the `_TURN` context: the
 steering/injection score and auto-approval stripping are computed from that raw turn,

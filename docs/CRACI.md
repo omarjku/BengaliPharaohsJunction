@@ -106,8 +106,13 @@ The post-fix local audits show 0 HIGH/CRITICAL: pip-audit still reports the
 lower-severity `python-dotenv` 1.1.0 finding (fixed in 1.2.2) and dev/test
 `pytest` 8.3.5 finding (fixed in 9.0.3); npm audit still reports 7 moderate
 `typescript-eslint`/`minimatch` entries and offers no non-forced fix. We did
-not use a forced npm override. The live evidence page will show the new counts
-after the next deploy and CRACI refresh; it currently reports `unavailable`.
+not use a forced npm override. The fixes are deployed. On Sun 15 Nov the live
+evidence for commit `76f5a92` (CI run `43687055766`) reported status `ok`, 170 pip
+and 181 npm components, 19 network destinations, and still 7 HIGH / 0 CRITICAL
+findings (7 blocking; the allowlist is empty). We have not yet traced why CRACI's
+count differs from the local audits. With the build-trust gate on (the default),
+any otherwise automatic order is held for a human (`BUILD_NOT_TRUSTED`) while that
+evidence is cached.
 
 ## Verifying the digest
 

@@ -78,7 +78,7 @@ else.
 
 ### 6. Codex built it. Claude ran the room.
 - **Evidence:**
-  - **29 commits on main say "Built by Codex"**: the one-brain engine, the Gemini chat agent (#114), the kitchen
+  - **47 commits on main say "Built by Codex"**: the one-brain engine, the Gemini chat agent (#114), the kitchen
     interview, the calendar, the QR kitchens, the allergen-proof fix, the agent-cancel fix (#115), the CRACI evidence
     pipeline (#116), and voice on one brain (#117).
   - Parallel git worktrees, each looping against real Gemini until the tests passed.
