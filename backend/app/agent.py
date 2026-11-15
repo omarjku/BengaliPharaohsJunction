@@ -119,6 +119,7 @@ def _wrap(text: str) -> str:
 _HTTP: list = [None, None, None]  # [event loop, client, Decisions semaphore]: per loop (asyncio objects bind to one)
 _GEMINI_INFLIGHT: dict[str, asyncio.Task] = {}
 _DECISIONS_INFLIGHT: dict[str, asyncio.Task] = {}
+_FORCED_PRODUCT_IDS: ContextVar[dict[str, str] | None] = ContextVar("forced_product_ids", default=None)
 
 
 def _bind() -> None:
@@ -428,7 +429,8 @@ async def _judge_one(text: str, p: dict, kinds: list[str]) -> tuple[float | None
 def _item(query: str, amount, unit, tags, source: str = "", purpose: str = "") -> dict:
     """One parsed item, normalised: the query becomes at most 6 plain words (no newlines or punctuation can ride
     into a later prompt), origin adjectives ('Finnish') move to `origin`, `source` keeps the chef's own words."""
-    words = re.findall(r"[\wäöåÄÖÅ'-]+", str(query))[:6]
+    raw_query = str(query)
+    words = re.findall(r"[\wäöåÄÖÅ'-]+", raw_query)[:6]
     # from the query, or the chef's own words when the parser already dropped it ("Finnish tomatoes" → "tomatoes")
     origin = next((ORIGINS[w.lower()] for w in words + re.findall(r"[\wäöåÄÖÅ'-]+", str(source))
                    if w.lower() in ORIGINS), None)
@@ -449,6 +451,11 @@ def _item(query: str, amount, unit, tags, source: str = "", purpose: str = "") -
         out["source"] = source
     if purpose := " ".join(re.findall(r"[\wäöåÄÖÅ'-]+", str(purpose))[:10]):
         out["purpose"] = purpose
+    forced = _FORCED_PRODUCT_IDS.get() or {}
+    for value in (raw_query, source, query):
+        if product_id := forced.get(" ".join(str(value).split()).casefold()):
+            out["product_id"] = product_id
+            break
     return out
 
 
@@ -951,6 +958,9 @@ EVERYDAY = {"cream": ["whipping cream", "cooking cream"], "kerma": ["kuohukerma"
 async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str, set[str]] | None = None,
                      diets: list[str] | None = None, profile_diets: list[str] | None = None) -> tuple[list[str], bool]:
     """Catalogue hits with claims required only for at-risk ingredients, then narrowed by Gemini."""
+    requested_product_id = str(item.get("product_id") or "").strip()
+    if requested_product_id and catalogue.get(requested_product_id):
+        return [requested_product_id], True
     tags = _diet_tags(item, diets)
     if risks is None:
         risks = await diet.at_risk([item["query"]], tags)
@@ -1450,7 +1460,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                                        "unit": proposal["unit"], "text": proposal["assumption"], "source": "gemini"})
 
     lines, checked, alternatives, chosen, per_item, failed = [], [], [], [], [], set()
-    substitutes = []
+    substitutes, substitution_notes = [], []
     item_reasons, approval_reasons = [], []
     item_reasons_by_item: dict[int, list[Reason]] = {}
     threshold = mandates.confidence_threshold(buyer_id)
@@ -1589,6 +1599,19 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                 continue
             best["chosen"] = True
             chosen.append(best)
+            replaced = next((ln for _, ln, asks in scored if ln is not best and any(
+                reason.code in (C.STOCK_PARTIAL, C.STOCK_NONE) for reason in asks)), None)
+            if replaced and replaced.get("quote") and best.get("quote"):
+                old_product, new_product = replaced["product"], best["product"]
+                old_quote, new_quote = replaced["quote"], best["quote"]
+                old_unit = quantity.human_unit(old_product, old_quote.get("sales_unit") or old_product.get("sales_unit"))
+                new_unit = quantity.human_unit(new_product, new_quote.get("sales_unit") or new_product.get("sales_unit"))
+                substitution = (f"Substituted {_name(old_product)} at EUR {old_quote['price']:.2f}/{old_unit} with "
+                                f"{_name(new_product)} at EUR {new_quote['price']:.2f}/{new_unit}: "
+                                f"{next((reason.message for _, _, asks in scored for reason in asks
+                                         if reason.code in (C.STOCK_PARTIAL, C.STOCK_NONE)), 'the requested product was unavailable')}")
+                substitution_notes.append({"item": n, "text": substitution})
+                best["why"] += f" {substitution}"
             late_beaten = next((ln for k, ln, a in scored[1:] if not k[0] and k[4] and not scored[0][0][4]
                                 and (ln["confidence"] or 0) > (best["confidence"] or 0)), None)
             best["usual"] = best["product"]["id"] in preferred or best["product"]["id"] in past_orders
@@ -1712,7 +1735,8 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
                 if not line["chosen"] and any(r.severity is not INFO for r in rs)]
     return {"lines": lines, "chosen": chosen, "alternatives": alternatives, "rejected": rejected, "quotes": quotes,
             "failed_items": failed, "item_reasons": item_reasons, "assumptions": amount_assumptions,
-            "item_reasons_by_item": item_reasons_by_item, "substitutes": substitutes, "approval_reasons": approval_reasons}
+            "item_reasons_by_item": item_reasons_by_item, "substitutes": substitutes, "approval_reasons": approval_reasons,
+            "substitution_notes": substitution_notes}
 
 
 
@@ -1952,8 +1976,8 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
 
     res = await _pipeline(text, request["items"], requested, buyer_id, m, excluded, now, reasons, parsed_by_gemini,
                           pre.get("decision_text"))
-    lines, chosen, alternatives, rejected, quotes, assumptions, approval_reasons = (res[k] for k in (
-        "lines", "chosen", "alternatives", "rejected", "quotes", "assumptions", "approval_reasons"))
+    lines, chosen, alternatives, rejected, quotes, assumptions, approval_reasons, substitution_notes = (res[k] for k in (
+        "lines", "chosen", "alternatives", "rejected", "quotes", "assumptions", "approval_reasons", "substitution_notes"))
     if request_hold and request_note and chosen:
         request_approval = gate._r(
             C.ASSUMPTION_CONFIRM, ASK, request_note, None,
@@ -2046,6 +2070,7 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
     item_summaries = _item_summaries(request, lines, res["item_reasons_by_item"], res["failed_items"], summary_blocked)
     out = {"request": request, "lines": lines, "decision": decision.model_dump(mode="json"), "order": order,
            "items": item_summaries,
+           "substitutions": substitution_notes,
            "spare_suggestion": sug[0] if len(chosen) == 1 and sug else None,
            "audit_id": audit_id,  # lines held back for their own reasons: each gets a next step (none if the
            "held_items": [] if request_blocked else sorted(res["failed_items"])}  # whole request was held)
