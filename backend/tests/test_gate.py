@@ -43,10 +43,11 @@ def test_line_cap_and_weekly_budget(shop):
     assert res.status == "pending_approval" and set(codes(res)) == {"LINE_OVER_CAP", "WEEKLY_BUDGET_EXCEEDED"}
 
 
-def test_terminal_cutoff_passed_and_unknown_qty_is_refused_with_alternatives(shop):
+def test_terminal_cutoff_still_refuses_unknown_qty_without_signoff_by_itself(shop):
     res = run([("463038", 1)])
     assert res.status == "refused" and res.decision.outcome == "ASK_HUMAN"  # contract: only HARD_CODES may DECLINE
     assert set(codes(res)) == {"CUTOFF_PASSED", "QTY_UNKNOWN"}
+    assert res.decision.reasons[-1].severity.value == "INFO"
     assert res.rejected_options[0].product_id == "463038"
     alts = [a.product_id for a in res.decision.alternatives]
     assert alts[0] == "476240" and "463038" not in alts and all("instead of 463038" in a.summary for a in res.decision.alternatives)
@@ -84,6 +85,15 @@ def test_lot_size_multiple(shop):
     assert codes(run([("102", 4)])) == []
     res = run([("102", 3)])
     assert res.decision.outcome == "DECLINE" and codes(res) == ["QTY_INVALID"]
+
+
+def test_subunit_lot_size_is_treated_as_one_whole_sales_unit(shop):
+    shop.products["460578"] = dict(shop.products["463335"], id="460578", name_en="Potatoes", sales_unit="KG",
+                                     base_unit="KG", lot_size=0.01)
+    shop.quotes["460578"] = quote("460578", unit="KG")
+    res = run([("460578", 2.5)])
+    assert res.status == "refused" and codes(res) == ["QTY_INVALID"]
+    assert res.decision.reasons[0].suggested_fix == "Round to 3."
 
 
 def test_blocklist(shop):
@@ -159,13 +169,13 @@ def test_alternative_with_undeclared_banned_allergen_is_not_offered(shop):
     assert all(a.product_id != "candidate" for a in res.decision.alternatives)
 
 
-def test_uncertainty_policy_decline_and_approve(shop):
+def test_unknown_qty_is_orderable_with_an_info_note_regardless_of_uncertainty_policy(shop):
     shop.quotes["463038"] = quote("463038", "Terminal", 999999.0, price=31.31, unit="KI")  # cut-off still open
-    assert run([("463038", 1)]).status == "pending_approval"
-    res = run([("463038", 1)], mandate(uncertainty_policy="decline"))
-    assert codes(res) == ["POLICY_DECLINE_UNKNOWN"] and res.decision.reasons[0].facts["unknown"] == "QTY_UNKNOWN"
-    res = run([("463038", 1)], mandate(uncertainty_policy="approve"))
-    assert res.status == "confirmed" and res.decision.reasons[0].severity == "INFO"
+    for policy in ("ask", "decline", "approve"):
+        res = run([("463038", 1)], mandate(uncertainty_policy=policy))
+        assert res.status == "confirmed" and codes(res) == ["QTY_UNKNOWN"]
+        assert res.decision.reasons[0].severity.value == "INFO"
+        assert res.decision.reasons[0].message == "Valio doesn't report stock for this product; it can still be ordered."
 
 
 def test_reliability_rule(shop):

@@ -196,9 +196,8 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
     if "out_of_stock" in q["flags"]:
         rs.append(_r(C.STOCK_NONE, ASK, f"{name} is out of stock.", pid, "Pick an alternative.", available=0))
     elif "quantity_unknown" in q["flags"]:
-        rs.append(_unknown(m.uncertainty_policy, C.QTY_UNKNOWN,
-                           f"Valio can't confirm how much {name} is available (Terminal product, stock reported as 999999 = unknown).",
-                           pid, "Accept the risk that Valio may deliver less, or pick a stocked alternative."))
+        rs.append(_r(C.QTY_UNKNOWN, INFO, "Valio doesn't report stock for this product; it can still be ordered.", pid,
+                     "Continue with the order; the other rules still apply.", quantity_unknown=True))
     elif qty is not None and avail is not None and avail < qty:
         rs.append(_r(C.STOCK_PARTIAL, ASK, f"Only {_qty(avail)} {unit} of {name} available, {_qty(qty)} ordered.",
                      pid, f"Reduce to {_qty(avail)} and cover the rest with an alternative.", available=avail, requested=qty))
@@ -210,6 +209,7 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
                      f"{cat['sales_unit']}; the quantity is counted in {q['sales_unit']}.", pid,
                      "Confirm the quantity in the sales unit.", api_unit=q["sales_unit"], catalogue_unit=cat["sales_unit"]))
     lot = cat.get("lot_size")
+    effective_lot = max(Decimal(str(lot)), Decimal(1)) if lot else None
     if qty is not None and qty > MAX_LINE_QTY:  # every path (route, agent, menu, MCP) goes through here
         rs.append(_r(C.QTY_INVALID, DECLINE, f"{_qty(qty)} {unit} of {name} is over the {_qty(MAX_LINE_QTY)} per-line "
                      "maximum.", pid, "Check the quantity; split a genuinely huge order with Valio.",
@@ -218,9 +218,13 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
         rs.append(_r(C.QTY_INVALID, DECLINE, f"{name} is sold per {unit}, so it can't be ordered as {_qty(qty)}; "
                      "only whole units are delivered.", pid, f"Round to {math.ceil(qty)}.", requested=qty,
                      suggested_quantity=math.ceil(qty)))
-    elif qty is not None and lot and Decimal(str(qty)) % Decimal(str(lot)) != 0:
-        rs.append(_r(C.QTY_INVALID, DECLINE, f"{name} is sold in multiples of {_qty(lot)} {unit}; {_qty(qty)} isn't one.",
-                     pid, f"Order a multiple of {_qty(lot)}.", lot_size=lot, requested=qty))
+    elif qty is not None and effective_lot and Decimal(str(qty)) % effective_lot != 0:
+        if Decimal(str(lot)) < 1:
+            rs.append(_r(C.QTY_INVALID, DECLINE, f"{name} is sold in whole {unit} units; {_qty(qty)} isn't one.",
+                         pid, f"Round to {math.ceil(qty)}.", lot_size=lot, effective_lot_size=1, requested=qty))
+        else:
+            rs.append(_r(C.QTY_INVALID, DECLINE, f"{name} is sold in multiples of {_qty(lot)} {unit}; {_qty(qty)} isn't one.",
+                         pid, f"Order a multiple of {_qty(lot)}.", lot_size=lot, requested=qty))
 
     if q["price"] is None:
         rs.append(_r(C.PRICE_MISSING, ASK, f"Valio returned no price for {name}, so it can't be ordered at a fixed price.",

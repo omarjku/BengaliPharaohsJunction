@@ -88,10 +88,11 @@ def test_half_a_carton_is_refused_with_a_rounding_fix(shop):
     assert run([("463335", 3)]).status == "confirmed"
 
 
-def test_weight_units_may_be_fractional(shop):
+def test_weight_units_with_subunit_lot_are_whole_units(shop):
     shop.products["463335"]["sales_unit"] = "KG"
     shop.quotes["463335"] = quote("463335", unit="KG")
-    assert run([("463335", 2.5)]).status == "confirmed"
+    res = run([("463335", 2.5)])
+    assert res.status == "refused" and codes(res) == ["QTY_INVALID"]
 
 
 # --- QU-06: Stock sentinel and the per-line cap on every path
@@ -99,11 +100,11 @@ def test_stock_sentinel_is_not_real_stock():
     q = valio._merge({"productId": "x", "logisticModel": "Stock", "closingTime": None, "scheduleLines": [
         {"availableAmount": 9999999999.0, "salesUnit": "ST", "availableDate": REQ.isoformat()}]},
         {"productId": "x", "catalogPrice": {"value": 1.4}}, NOW)
-    assert q["available_amount"] is None and not q["quantity_known"] and "quantity_unreported" in q["flags"]
-    assert valio.to_contract_quote(q).availability == "available"  # Stock: orderable, amount just not reported
+    assert q["available_amount"] is None and not q["quantity_known"] and "quantity_unknown" in q["flags"]
+    assert valio.to_contract_quote(q).availability == "unknown"  # Stock: orderable, amount just not reported
 
 
-def test_unreported_stock_neither_asks_nor_counts_as_stock(shop):
+def test_unknown_stock_neither_asks_nor_counts_as_stock(shop):
     shop.quotes["463335"] = quote("463335", amount=9999999999.0)
     assert run([("463335", 10)]).status == "confirmed"
     shop.products["104"]["substitutes"] = ["463335"]

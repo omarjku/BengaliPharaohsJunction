@@ -19,7 +19,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from trade_contracts import AuditEntry, AuditInput, Decision, Mandate, Outcome, PurchaseRequest, RequestItem
 
-from . import auth, catalogue, config, craci_evidence, gate, mandates, signing
+from . import auth, catalogue, config, craci_evidence, gate, mandates, signing, valio
 from .auth import Principal
 
 # ponytail: JSON files on local disk (D8). Render's disk is ephemeral, so orders + audit vanish on redeploy and
@@ -278,14 +278,19 @@ async def _gate(audit: dict, lines, requested_date, mandate, oid, *, trust_gate:
                                                                        "primary_reason": reasons[0]})
                 result.status = "pending_approval"
         return result
-    except Exception:
-        log.exception("front-door gate failed")
+    except Exception as e:
+        if isinstance(e, valio.ValioBusyError):
+            log.warning("Valio quote rate limited")
+        else:
+            log.exception("front-door gate failed")
         now = kwargs.get("now") or datetime.now(timezone.utc)
         res = gate.engine_error(lines, oid, now)
         res.mandate_version = mandates.version(mandate)
         await _audit(audit["actor"], oid, audit["buyer_id"], requested_date.isoformat(), res.lines, mandate, res,
                      now=now, action=audit["action"], status=audit["status"])
-        raise HTTPException(503, detail="Valio availability check failed; nothing was ordered. Retry shortly.")
+        detail = valio.VALIO_BUSY_MESSAGE if isinstance(e, valio.ValioBusyError) else \
+            "Valio availability check failed; nothing was ordered. Retry shortly."
+        raise HTTPException(503, detail=detail)
 
 
 def _response(order_id: str | None, status: str, body: dict, audit_id: str) -> dict:

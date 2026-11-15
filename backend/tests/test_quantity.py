@@ -35,7 +35,15 @@ def test_kilograms_by_net_weight_and_by_kg_base_unit():
     r = resolve(MILK_1L, 41, "kg")                     # 1,025 g per carton → exactly 40
     assert (r["quantity"], r["confidence"], r["rounded_up"]) == (40, "high", False)
     r = resolve(product(sales_unit="KG", base_unit="KG", units={"KG": 1.0}, net_weight=None, volume=None), 7.25, "kg")
-    assert (r["quantity"], r["sales_unit"], r["rounded_up"]) == (7.25, "KG", False)  # KG stays continuous at lot 0.01
+    assert (r["quantity"], r["sales_unit"], r["rounded_up"]) == (8, "KG", True)
+
+
+def test_allowed_lot_size_001_means_whole_kg_sales_units():
+    potatoes = product(id="460578", name_en="Potatoes", sales_unit="KG", base_unit="KG", lot_size=0.01,
+                       units={"KG": 1.0}, volume=None, net_weight=None)
+    r = resolve(potatoes, 2.5, "kg")
+    assert (r["quantity"], r["delivered"], r["rounded_up"]) == (3, 3, True)
+    assert "whole sales unit" in r["explanation"]
 
 
 def test_count_in_pieces_and_in_product_unit_codes():

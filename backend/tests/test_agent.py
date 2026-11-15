@@ -153,11 +153,12 @@ def test_gemini_down_uses_fallback_parser_and_search_order(shop1, monkeypatch):
     assert sum(ln["chosen"] for ln in body["lines"]) == 1
 
 
-def test_trap_cutoff_passed_and_terminal_asks_human_without_ordering(shop1, monkeypatch):
+def test_trap_cutoff_still_holds_terminal_line_but_unknown_stock_does_not_add_an_ask(shop1, monkeypatch):
     gemini(monkeypatch, ITEM, ranked=["463038"])  # Terminal: closingTime already passed, stock 999999 = unknown
     body = run()
     assert body["order"] is None and body["decision"]["outcome"] == "ASK_HUMAN"
-    assert {"CUTOFF_PASSED", "QTY_UNKNOWN"} <= set(codes(body))
+    assert {"CUTOFF_PASSED", "LINE_OVER_CAP"} <= set(codes(body))
+    assert "Valio doesn't report stock for this product; it can still be ordered." in body["lines"][0]["why"]
     assert body["lines"][0]["chosen"] is False and body["audit_id"]
     assert body["decision"]["alternatives"]  # orderable substitutes, found and re-quoted by the door's finder
     [entry] = audit()
@@ -187,6 +188,18 @@ def test_valio_down_is_a_decision_not_a_500(shop1, monkeypatch):
     monkeypatch.setattr(valio, "get_quotes", boom)
     body = run()
     assert body["order"] is None and codes(body) == ["ENGINE_ERROR"]
+
+
+def test_valio_busy_is_calm_and_never_orders(shop1, monkeypatch):
+    gemini(monkeypatch, ITEM, ranked=["463335"])
+
+    async def busy(*a, **k):
+        raise valio.ValioBusyError(valio.VALIO_BUSY_MESSAGE)
+
+    monkeypatch.setattr(valio, "get_quotes", busy)
+    body = run()
+    assert body["order"] is None and orders._store() == {}
+    assert body["decision"]["reasons"][0]["message"] == valio.VALIO_BUSY_MESSAGE
 
 
 def test_fallback_parse():
