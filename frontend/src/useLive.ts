@@ -3,7 +3,6 @@ import { errorText } from './format'
 import { openInterviewLive, type InterviewPreview, type KitchenLiveEvent } from './kitchenEditApi'
 import { takeLive } from './liveWarm'
 import { shouldSendMicChunk } from './liveAudio'
-import { isSessionLimitMessage, SESSION_END_MESSAGE } from './talkMessages'
 import type { AskResponse, LiveEvent, LiveSocket } from './types'
 
 // The voice conversation (WebSocket /api/live), as a hook: the conversation screen shows its words in the thread and
@@ -17,8 +16,6 @@ export type LiveHandlers = {
   onResult: (r: AskResponse) => void
   onInterviewPreview?: (preview: InterviewPreview) => void
   onError: (message: string) => void
-  onWarning?: (message: string) => void
-  onSessionEnded?: (message: string) => void
 }
 
 const WORKLET = `
@@ -82,8 +79,6 @@ export function useLive(
     let ended = false
     let nextAt = 0
     let thinking = false
-    let warningShown = false
-    let sessionEnded = false
     let playbackLevel = 0
     let echoMutedUntil = 0
     const playing: AudioBufferSourceNode[] = []
@@ -147,22 +142,11 @@ export function useLive(
         thinking = e.status === 'running'
         settle()
       } else if (e.type === 'result') h.current.onResult(e.payload)
-      else if (e.type === 'warning') {
-        if (warningShown) return
-        warningShown = true
-        h.current.onWarning?.(e.message)
-        if (!mutedRef.current && typeof window !== 'undefined' && 'speechSynthesis' in window) {
-          window.speechSynthesis.speak(new SpeechSynthesisUtterance(e.message))
-        }
-      }
       else if (e.type === 'turn_complete') {
         thinking = false
         settle()
       } else if (e.type === 'error') {
-        if (isSessionLimitMessage(e.message)) {
-          sessionEnded = true
-          h.current.onSessionEnded?.(SESSION_END_MESSAGE)
-        } else h.current.onError(e.message)
+        h.current.onError(e.message)
         setState('error')
       }
     }
@@ -171,8 +155,8 @@ export function useLive(
       try {
         if (ctx.state === 'suspended') await ctx.resume()
         const socket = mode === 'interview'
-          ? await openInterviewLive({ onEvent, onClose: () => !ended && !sessionEnded && (h.current.onError(m.current.closed), setState('error')) })
-          : await takeLive({ onEvent: onEvent as (event: LiveEvent) => void, onClose: () => !ended && !sessionEnded && (h.current.onError(m.current.closed), setState('error')) })
+          ? await openInterviewLive({ onEvent, onClose: () => !ended && (h.current.onError(m.current.closed), setState('error')) })
+          : await takeLive({ onEvent: onEvent as (event: LiveEvent) => void, onClose: () => !ended && (h.current.onError(m.current.closed), setState('error')) })
         if (ended) return socket.close() // stopped while connecting
         socketRef.current = socket
         const stream = await mic

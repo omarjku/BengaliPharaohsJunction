@@ -259,25 +259,15 @@ def check_line(pid: str, qty: float | None, q: dict | None, requested: date, m: 
                          required_claim=claim))
 
     al = cat.get("allergens") or {}
-    data_missing = cat.get("allergen_data") == "missing" or not any(al.get(key) for key in ("contains", "may_contain", "free_from", "undeclared"))
-    contains = set(al.get("contains") or [])
-    may_contain = set(al.get("may_contain") or [])
-    free_from = set(al.get("free_from") or [])
-    undeclared = set(al.get("undeclared") or [])
-    if data_missing:
-        undeclared |= set(catalogue.ALLERGEN_NAMES)
-    inferred = set(al.get("inferred") or [])
+    contains = al.get("contains") or []
+    may_contain = al.get("may_contain") or []
+    free_from = al.get("free_from") or []
+    undeclared = al.get("undeclared") or []
     for code in sorted(excluded):
         word = _name_says(cat, code) if code not in contains else None
         if code in contains:
             rs.append(_r(C.ALLERGEN_CONTAINS, DECLINE, f"{name} contains {catalogue.ALLERGEN_NAMES.get(code, code)}, "
                          "which your mandate excludes.", pid, "Pick an alternative without it.", allergen=code))
-        elif data_missing and code in inferred:
-            rs.append(_unknown(m.uncertainty_policy, C.ALLERGEN_DATA_MISSING, f"{name} appears to contain "
-                               f"{catalogue.ALLERGEN_NAMES.get(code, code)} from its name, but Valio lists no "
-                               "allergen data, so your rule can't be verified.", pid,
-                               "Check the label, or pick a product with allergen data.", allergen=code,
-                               source="product_name", inferred=True))
         elif word:  # allergen data doesn't list it, but the name does: refuse, no signature can override that
             rs.append(_r(C.ALLERGEN_CONTAINS, DECLINE, f"Name says {word}; your rules exclude "
                          f"{catalogue.ALLERGEN_NAMES.get(code, code)} ({name}).", pid,
@@ -368,10 +358,8 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
             rs.append(_r(C.DATA_MISSING, ASK, f"{cat.get('name_en') or c} is not known to be in the same category.", c,
                          "Not offered as a substitute.", category=cat.get("category")))
         al = cat.get("allergens") or {}
-        declared = set(al.get("contains") or []) | set(al.get("may_contain") or [])  # name guesses never count as a declaration
-        missing = cat.get("allergen_data") == "missing" or not (declared or al.get("free_from"))
-        unknown = [a for a in sorted(excluded) if missing or a in (al.get("undeclared") or []) or
-                   (not declared and a not in (al.get("free_from") or []))]
+        unknown = [a for a in sorted(excluded) if a in (al.get("undeclared") or []) or
+                   (not (al.get("contains") or al.get("may_contain")) and a not in (al.get("free_from") or []))]
         if unknown:  # a substitute must be KNOWN safe, whatever the uncertainty policy says about the order itself
             rs.append(_r(C.ALLERGEN_DATA_MISSING, ASK, f"{cat.get('name_en') or c} has no allergen declaration covering "
                          f"{', '.join(unknown)}.", c, "Not offered as a substitute.", allergens=", ".join(unknown)))
@@ -453,9 +441,8 @@ def _differs(old: dict, cat: dict) -> list[str]:
     """What the candidate is that the original isn't, in words for the chef: allergens it ADDS (any of the 15
     named ones, excluded by the mandate or not: QA round 2 N4, e.g. Nugatti for peanut butter), then nutrition
     claims / organic it lacks. Any entry demotes a substitute: never "best", never a split fill."""
-    candidate_allergens = set((cat.get("allergens") or {}).get("contains") or []) | set((cat.get("allergens") or {}).get("inferred") or [])
-    old_allergens = set((old.get("allergens") or {}).get("contains") or []) | set((old.get("allergens") or {}).get("inferred") or [])
-    added = sorted(candidate_allergens & catalogue.ALLERGEN_NAMES.keys() - old_allergens)
+    added = sorted(set((cat.get("allergens") or {}).get("contains") or []) & catalogue.ALLERGEN_NAMES.keys()
+                   - set((old.get("allergens") or {}).get("contains") or []))
     out = ["also contains " + ", ".join(catalogue.ALLERGEN_NAMES[a] for a in added)] if added else []
     lost = sorted((set(old.get("claims") or []) & NUTRITION_CLAIMS) - set(cat.get("claims") or []))
     out += [f"not {c}" for c in lost]

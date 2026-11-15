@@ -26,15 +26,14 @@ from zoneinfo import ZoneInfo
 import websockets
 from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
+from trade_contracts import ReasonCode as C
+
 from . import ask, auth, chat_agent, config, conversation, httpsig, kitchen, mandates, orders, profile, ratelimit
 from . import interview
 from .voice import LIVE_URL
 
 connect = websockets.connect  # tests replace this with a fake Live socket
 SESSION_S = 300  # one conversation at most 5 minutes
-WARNING_S = 30  # warn the chef about the session limit before it closes
-SESSION_WARNING_MESSAGE = "Talk ends in about 30 seconds. Finish your sentence; your order cards will stay on screen."
-SESSION_END_MESSAGE = "Talk ended after 5 minutes - tap Talk to continue; your order cards are kept"
 WARM_IDLE_S = 60  # an authenticated pre-warm that never receives chef input is disposable
 AUTH_S = 10
 MAX_MSG = 64_000  # one client message (100 ms of 16 kHz PCM16 is ~4.3 KB in base64)
@@ -79,17 +78,12 @@ colleague. The chef speaks English or Finnish; understand and answer in whicheve
   do not call tools.
 - Use the supplied quoted kitchen data and its source labels. Only facts labelled "simulated demo history" are simulated;
   facts labelled "you told me" or "from your orders" are real kitchen facts.
-- Held orders are the cards in the conversation with an Approve button; past orders are in the History tab. If
-  current_order reports confirmed orders, give only the short confirmed count and say "see History"; never list their
-  lines as the current cart.
 - Keep every answer to one or two sentences. If a tool returns a question, ask the chef exactly that, then use the
   same Live conversation and the relevant shared tool for the answer.
 - If a tool result contains `stop_tools`, speak its `say` or `question` and make no further tool call for that turn.
 - Voice orders are always held for the chef's on-screen approval. A spoken "yes" is never approval: never say a voice
   order is confirmed, placed, or approved; say it remains held for the chef's on-screen approval. Never approve
   anything yourself.
-- For a held voice order, say exactly: "Tap Approve on the order card on screen." Then say how many order cards are
-  waiting.
 - If the chef asks to cancel an order by voice, do not call a tool; say exactly: "tap Cancel on the order card".
 - You can't approve orders: if an order needs approval, say the chef approves it on screen."""
 
@@ -137,11 +131,10 @@ async def ask_agent(buyer_id: str, args: dict) -> tuple[dict, dict | None]:
         return {"error": str(exc.detail)}, None
     body = jsonable_encoder(body)
     order = body.get("order") or {}
-    held = order.get("status") == "pending_approval"
-    reply = body.get("reply") or body.get("speak") or ""
-    # keep the reason (partial stock, limit, allergen) and then say exactly where to tap
-    say = (" ".join(part for part in (reply.strip(), _approval_message(_waiting_card_count(buyer_id))) if part)
-           if held else reply)
+    held = order.get("status") == "pending_approval" and any(
+        reason.get("code") == C.ASSUMPTION_CONFIRM.value for reason in (body.get("decision") or {}).get("reasons", []))
+    say = ("Held for the chef's tap. Waiting for your approval; please approve it on screen."
+           if held else body.get("reply") or body.get("speak"))
     short = {"say": say, "question": body.get("question"), "conversation_id": body.get("conversation_id"),
              "order_status": order.get("status"), "total": _eur(order.get("total_cents") or body.get("cart_total_cents"))}
     return {key: value for key, value in short.items() if value is not None}, body
@@ -149,22 +142,6 @@ async def ask_agent(buyer_id: str, args: dict) -> tuple[dict, dict | None]:
 
 def _eur(cents) -> str | None:
     return None if cents is None else f"{cents / 100:.2f} EUR"
-
-
-def _waiting_card_count(buyer_id: str) -> int:
-    try:
-        snapshot = conversation.current_order(buyer_id)
-        count = snapshot.get("waiting_count")
-        if not isinstance(count, int):
-            count = len(snapshot.get("orders") or [])
-        return max(1, count)
-    except Exception:  # noqa: BLE001 - the order card is still actionable if the count read fails
-        return 1
-
-
-def _approval_message(count: int) -> str:
-    return f"Tap Approve on the order card on screen. {count} card{'s' if count != 1 else ''} " \
-        f"{'are' if count != 1 else 'is'} waiting."
 
 
 async def kitchen_context(buyer_id: str) -> dict:
@@ -266,21 +243,7 @@ async def _cancel_tasks(tasks) -> None:
         await asyncio.sleep(0)
 
 
-async def _wait_for_session_limit(ws: WebSocket, tasks: list[asyncio.Task]) -> tuple[set, set, bool]:
-    """Wait for normal completion, warning once before the limit, then report whether the limit was reached."""
-    if SESSION_S > WARNING_S:
-        done, pending = await asyncio.wait(tasks, timeout=SESSION_S - WARNING_S,
-                                           return_when=asyncio.FIRST_COMPLETED)
-        if done:
-            return done, pending, False
-        await ws.send_json({"type": "warning", "message": SESSION_WARNING_MESSAGE})
-        done, pending = await asyncio.wait(tasks, timeout=WARNING_S, return_when=asyncio.FIRST_COMPLETED)
-    else:
-        done, pending = await asyncio.wait(tasks, timeout=SESSION_S, return_when=asyncio.FIRST_COMPLETED)
-    return done, pending, not done
-
-
-def _compact_tool_result(result: dict, buyer_id: str | None = None) -> dict:
+def _compact_tool_result(result: dict) -> dict:
     if not isinstance(result, dict) or "card" not in result:
         return result
     card = result.get("card") or {}
@@ -289,7 +252,7 @@ def _compact_tool_result(result: dict, buyer_id: str | None = None) -> dict:
     compact = {key: result[key] for key in keys if result.get(key) not in (None, [], "")}
     order_status = (card.get("order") or {}).get("status")
     if order_status == "pending_approval":
-        compact["say"] = _approval_message(_waiting_card_count(buyer_id) if buyer_id else 1)
+        compact["say"] = "Held for the chef's on-screen approval."
     elif order_status == "confirmed":
         compact["say"] = "The order is confirmed."
     return compact
@@ -351,7 +314,7 @@ async def _handle_live_tool_call(ws: WebSocket, live, call: dict, buyer_id: str,
                     res = await asyncio.shield(job)
                 finally:
                     chat_agent._TURN.reset(token)
-                out = _compact_tool_result(res, buyer_id)
+                out = _compact_tool_result(res)
                 body = res.get("card") if isinstance(res, dict) else None
         else:
             out = {"error": "unknown tool"}
@@ -522,14 +485,15 @@ async def session(ws: WebSocket) -> None:
                     await _close(ws, slot.close_code or 1000, None)
                 elif first_message in done and slot.real:
                     await _cancel_tasks([idle, first_message, dropped])
-                    done, pending, timed_out = await _wait_for_session_limit(ws, tasks)
+                    done, pending = await asyncio.wait(tasks, timeout=SESSION_S,
+                                                       return_when=asyncio.FIRST_COMPLETED)
                     await _cancel_tasks(pending)
                     for task in done:
                         if not task.cancelled() and (error := task.exception()) and not isinstance(
                                 error, (WebSocketDisconnect, websockets.ConnectionClosed)):
                             raise error
                     if slot.close_code is None:
-                        await _close(ws, 1000, SESSION_END_MESSAGE if timed_out else None)
+                        await _close(ws, 1000, None if done else "The conversation reached its 5-minute limit.")
                 elif idle in done or not done:
                     slot.closed = True
                     slot.close_code = 1000
@@ -545,13 +509,13 @@ async def session(ws: WebSocket) -> None:
                     if slot.close_code is None:
                         await _close(ws, 1000, None)
             else:
-                done, pending, timed_out = await _wait_for_session_limit(ws, tasks)
+                done, pending = await asyncio.wait(tasks, timeout=SESSION_S, return_when=asyncio.FIRST_COMPLETED)
                 await _cancel_tasks(pending)
                 for task in done:
                     if not task.cancelled() and (error := task.exception()) and not isinstance(
                             error, (WebSocketDisconnect, websockets.ConnectionClosed)):
                         raise error
-                await _close(ws, 1000, SESSION_END_MESSAGE if timed_out else None)
+                await _close(ws, 1000, None if done else "The conversation reached its 5-minute limit.")
     except (WebSocketDisconnect, websockets.ConnectionClosed):
         pass
     except Exception as e:  # noqa: BLE001 - details stay in the log; the client gets a plain sentence
