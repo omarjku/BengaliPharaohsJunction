@@ -99,7 +99,12 @@ export type QuantityResolution = {
 }
 
 // Room 1: static facts about the product, shown when present.
-export type LineFacts = { delivery_reliability: number | null; carbon_kg_per_kg: number | null; origin: string | null }
+export type LineFacts = {
+  delivery_reliability: number | null
+  carbon_kg_per_kg: number | null
+  origin: string | null
+  labels?: string[]
+}
 
 export type Line = {
   product: Product
@@ -116,6 +121,7 @@ export type Line = {
   confidence?: number | null // Gemini Decisions API: P(this product is what the buyer asked for)
   confidence_reason?: string | null
   facts?: LineFacts
+  deposit?: string | null
   item?: number // index into the request's items (menu: into ingredients)
   dishes?: string[] // menu runs: the dishes this line is for
 }
@@ -152,6 +158,7 @@ export type OrderLine = {
   unit: string | null
   unit_price_cents: number | null
   line_total_cents: number | null
+  deposit?: string | null
 }
 
 // POST /api/orders and /api/orders/{id}/approve|reject.

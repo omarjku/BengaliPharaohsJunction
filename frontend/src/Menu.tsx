@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { getKeys, MOCK, placeOrder, planMenu } from './api'
-import { tidyName } from './copy'
+import { CONFIDENT_AT, tidyName } from './copy'
 import { errorText } from './format'
 import { useCopy } from './i18n'
 import { RunResult } from './RunResult'
 import type { Line, MenuRun, OrderResponse, PortionOverride } from './types'
 import './Menu.css'
+import { Cart, type CartLine } from './Cart'
+import { countryFlag, formatCartPack, formatSustainabilityLabel } from './cartFormat'
 
 type Props = {
   plan: MenuRun
@@ -17,6 +19,8 @@ type Props = {
   after?: ReactNode // shown right under the answer, before the cart
   have?: string[] // what the kitchen has for this order only (a pantry photo): sent with every re-plan
   onReplanned?: (plan: MenuRun) => void // the cart changed: the thread's line above the card is rewritten
+  onCartChange?: (order: OrderResponse) => void
+  onCartSummaryChange?: (summary: { auditId: string; items: number; totalCents: number }) => void
   menuText?: string // the chef's menu as asked: with it, portions can be changed and the cart re-planned
 }
 const UNITS = ['L', 'dl', 'cl', 'ml', 'kg', 'g', 'pcs'] as const
@@ -25,7 +29,7 @@ const productName = (l: Line) => tidyName(l.product.name_en ?? l.product.name_fi
 const orderable = (l: Line) => l.quote != null && l.quote.orderable && l.quantity?.quantity != null && l.line_total_cents != null
 
 // A menu became a proposed cart: the chef checks the portions, then orders the cart as one order.
-export function MenuResult({ plan: proposed, covers, requestedDate, onAction, onBusy, onAnnounce, after, menuText, have, onReplanned }: Props) {
+export function MenuResult({ plan: proposed, covers, requestedDate, onAction, onBusy, onAnnounce, after, menuText, have, onReplanned, onCartChange, onCartSummaryChange }: Props) {
   // The plan on screen: the proposal, or the re-plan after the chef changed portions.
   const [plan, setPlan] = useState(proposed)
   const [portions, setPortions] = useState<Record<string, string>>({}) // "dish|ingredient" -> the chef's amount per portion
@@ -126,26 +130,57 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
       onBusy(false)
     }
   }
-  const heading = useRef<HTMLHeadingElement>(null)
-  // The order button comes after the cart, and on a phone it floats only once the total has been seen.
-  const totalRef = useRef<HTMLDivElement>(null)
-  const [totalSeen, setTotalSeen] = useState(false)
-  useEffect(() => {
-    const el = totalRef.current
-    if (!el || totalSeen) return
-    const io = new IntersectionObserver(([e]) => e.isIntersecting && setTotalSeen(true), { threshold: 1 })
-    io.observe(el)
-    return () => io.disconnect()
-  })
   // The decision's reasons about a product in the cart (not the generic 'amounts are estimates' one).
   const concerns = (l: Line) =>
     plan.decision.reasons.filter((r) => r.product_id === l.product.id && r.severity !== 'INFO' && r.code !== 'MENU_ASSUMPTIONS')
   const forWhom = covers ? t.forGuests(c.count(covers)) : t.forMenu
+  const confidenceThreshold = plan.confidence_threshold ?? CONFIDENT_AT
+  const selectedLines = new Map<string, Line>()
+  for (const line of plan.lines) {
+    if (orderLines.some((orderLine) => orderLine.product_id === line.product.id) && !selectedLines.has(line.product.id)) selectedLines.set(line.product.id, line)
+  }
+  const cartLines: CartLine[] = [...selectedLines.values()].map((line) => {
+    const reliability = line.facts?.delivery_reliability ?? line.product.delivery_reliability
+    const carbon = line.facts?.carbon_kg_per_kg ?? line.product.carbon_kg_per_kg
+    const pack = formatCartPack(line.quantity, undefined, c.count)
+    const facts: CartLine['facts'] = []
+    if (reliability != null) facts.push({ label: c.UI.result.onTimeShort(Math.round(reliability * 100)), tone: reliability < 0.9 ? 'warn' : undefined })
+    if (carbon != null) facts.push({ label: c.UI.result.co2(c.count(carbon)).replace(/\.$/, '') })
+    if (line.facts?.origin) facts.push({ label: `${countryFlag(line.facts.origin)} ${c.country(line.facts.origin)}`.trim() })
+    for (const label of (line.facts?.labels ?? line.product.claims).slice(0, 3)) facts.push({ label: formatSustainabilityLabel(label) })
+    if (line.deposit) facts.push({ label: c.UI.result.deposit })
+    const availability = !line.quote
+      ? c.UI.result.notQuoted
+      : line.quote.flags.filter((flag) => flag !== 'quantity_unknown').length
+        ? line.quote.flags.filter((flag) => flag !== 'quantity_unknown').map(c.flag).join('. ')
+        : line.quote.available_date
+          ? c.UI.result.arrivesOn(c.day(line.quote.available_date))
+          : line.quote.available_amount != null
+            ? c.stock(line.quote.available_amount)
+            : c.UI.result.stockUnknown
+    return {
+      id: line.product.id,
+      name: productName(line),
+      pack,
+      unitPrice: line.quote?.price != null ? c.price(line.quote.price) : '—',
+      total: line.line_total_cents != null ? c.money(line.line_total_cents) : '—',
+      facts,
+      confidence: line.confidence != null && (line.confidence < confidenceThreshold || line.check) ? c.UI.result.check(c.pct(line.confidence)) : null,
+      why: [
+        { label: c.UI.result.cmp.match, value: line.confidence != null ? c.pct(line.confidence) : line.usual ? c.UI.result.usual : line.chosen ? c.UI.result.tagBest : c.UI.result.notReported },
+        { label: c.UI.result.colAmount, value: line.quantity ? `${c.count(line.quantity.requested.amount)} ${line.quantity.requested.unit} = ${pack}` : pack },
+        { label: c.UI.result.cmp.stock, value: availability },
+      ],
+    }
+  })
 
   useEffect(() => {
     onAnnounce(t.announce(forWhom, c.money(plan.cart_total_cents)))
-    heading.current?.focus()
   }, [plan, forWhom, onAnnounce, t, c])
+
+  useEffect(() => {
+    onCartSummaryChange?.({ auditId: plan.audit_id, items: cartLines.length, totalCents: total })
+  }, [onCartSummaryChange, plan.audit_id, cartLines.length, total])
 
   async function orderCart() {
     if (!MOCK && !getKeys().agentKey) return setError(c.UI.result.keysFirst)
@@ -153,7 +188,9 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
     onBusy(true)
     setError(null)
     try {
-      setOrdered(await placeOrder({ requested_date: planFor.date, lines: orderLines })) // as proposed, with the chef's picks
+      const next = await placeOrder({ requested_date: planFor.date, lines: orderLines })
+      setOrdered(next)
+      onCartChange?.(next)
       onAction()
     } catch (err) {
       setError(errorText(err))
@@ -186,26 +223,40 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
           onAction={onAction}
           onBusy={onBusy}
           onAnnounce={onAnnounce}
+          onCartChange={onCartChange}
         />
       )}
 
       {!ordered && (
         <>
-          <section className="answer" aria-label={t.aria}>
-            <p className="status neutral">{c.UI.status.ready}</p>
-            <h2 ref={heading} tabIndex={-1} className="answer-text">
-              {t.cart(forWhom, c.money(total))}
-            </h2>
-            {plan.understood?.interpretation && <p className="quiet small">{plan.understood.interpretation}</p>}
-            {plan.changes?.map((change) => (
-              <p key={`${change.item}-${change.from}-${change.to}`} className="quiet small">
-                {c.UI.result.changed(change.from, change.to)}
-              </p>
-            ))}
-            <p className="answer-sub">
-              {t.sub(c.day(planFor.date))}
-            </p>
-          </section>
+          <Cart
+            id={`cart-${plan.audit_id}`}
+            status={c.UI.result.proposal}
+            tone="neutral"
+            delivery={c.day(planFor.date)}
+            lines={cartLines}
+            total={c.money(total)}
+            autoScroll
+            ariaLabel={t.aria}
+            footer={
+              changed.length > 0 || pendingBack > 0 ? (
+                <div className="decide">
+                  <button type="button" className="btn" onClick={() => void replan()} disabled={replanning}>
+                    {replanning ? t.updating : t.update(changed.length + pendingBack)}
+                  </button>
+                  <button type="button" className="btn plain" onClick={() => (setPortions({}), setSpares({}), setBack(new Set()))} disabled={replanning}>
+                    {t.undoPortions}
+                  </button>
+                </div>
+              ) : orderLines.length > 0 ? (
+                <div className="decide">
+                  <button type="button" className="btn" onClick={orderCart} disabled={ordering}>
+                    {ordering ? c.UI.result.ordering : t.orderCart(c.money(total))}
+                  </button>
+                </div>
+              ) : null
+            }
+          />
 
           {after}
           <section className="instead mt-step" aria-labelledby="menu-step1">
@@ -261,20 +312,11 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
                 </article>
               ))}
             </div>
-            {(changed.length > 0 || pendingBack > 0) && (
-              <div className="actions mt-replan">
-                <button type="button" className="btn" onClick={() => void replan()} disabled={replanning}>
-                  {replanning ? t.updating : t.update(changed.length + pendingBack)}
-                </button>
-                <button type="button" className="btn plain" onClick={() => (setPortions({}), setSpares({}), setBack(new Set()))} disabled={replanning}>
-                  {t.undoPortions}
-                </button>
-              </div>
-            )}
           </section>
 
-          <section className="instead mt-step" aria-labelledby="menu-cart">
-            <StepHead n={3} id="menu-cart" title={t.theCart} sub={t.step3Sub(c.money(total))} />
+          <section className="instead mt-step" aria-label={t.feedTabs}>
+            <details className="menu-cart-review">
+              <summary>{t.feedTabs}</summary>
             {plan.cart_coverage && (
               <p className="mt-coverage small">
                 {t.coverage(c.money(plan.cart_total_cents), plan.cart_coverage.in_cart, plan.cart_coverage.ingredients, plan.cart_coverage.to_check, c.money(plan.cart_coverage.check_total_cents), plan.cart_coverage.have, plan.cart_coverage.not_found)}
@@ -363,13 +405,12 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
                         {l.quantity?.quantity != null ? c.amountOf(l.quantity.quantity, l.quantity.sales_unit) : t.amountUnclear}
                       </span>
                       <span className="r">{l.line_total_cents !== null ? c.money(l.line_total_cents) : '—'}</span>
-                      {(l.usual || l.why) && <span className="quiet small concern">{l.usual ? c.UI.result.usual : c.humanize(l.why)}</span>}
+                      {l.usual && <span className="quiet small concern">{c.UI.result.usual}</span>}
                       {concerns(l).map((r, k) => (
                         <span key={k} className="option-why warn concern">
                           {c.headline({ ...r, message: c.humanize(r.message) }, proposed.confidence_threshold)}
                         </span>
                       ))}
-                      {l.usual && <span className="quiet small concern">{c.UI.result.usual}</span>}
                       {l.check && !swap[i] && (
                         <span className="concern">
                           <span className="option-why warn">{added.has(l.product.id) ? c.UI.result.added : c.UI.result.checkThis}</span>{' '}
@@ -408,28 +449,7 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
             })}
               </div>
             </div>
-            <div className="split-total" ref={totalRef}>
-              <span>
-                <strong className="num">{c.money(total)}</strong> <span className="quiet">{c.UI.result.exclVat}</span>
-              </span>
-            </div>
-            {(changed.length > 0 || pendingBack > 0) && (
-              <div className="actions mt-replan">
-                <button type="button" className="btn" onClick={() => void replan()} disabled={replanning}>
-                  {replanning ? t.updating : t.update(changed.length + pendingBack)}
-                </button>
-                <button type="button" className="btn plain" onClick={() => (setPortions({}), setSpares({}), setBack(new Set()))} disabled={replanning}>
-                  {t.undoPortions}
-                </button>
-              </div>
-            )}
-            {orderLines.length > 0 && changed.length === 0 && pendingBack === 0 && (
-              <div className={`decide${totalSeen ? ' floating' : ''}`}>
-                <button type="button" className="btn" onClick={orderCart} disabled={ordering}>
-                  {ordering ? c.UI.result.ordering : t.orderCart(c.money(total))}
-                </button>
-              </div>
-            )}
+            </details>
           </section>
 
         </>
@@ -438,7 +458,7 @@ export function MenuResult({ plan: proposed, covers, requestedDate, onAction, on
   )
 }
 
-// A numbered step header (the menu really is a sequence: the menu, its portions, the cart).
+// A numbered step header (the menu itself is a sequence: dishes, then portions).
 function StepHead({ n, id, title, sub }: { n: number; id: string; title: string; sub: string }) {
   return (
     <div className="mt-step-head">

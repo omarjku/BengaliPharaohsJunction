@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { decideOrder, getKeys, getOrder, MOCK, placeOrder, rememberChoice } from './api'
 import { CONFIDENT_AT, tidyName } from './copy'
 import { errorText, type Tone } from './format'
@@ -6,6 +6,8 @@ import { useCopy, type Copy } from './i18n'
 import type { AgentRun, AlternativeOrder, Line, OrderInput, OrderResponse, Substitute } from './types'
 import './RunResult.css'
 import { Compare } from './Compare'
+import { Cart, type CartLine } from './Cart'
+import { countryFlag, formatCartPack, formatSustainabilityLabel } from './cartFormat'
 
 type Props = {
   run: AgentRun
@@ -17,6 +19,7 @@ type Props = {
   onHistory?: () => void // "See it in History", from the front-door line
   onAskFor?: (text: string) => void // a substitute in another pack size: ask the agent for it (it works out the amount)
   onPlain?: (need: string) => void // "Not gluten-free this time": ask again without the profile's dietary default
+  onCartChange?: (order: OrderResponse) => void
   after?: ReactNode // shown right under the answer (e.g. "Need it sooner?"), before the details
 }
 type Busy = 'approve' | 'reject' | 'place' | null
@@ -24,32 +27,11 @@ type Pick = { label: string; go: () => void }
 
 const productName = (l: Line) => tidyName(l.product.name_en ?? l.product.name_fi ?? l.product.id)
 const clock = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Helsinki' })
-const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Helsinki' }).format(new Date())
-
-// "Arrives Monday, in 2 days."
-function arrives(ymd: string, c: Copy): string {
-  const days = Math.round((Date.parse(`${ymd}T00:00:00Z`) - Date.parse(`${today()}T00:00:00Z`)) / 86_400_000)
-  return c.UI.result.arrives(days, c.weekday(ymd), c.day(ymd))
-}
-
-// Shown once the element has been on screen: the phone's action bar waits until the reasons have been seen.
-function useSeen<T extends Element>(): [RefObject<T | null>, boolean] {
-  const ref = useRef<T>(null)
-  const [seen, setSeen] = useState(false)
-  useEffect(() => {
-    const el = ref.current
-    if (!el || seen) return
-    const io = new IntersectionObserver(([e]) => e.isIntersecting && setSeen(true), { threshold: 1 })
-    io.observe(el)
-    return () => io.disconnect()
-  }, [seen])
-  return [ref, seen]
-}
 
 const orderable = (l: Line) => l.quote != null && l.quote.orderable && l.quantity?.quantity != null && l.line_total_cents != null
 const lineOrder = (l: Line) => ({ product_id: l.product.id, quantity: l.quantity!.quantity! })
 
-export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, onRetry, onHistory, onAskFor, onPlain, after }: Props) {
+export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, onRetry, onHistory, onAskFor, onPlain, onCartChange, after }: Props) {
   const [busy, setBusy] = useState<Busy>(null)
   const [placing, setPlacing] = useState<string | null>(null) // which option's button is ordering (its label says so)
   const errorRef = useRef<HTMLDivElement>(null)
@@ -66,8 +48,6 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   const [rememberId, setRememberId] = useState<string | null>(null)
   const [remembered, setRemembered] = useState<string | null>(null) // the scope, once saved
   const [rememberError, setRememberError] = useState<string | null>(null)
-  const heading = useRef<HTMLHeadingElement>(null)
-  const [reasonsRef, reasonsSeen] = useSeen<HTMLParagraphElement>()
   const c = useCopy()
   const t = c.UI.result
   const st = c.UI.status
@@ -86,18 +66,16 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
     ? order.status === 'confirmed'
       ? ['good', st.ordered]
       : order.status === 'pending_approval'
-        ? ['warn', st.yourCall]
+        ? ['warn', t.needsApproval]
         : order.status === 'rejected'
-          ? ['neutral', st.rejected]
-          : order.status === 'refused' && (split || subs.length)
-            ? ['warn', st.yourCall]
-            : order.status === 'refused'
-              ? ['bad', st.notOrdered]
-              : ['neutral', order.status]
+          ? ['bad', st.rejected]
+          : order.status === 'refused'
+            ? ['bad', st.notOrdered]
+            : ['neutral', order.status]
     : run.decision.outcome === 'DECLINE'
       ? ['bad', st.notOrdered]
       : run.decision.outcome === 'ASK_HUMAN'
-        ? ['warn', st.yourCall]
+      ? ['warn', t.needsApproval]
         : ['neutral', st.sent]
 
   const lead = decision.reasons[0] ?? null
@@ -112,28 +90,17 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
           : lead
             ? c.headline(lead, confidenceThreshold)
             : status
-  const [head, more] = splitLong(text, c)
 
   const total = order?.total_cents || chosen.reduce((a, l) => a + (l.line_total_cents ?? 0), 0)
   const buildCommit = order?.build?.commit ? order.build.commit.slice(0, 7) : 'unavailable'
   const buildSbom = order?.build?.sbom_sha256 ? order.build.sbom_sha256.slice(0, 12) : 'unavailable'
-  const what = split
-    ? null // the headline already says what the split is
-    : chosen.length === 1
-      ? chosen[0].quantity?.quantity != null
-        ? t.of(c.amountOf(chosen[0].quantity.quantity, chosen[0].quantity.sales_unit), productName(chosen[0]))
-        : productName(chosen[0])
-      : chosen.length > 1
-        ? t.products(chosen.length)
-        : null
-  const confidence = chosen.length === 1 && chosen[0].confidence != null ? chosen[0].confidence : run.decision.confidence
   const awaitingApproval = order?.status === 'pending_approval' && order.order_id !== null
   const canDecide = MOCK || Boolean(getKeys().approverKey)
+  const cartReason = order?.status === 'confirmed' ? null : text === status ? null : text
 
   useEffect(() => {
-    onAnnounce(`${status}. ${head}`)
-    heading.current?.focus() // also brings the answer into view on a phone
-  }, [status, head, result, onAnnounce])
+    onAnnounce(`${status}. ${cartReason ?? ''}`.trim())
+  }, [status, cartReason, result, onAnnounce])
 
   async function run_(kind: Busy, go: () => Promise<OrderResponse>) {
     if (kind === 'place' && !MOCK && !getKeys().agentKey) {
@@ -148,6 +115,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
     try {
       const res = await go()
       setResult(res)
+      onCartChange?.(res)
       if (kind === 'place' && picked.current && picked.current !== 'main' && picked.current !== chosen[0]?.product.id && res.status !== 'refused')
         setRememberId(picked.current)
       if (kind === 'approve' || kind === 'reject') {
@@ -195,23 +163,6 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
     .filter((r) => r.code !== 'CONFIDENCE_OK' && r.code !== 'FRONT_DOOR' && !(r.code === 'PROFILE_DEFAULT' && r.severity === 'INFO'))
   const sentToDoor = run.decision.reasons.some((r) => r.code === 'FRONT_DOOR') && order ? order.status : null
 
-  // Which rule decided, in words (from primary_reason; "within every limit" when it went through on its own).
-  const ruleKey = decision.outcome === 'AUTO' ? 'AUTO' : decision.primary_reason?.code
-  const ruleWords = ruleKey ? t.ruleWords[ruleKey] : undefined
-
-  const reasonFor = (line: Line | undefined) => line ? (line.usual ? t.usual : line.why ? c.humanize(line.why) : null) : null
-
-  // The lines as a table: the front door's (what was ordered or held) or the agent's pick.
-  const rows = order
-    ? order.lines.map((l) => ({
-        key: l.product_id, name: tidyName(l.name), reason: reasonFor(run.lines.find((line) => line.product.id === l.product_id)), qty: l.quantity != null ? c.amountOf(l.quantity, l.unit) : '—',
-        price: l.unit_price_cents != null ? c.money(l.unit_price_cents) : '—', total: l.line_total_cents != null ? c.money(l.line_total_cents) : '—',
-      }))
-    : chosen.map((l) => ({
-        key: l.product.id, name: productName(l), reason: reasonFor(l), qty: l.quantity?.quantity != null ? c.amountOf(l.quantity.quantity, l.quantity.sales_unit) : '—',
-        price: l.quote?.price != null ? c.price(l.quote.price) : '—', total: l.line_total_cents != null ? c.money(l.line_total_cents) : '—',
-      }))
-
   // "Needs your OK" with more than one deliverable option: they become cards; pick one, then approve it.
   // Labels come from the data only: Best match = the agent's pick, Cheaper = a lower total, Local = origin FI.
   const held = awaitingApproval ? (chosen[0] ?? null) : guess
@@ -223,6 +174,62 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
       held?.line_total_cents != null && l !== held && l.line_total_cents != null && l.line_total_cents < held.line_total_cents && t.tagCheaper,
       l.facts?.origin?.toUpperCase() === 'FI' && t.tagLocal,
     ].filter((x): x is string => !!x)
+  const cartLine = (line: Line | undefined, fallback: { id: string; name: string; quantity: number | null; unit: string | null; unitPrice: string; total: string; deposit?: string | null }): CartLine => {
+    const reliability = line?.facts?.delivery_reliability ?? line?.product.delivery_reliability ?? null
+    const carbon = line?.facts?.carbon_kg_per_kg ?? line?.product.carbon_kg_per_kg ?? null
+    const origin = line?.facts?.origin ?? null
+    const availability = line ? availabilityForCart(line, c) : { tone: undefined, text: t.notReported }
+    const quantityChanged = line?.quantity?.quantity != null && fallback.quantity != null && line.quantity.quantity !== fallback.quantity
+    const packQuantity = quantityChanged && line?.quantity ? { ...line.quantity, quantity: fallback.quantity } : line?.quantity
+    const pack = formatCartPack(packQuantity, { quantity: fallback.quantity, unit: fallback.unit }, c.count)
+    const quantityMath = line?.quantity && !quantityChanged
+      ? `${c.count(line.quantity.requested.amount)} ${line.quantity.requested.unit} = ${pack}`
+      : pack
+    const facts: CartLine['facts'] = []
+    if (reliability != null) facts.push({ label: t.onTimeShort(Math.round(reliability * 100)), tone: reliability < 0.9 ? 'warn' : undefined })
+    if (carbon != null) facts.push({ label: t.co2(c.count(carbon)).replace(/\.$/, '') })
+    if (origin) facts.push({ label: `${countryFlag(origin)} ${c.country(origin)}`.trim() })
+    for (const label of (line?.facts?.labels ?? line?.product.claims ?? []).slice(0, 3)) facts.push({ label: formatSustainabilityLabel(label) })
+    if (line?.deposit ?? fallback.deposit) facts.push({ label: t.deposit })
+    return {
+      id: fallback.id,
+      name: fallback.name,
+      pack,
+      unitPrice: fallback.unitPrice,
+      total: fallback.total,
+      facts,
+      confidence: line?.confidence != null && (line.confidence < confidenceThreshold || line === held) ? t.check(c.pct(line.confidence)) : null,
+      why: [
+        { label: t.cmp.match, value: line?.confidence != null ? c.pct(line.confidence) : line?.usual ? t.usual : line?.chosen ? t.tagBest : t.notReported },
+        { label: t.colAmount, value: quantityMath },
+        { label: t.cmp.stock, value: availability.text, tone: availability.tone },
+      ],
+    }
+  }
+  const cartRows = split?.lines ?? order?.lines
+  const cartLines = cartRows
+    ? cartRows.map((line) => {
+        const source = run.lines.find((candidate) => candidate.product.id === line.product_id)
+        return cartLine(source, {
+          id: line.product_id,
+          name: tidyName(line.name),
+          quantity: line.quantity,
+          unit: line.unit,
+          unitPrice: line.unit_price_cents != null ? c.money(line.unit_price_cents) : '—',
+          total: line.line_total_cents != null ? c.money(line.line_total_cents) : '—',
+          deposit: line.deposit,
+        })
+      })
+    : chosen.map((line) =>
+        cartLine(line, {
+          id: line.product.id,
+          name: productName(line),
+          quantity: line.quantity?.quantity ?? null,
+          unit: line.quantity?.sales_unit ?? line.product.sales_unit,
+          unitPrice: line.quote?.price != null ? c.price(line.quote.price) : '—',
+          total: line.line_total_cents != null ? c.money(line.line_total_cents) : '—',
+        }),
+      )
   function approveSelected(target: Line | null = sel) {
     const sel = target
     if (!sel) return
@@ -252,6 +259,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   // Kitchen loss on a direct order: one tap of spare, offered with its cost, never added silently. Before anything is
   // ordered it re-asks with the larger amount; after a confirmed order it asks for just the extra (no second full order).
   const spareTip = chosen.length === 1 ? (chosen[0].spare_suggestion ?? null) : null
+  const query = run.request.items.length === 1 ? run.request.items[0].query : null
   function addSpare() {
     if (!spareTip || !onAskFor) return
     const asked = chosen[0].quantity?.requested
@@ -289,289 +297,181 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
       chosen[0]?.line_total_cents != null && !l.chosen && l.line_total_cents != null && l.line_total_cents < chosen[0].line_total_cents && t.tagCheaper,
       l.facts?.origin?.toUpperCase() === 'FI' && t.tagLocal,
     ].filter((x): x is string => !!x)
-  const query = run.request.items.length === 1 ? run.request.items[0].query : null
-
   return (
     <>
-      <section className={`answer dc dc-${tone}`} aria-label={t.aria}>
-        <header className="dc-strip">
-          <p className={`status ${tone}`}>{status}</p>
-          <p className="dc-when num">
-            {t.delivery} {c.day(requestedDate)}
-          </p>
-        </header>
-        <div className="dc-body">
-          <h2 ref={heading} tabIndex={-1} className="answer-text num">
-            {head}
-          </h2>
-          {run.understood?.interpretation && <p className="quiet small">{run.understood.interpretation}</p>}
-          {run.changes?.map((change) => (
-            <p key={`${change.item}-${change.from}-${change.to}`} className="quiet small">
-              {t.changed(change.from, change.to)}
-            </p>
-          ))}
-          {ruleWords && <p className="dc-rule">{t.decidedBy(ruleWords)}</p>}
-          {signOff && <p className="signoff">{signOff}</p>}
-          {order?.build && (
-            <p className="quiet small">
-              {t.signedByBuild}{' '}
-              <span dir="ltr">{buildCommit} · SBOM {buildSbom}</span>
-            </p>
-          )}
-          <p className="answer-sub" ref={reasonsRef}>
-            {more && <>{more} </>}
-            {what && <>{what}. </>}
-            {total > 0 && (
-              <>
-                <strong>{c.money(split ? split.total_cents : total)}</strong> {t.exclVat}
-                {split ? t.forBoth : ''}.
-              </>
+      <Cart
+        id={`cart-${run.audit_id}`}
+        status={status}
+        tone={tone}
+        delivery={c.day(requestedDate)}
+        reason={cartReason}
+        lines={cartLines}
+        total={c.money(split ? split.total_cents : total)}
+        autoScroll
+        ariaLabel={t.aria}
+        body={
+          <>
+            {run.changes?.map((change) => (
+              <p key={`${change.item}-${change.from}-${change.to}`} className="quiet small">
+                {t.changed(change.from, change.to)}
+              </p>
+            ))}
+            {signOff && <p className="signoff">{signOff}</p>}
+            {order?.build && (
+              <p className="quiet small">
+                {t.signedByBuild} <span dir="ltr">{buildCommit} · SBOM {buildSbom}</span>
+              </p>
             )}
-            {order?.status === 'confirmed' && <> {arrives(requestedDate, c)}</>}
-            {!awaitingApproval && !split && !guess && order?.status !== 'confirmed' && order?.status !== 'rejected' && lead?.suggested_fix && (
-              <> {lead.suggested_fix}</>
+            {profileNote && (
+              <p className="quiet small">
+                {c.humanize(profileNote.message.split(': only')[0])}.{' '}
+                {onPlain && canChoose && (
+                  <button type="button" className="link accent inline" onClick={() => onPlain(need)} disabled={busy !== null}>
+                    {t.plainInstead(need)}
+                  </button>
+                )}
+              </p>
             )}
-          </p>
-          {confidence != null && (
-            <p className={`sure num${confidence < confidenceThreshold ? ' unsure' : ''}`}>
-              {c.matched(confidence, confidenceThreshold)}
-              {confidence < confidenceThreshold && chosen[0]?.confidence_reason && <span className="quiet">. {chosen[0].confidence_reason}</span>}
-            </p>
-          )}
-
-          {!split && rows.length > 0 && pickable.length < 2 && (
-            <table className="dc-table num">
-              <thead>
-                <tr>
-                  <th scope="col">{t.colProduct}</th>
-                  <th scope="col">{t.colAmount}</th>
-                  <th scope="col">{t.colPrice}</th>
-                  <th scope="col">{t.colTotal}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.key}>
-                    <th scope="row">
-                      {r.name}
-                      {r.reason && <span className="quiet small">{r.reason}</span>}
-                    </th>
-                    <td data-label={t.colAmount}>{r.qty}</td>
-                    <td data-label={t.colPrice}>{r.price}</td>
-                    <td data-label={t.colTotal}>{r.total}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-
-          {profileNote && (
-            <p className="quiet small">
-              {c.humanize(profileNote.message.split(': only')[0])}.{' '}
-              {onPlain && canChoose && (
-                <button type="button" className="link accent inline" onClick={() => onPlain(need)} disabled={busy !== null}>
-                  {t.plainInstead(need)}
-                </button>
-              )}
-            </p>
-          )}
-          {chosen.length === 1 && chosen[0].usual && <p className="quiet small">{t.usual}.</p>}
-          {spareTip && (
-            <p className="quiet small">
-              {spareTip.extra_quantity > 0 && onAskFor && order?.status !== 'pending_approval' ? (
-                <button type="button" className="btn plain accent-text" onClick={addSpare} disabled={busy !== null}>
-                  {t.addSpare(`${c.count(spareTip.extra_quantity)} ${spareTip.unit ?? ''}`.trim(), c.money(spareTip.extra_cost_cents))}
-                </button>
-              ) : null}{' '}
-              {spareTip.reason}
-            </p>
-          )}
-          {sentToDoor && (
-            <p className="quiet small">
-              {t.frontDoor(sentToDoor)}{' '}
-              {onHistory && (
-                <button type="button" className="link accent inline" onClick={onHistory}>
-                  {t.seeHistory}
-                </button>
-              )}
-            </p>
-          )}
-
-          {pickable.length >= 2 && !justDone && (
-            <fieldset className="dc-options">
-              <legend className="dc-legend">{t.pickOne}</legend>
-              {pickable.map((l) => {
-                const [, avail] = availability(l, c)
-                return (
-                  <label key={l.product.id} className={`dc-option${sel === l ? ' on' : ''}`}>
-                    <input type="radio" name={`pick-${run.audit_id}`} checked={sel === l} onChange={() => setSelected(l.product.id)} disabled={busy !== null} />
-                    <span className="dc-option-main">
-                      {tags(l).length > 0 && (
-                        <span className="dc-tags">
-                          {tags(l).map((tag) => (
-                            <span key={tag} className="dc-tag">
-                              {tag}
-                            </span>
-                          ))}
-                        </span>
-                      )}
-                      <span className="dc-option-name">{productName(l)}</span>
-                      <span className="quiet small">
-                        {l.quantity?.quantity != null && `${c.amountOf(l.quantity.quantity, l.quantity.sales_unit)} · `}
-                        {avail}
+            {spareTip && (
+              <p className="quiet small">
+                {spareTip.extra_quantity > 0 && onAskFor && order?.status !== 'pending_approval' ? (
+                  <button type="button" className="btn plain accent-text" onClick={addSpare} disabled={busy !== null}>
+                    {t.addSpare(`${c.count(spareTip.extra_quantity)} ${spareTip.unit ?? ''}`.trim(), c.money(spareTip.extra_cost_cents))}
+                  </button>
+                ) : null}{' '}
+                {spareTip.reason}
+              </p>
+            )}
+            {sentToDoor && (
+              <p className="quiet small">
+                {t.frontDoor(sentToDoor)}{' '}
+                {onHistory && (
+                  <button type="button" className="link accent inline" onClick={onHistory}>
+                    {t.seeHistory}
+                  </button>
+                )}
+              </p>
+            )}
+            {pickable.length >= 2 && !justDone && (
+              <fieldset className="dc-options">
+                <legend className="dc-legend">{t.pickOne}</legend>
+                {pickable.map((line) => {
+                  const [, avail] = availability(line, c)
+                  return (
+                    <label key={line.product.id} className={`dc-option${sel === line ? ' on' : ''}`}>
+                      <input type="radio" name={`pick-${run.audit_id}`} checked={sel === line} onChange={() => setSelected(line.product.id)} disabled={busy !== null} />
+                      <span className="dc-option-main">
+                        {tags(line).length > 0 && (
+                          <span className="dc-tags">
+                            {tags(line).map((tag) => <span key={tag} className="dc-tag">{tag}</span>)}
+                          </span>
+                        )}
+                        <span className="dc-option-name">{productName(line)}</span>
+                        <span className="quiet small">{formatCartPack(line.quantity, undefined, c.count)} · {avail}</span>
                       </span>
-                    </span>
-                    <span className="dc-option-price num">{l.line_total_cents != null ? c.money(l.line_total_cents) : '—'}</span>
-                  </label>
-                )
-              })}
-            </fieldset>
-          )}
-
-          {pickable.length >= 2 && !justDone && sel && (
-            <div className={`decide${reasonsSeen ? ' floating' : ''}`}>
-              <button type="button" className="btn" onClick={() => void approveSelected()} disabled={busy !== null || (awaitingApproval && !canDecide)}>
-                {busy === 'approve'
-                  ? t.approving
-                  : busy === 'place'
-                    ? t.ordering
-                    : awaitingApproval
-                    ? t.approveSelected(c.money(sel === held ? total : (sel.line_total_cents ?? 0)))
-                    : t.orderSelected(c.money(sel.line_total_cents ?? 0))}
-              </button>
-              {onAskFor && (
-                <button type="button" className="btn plain" aria-expanded={changing} onClick={() => setChanging((v) => !v)} disabled={busy !== null}>
-                  {t.changeQty}
-                </button>
-              )}
-              {decline && (
-                <button type="button" className="btn plain dc-decline" onClick={decline} disabled={busy !== null || (awaitingApproval && !canDecide)}>
-                  {busy === 'reject' ? t.rejecting : t.decline}
-                </button>
-              )}
-              {awaitingApproval && !canDecide && <p className="hint note">{t.needKey}</p>}
-            </div>
-          )}
-
-          {pickable.length < 2 && (awaitingApproval || justDone) && (
-            <div className={`decide${reasonsSeen ? ' floating' : ''}`}>
-              {justDone ? (
-                <button type="button" className="btn done" disabled>
-                  {t.done}
-                </button>
-              ) : (
-                <>
-                  <button type="button" className="btn" onClick={() => decide('approve')} disabled={busy !== null || !canDecide}>
-                    {busy === 'approve' ? t.approving : t.approve(c.money(total))}
-                  </button>
-                  {onAskFor && held && (
-                    <button type="button" className="btn plain" aria-expanded={changing} onClick={() => setChanging((v) => !v)} disabled={busy !== null}>
-                      {t.changeQty}
-                    </button>
-                  )}
-                  <button type="button" className="btn plain dc-decline" onClick={() => decide('reject')} disabled={busy !== null || !canDecide}>
-                    {busy === 'reject' ? t.rejecting : t.decline}
-                  </button>
-                  {!canDecide && <p className="hint note">{t.needKey}</p>}
-                </>
-              )}
-            </div>
-          )}
-          {split && (
-            <div className={`decide${reasonsSeen ? ' floating' : ''}`}>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => place(split.order_lines ?? split.lines.filter((l) => l.quantity != null).map((l) => ({ product_id: l.product_id, quantity: l.quantity! })))}
-                disabled={busy !== null}
-              >
-                {placing === 'main' ? t.ordering : t.orderBoth(split.lines.length === 2, c.money(split.total_cents))}
-              </button>
-            </div>
-          )}
-          {pickable.length < 2 && (guess || (!order && run.decision.outcome === 'ASK_HUMAN')) && (
-            <div className={`decide${reasonsSeen ? ' floating' : ''}`}>
-              {guess && (
-                <button type="button" className="btn" onClick={() => place([lineOrder(guess)])} disabled={busy !== null}>
-                  {placing === 'main' ? t.ordering : t.orderIt(c.money(guess.line_total_cents!))}
-                </button>
-              )}
-              {onAskFor && guess && (
-                <button type="button" className="btn plain" aria-expanded={changing} onClick={() => setChanging((v) => !v)} disabled={busy !== null}>
-                  {t.changeQty}
-                </button>
-              )}
-              {onRetry && (
-                <button type="button" className="btn plain" onClick={onRetry} disabled={busy !== null}>
-                  {t.notThis}
-                </button>
-              )}
-            </div>
-          )}
-
-          {comparable.length >= 2 && (
-            <div>
-              <button type="button" className="btn plain accent-text" aria-expanded={comparing} onClick={() => setComparing((v) => !v)}>
-                {t.compare(comparable.length)}
-              </button>
-            </div>
-          )}
-
-          {changing && held && onAskFor && (
-            <form className="dc-qty" onSubmit={changeQuantity}>
-              <label htmlFor={`qty-${run.audit_id}`}>{t.newAmount}</label>
-              <div className="dc-qty-row">
-                <input
-                  id={`qty-${run.audit_id}`}
-                  className="guests-input num"
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  step="any"
-                  value={amount}
-                  placeholder={asked ? String(asked.amount) : ''}
-                  onChange={(e) => setAmount(e.target.value)}
-                  autoFocus
-                />
-                {asked?.unit && <span className="quiet">{asked.unit}</span>}
-                <button type="submit" className="btn" disabled={!amount.trim()}>
-                  {t.askAgain}
+                      <span className="dc-option-price num">{line.line_total_cents != null ? c.money(line.line_total_cents) : '—'}</span>
+                    </label>
+                  )
+                })}
+              </fieldset>
+            )}
+            {comparable.length >= 2 && (
+              <div>
+                <button type="button" className="btn plain accent-text" aria-expanded={comparing} onClick={() => setComparing((v) => !v)}>
+                  {t.compare(comparable.length)}
                 </button>
               </div>
-            </form>
-          )}
-
-          {error && (
-            <div className="problem" role="alert" ref={errorRef}>
-              <strong>{c.UI.failed}</strong>
-              {error}
-            </div>
-          )}
-
-          {rememberId && !remembered && (MOCK || !!getKeys().approverKey) && (
-            <div className="dc-remember">
-              <p>{t.rememberQ(productName(run.lines.find((l) => l.product.id === rememberId) ?? chosen[0]))}</p>
-              <div className="actions">
-                <button type="button" className="btn plain accent-text" onClick={() => void remember('this_order')}>
-                  {t.rememberOrder}
+            )}
+            {changing && held && onAskFor && (
+              <form className="dc-qty" onSubmit={changeQuantity}>
+                <label htmlFor={`qty-${run.audit_id}`}>{t.newAmount}</label>
+                <div className="dc-qty-row">
+                  <input
+                    id={`qty-${run.audit_id}`}
+                    className="guests-input num"
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step="any"
+                    value={amount}
+                    placeholder={asked ? String(asked.amount) : ''}
+                    onChange={(e) => setAmount(e.target.value)}
+                    autoFocus
+                  />
+                  {asked?.unit && <span className="quiet">{asked.unit}</span>}
+                  <button type="submit" className="btn" disabled={!amount.trim()}>{t.askAgain}</button>
+                </div>
+              </form>
+            )}
+            {error && (
+              <div className="problem" role="alert" ref={errorRef}>
+                <strong>{c.UI.failed}</strong>
+                {error}
+              </div>
+            )}
+            {rememberId && !remembered && (MOCK || !!getKeys().approverKey) && (
+              <div className="dc-remember">
+                <p>{t.rememberQ(productName(run.lines.find((line) => line.product.id === rememberId) ?? chosen[0]))}</p>
+                <div className="actions">
+                  <button type="button" className="btn plain accent-text" onClick={() => void remember('this_order')}>{t.rememberOrder}</button>
+                  <button type="button" className="btn plain accent-text" onClick={() => void remember('always')}>{t.rememberAlways}</button>
+                  <button type="button" className="btn plain" onClick={() => setRememberId(null)}>{t.rememberNo}</button>
+                </div>
+                {rememberError && <p className="photo-error small">{rememberError}</p>}
+              </div>
+            )}
+            {remembered && <p className="quiet small" role="status">{t.remembered(remembered)}</p>}
+          </>
+        }
+        footer={
+          <>
+            {pickable.length >= 2 && !justDone && sel && (
+              <div className="decide">
+                <button type="button" className="btn" onClick={() => void approveSelected()} disabled={busy !== null || (awaitingApproval && !canDecide)}>
+                  {busy === 'approve'
+                    ? t.approving
+                    : busy === 'place'
+                      ? t.ordering
+                      : awaitingApproval
+                        ? t.approveSelected(c.money(sel === held ? total : (sel.line_total_cents ?? 0)))
+                        : t.orderSelected(c.money(sel.line_total_cents ?? 0))}
                 </button>
-                <button type="button" className="btn plain accent-text" onClick={() => void remember('always')}>
-                  {t.rememberAlways}
-                </button>
-                <button type="button" className="btn plain" onClick={() => setRememberId(null)}>
-                  {t.rememberNo}
+                {onAskFor && <button type="button" className="btn plain" aria-expanded={changing} onClick={() => setChanging((v) => !v)} disabled={busy !== null}>{t.changeQty}</button>}
+                {decline && <button type="button" className="btn plain dc-decline" onClick={decline} disabled={busy !== null || (awaitingApproval && !canDecide)}>{busy === 'reject' ? t.rejecting : t.decline}</button>}
+                {awaitingApproval && !canDecide && <p className="hint note">{t.needKey}</p>}
+              </div>
+            )}
+            {pickable.length < 2 && (awaitingApproval || justDone) && (
+              <div className="decide">
+                {justDone ? (
+                  <button type="button" className="btn done" disabled>{t.done}</button>
+                ) : (
+                  <>
+                    <button type="button" className="btn" onClick={() => decide('approve')} disabled={busy !== null || !canDecide}>{busy === 'approve' ? t.approving : t.approve(c.money(total))}</button>
+                    {onAskFor && held && <button type="button" className="btn plain" aria-expanded={changing} onClick={() => setChanging((v) => !v)} disabled={busy !== null}>{t.changeQty}</button>}
+                    <button type="button" className="btn plain dc-decline" onClick={() => decide('reject')} disabled={busy !== null || !canDecide}>{busy === 'reject' ? t.rejecting : t.decline}</button>
+                    {!canDecide && <p className="hint note">{t.needKey}</p>}
+                  </>
+                )}
+              </div>
+            )}
+            {split && (
+              <div className="decide">
+                <button type="button" className="btn" onClick={() => place(split.order_lines ?? split.lines.filter((line) => line.quantity != null).map((line) => ({ product_id: line.product_id, quantity: line.quantity! })))} disabled={busy !== null}>
+                  {placing === 'main' ? t.ordering : t.orderBoth(split.lines.length === 2, c.money(split.total_cents))}
                 </button>
               </div>
-              {rememberError && <p className="photo-error small">{rememberError}</p>}
-            </div>
-          )}
-          {remembered && (
-            <p className="quiet small" role="status">
-              {t.remembered(remembered)}
-            </p>
-          )}
-        </div>
-      </section>
+            )}
+            {pickable.length < 2 && (guess || (!order && run.decision.outcome === 'ASK_HUMAN')) && (
+              <div className="decide">
+                {guess && <button type="button" className="btn" onClick={() => place([lineOrder(guess)])} disabled={busy !== null}>{placing === 'main' ? t.ordering : t.orderIt(c.money(guess.line_total_cents!))}</button>}
+                {onAskFor && guess && <button type="button" className="btn plain" aria-expanded={changing} onClick={() => setChanging((v) => !v)} disabled={busy !== null}>{t.changeQty}</button>}
+                {onRetry && <button type="button" className="btn plain" onClick={onRetry} disabled={busy !== null}>{t.notThis}</button>}
+              </div>
+            )}
+          </>
+        }
+      />
 
       {comparing && comparable.length >= 2 && (
         <Compare
@@ -585,18 +485,11 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
         />
       )}
       {after}
-      {split && <SplitRows alt={split} />}
       {subs.length > 0 && (
         <Substitutes subs={subs} pick={pickSub} busy={busy !== null} placing={placing} />
       )}
 
       <div className="more">
-        {chosen.map((l) => (
-          <details key={l.product.id}>
-            <summary>{chosen.length === 1 && query ? t.whyThis(query) : t.why(productName(l))}</summary>
-            <WhyThis line={l} threshold={confidenceThreshold} />
-          </details>
-        ))}
         {otherReasons.length > 0 && (
           <details>
             <summary>{signOff ? t.neededOk : t.also(otherReasons.length)}</summary>
@@ -627,24 +520,10 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
             </ul>
           </details>
         )}
-        <details>
-          <summary>{t.understood}</summary>
-          <div className="more-body">
-            <p>{run.request.summary}</p>
-            {run.request.items.length > 1 && (
-              <ul className="quiet small">
-                {run.request.items.map((it, i) => (
-                  <li key={i}>{[it.amount, it.unit, it.query].filter((x) => x !== null).join(' ')}</li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </details>
       </div>
     </>
   )
 }
-
 // "Valio has 640. Top up with 360 organic?"
 function splitHeadline(alt: AlternativeOrder, c: Copy): string {
   const [have, rest] = alt.lines
@@ -653,7 +532,6 @@ function splitHeadline(alt: AlternativeOrder, c: Copy): string {
   const extra = b.startsWith(a) ? b.slice(a.length).replace(/^[,\s]+/, '') : b
   return c.UI.result.split(c.count(have.quantity), c.count(rest.quantity), extra)
 }
-
 function availability(line: Line, c: Copy): [string, string] {
   const t = c.UI.result
   const q = line.quote
@@ -667,41 +545,9 @@ function availability(line: Line, c: Copy): [string, string] {
   return [q.flags.includes('quantity_unknown') ? 'warn' : '', `${stock}${when ? `, ${when}` : ''}.`]
 }
 
-function facts(line: Line, c: Copy): string | null {
-  const t = c.UI.result
-  const f = line.facts
-  const rel = f ? f.delivery_reliability : line.product.delivery_reliability
-  const co2 = f ? f.carbon_kg_per_kg : line.product.carbon_kg_per_kg
-  const parts = [
-    rel != null && t.onTime(Math.round(rel * 100)),
-    f?.origin && t.from(c.country(f.origin)),
-    co2 != null && t.co2(c.count(co2)),
-  ].filter(Boolean)
-  return parts.length ? parts.join(' ') : null
-}
-
-function WhyThis({ line, threshold }: { line: Line; threshold: number }) {
-  const c = useCopy()
-  const [, avail] = availability(line, c)
-  const q = line.quote
-  const f = facts(line, c)
-  return (
-    <div className="more-body">
-      {line.why && <p>{c.humanize(line.why)}</p>}
-      {line.confidence != null && (
-        <p className="quiet num">
-          {c.matched(line.confidence, threshold)}.{line.confidence_reason && ` ${line.confidence_reason}`}
-        </p>
-      )}
-      <p className="quiet">
-        {avail}
-        {q?.price != null && c.UI.result.per(c.price(q.price), c.unitName(line.quantity?.sales_unit || line.product.sales_unit))}
-      </p>
-      {f && <p className="quiet">{f}</p>}
-      {line.quantity && <p className="quiet small">{line.quantity.explanation}</p>}
-      {line.confidence != null && <p className="faint tiny">{c.CONFIDENCE_MEANS(threshold)}</p>}
-    </div>
-  )
+function availabilityForCart(line: Line, c: Copy): { tone: Tone | undefined; text: string } {
+  const [tone, text] = availability(line, c)
+  return { tone: tone === 'bad' || tone === 'warn' ? tone : undefined, text }
 }
 
 function OtherOption({ line, threshold, onOrder, busy, placing }: { line: Line; threshold: number; onOrder: (() => void) | null; busy: boolean; placing: boolean }) {
@@ -769,37 +615,4 @@ function Substitutes({ subs, pick, busy, placing }: { subs: Substitute[]; pick: 
       </ul>
     </section>
   )
-}
-
-function SplitRows({ alt }: { alt: AlternativeOrder }) {
-  const c = useCopy()
-  const t = c.UI.result
-  return (
-    <section className="instead" aria-label={t.splitAria}>
-      <div>
-        {alt.lines.map((l) => (
-          <div key={l.product_id} className="split-row">
-            <span>
-              {tidyName(l.name)}
-              {l.replaces && <span className="quiet"> {t.substitute}</span>}
-            </span>
-            <span className="qty r">{l.quantity != null ? c.amountOf(l.quantity, l.unit) : '—'}</span>
-            <span className="r">{l.line_total_cents !== null ? c.money(l.line_total_cents) : '—'}</span>
-          </div>
-        ))}
-        <div className="split-total">
-          <span>
-            <strong>{c.money(alt.total_cents)}</strong> <span className="quiet">{t.inTotal}</span>
-          </span>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-// A backend sentence can run long ("…doesn't seem to stock X. Closest in the catalogue: A; B; C."): the first sentence
-// is the headline, the rest reads under it, with SHOUTED catalogue names in normal case.
-function splitLong(s: string, c: ReturnType<typeof useCopy>): [string, string | null] {
-  const m = s.length > 80 ? /^(.+?[.!?])\s+(\S.*)$/s.exec(s) : null
-  return m ? [m[1], m[2].replace(/\b[A-Z0-9][A-Z0-9 ]*[A-Z]{3}[A-Z0-9 ]*\b/g, (n) => c.tidyName(n))] : [s, null]
 }
