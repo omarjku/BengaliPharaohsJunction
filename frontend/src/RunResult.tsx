@@ -168,7 +168,8 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
   // Labels come from the data only: Best match = the agent's pick, Cheaper = a lower total, Local = origin FI.
   const held = awaitingApproval ? heldLine(order, run.lines, chosen[0] ?? null) : guess
   const pickable = held ? [held, ...others.filter((l) => orderable(l) && sameItem(l, held))] : []
-  const sel = pickable.find((l) => l.product.id === (selected ?? held?.product.id)) ?? null
+  // A selection from another item's options must never hide Approve: fall back to the held line.
+  const sel = pickable.find((l) => l.product.id === (selected ?? held?.product.id)) ?? pickable[0] ?? null
   const tags = (l: Line) =>
     [
       l === held && t.tagBest,
@@ -451,7 +452,7 @@ export function RunResult({ run, requestedDate, onAction, onBusy, onAnnounce, on
                 {awaitingApproval && !canDecide && <p className="hint note">{t.needKey}</p>}
               </div>
             )}
-            {pickable.length < 2 && (awaitingApproval || justDone) && (
+            {(pickable.length < 2 || !sel) && (awaitingApproval || justDone) && (
               <div className="decide">
                 {justDone ? (
                   <button type="button" className="btn done" disabled>{t.done}</button>
