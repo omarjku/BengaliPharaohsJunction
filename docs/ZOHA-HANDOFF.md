@@ -71,3 +71,16 @@ Measured:
 - **07:00–09:30:** video, deck, rehearsal.
 - **09:50:** submit.
 - **10:30:** peer review. Both of us must be there, or we lose eligibility.
+
+## 8. Fixing Codex ("the shell is broken, it can only read from GitHub")
+That message means Codex is either running **in the cloud** (Codex in ChatGPT / chatgpt.com/codex: no shell, only GitHub), or the **CLI is in its read-only sandbox**. Omar's setup, which works all night:
+1. **Use the local Codex CLI**, not the cloud one: `npm i -g @openai/codex` (skip if `codex --version` works), then `codex login` (sign in with ChatGPT). Clone/pull the repo locally: `git clone https://github.com/omarjku/BengaliPharaohsJunction && cd BengaliPharaohsJunction && git checkout omar/m1-integration`.
+2. **Give each Codex job its own folder** (a git worktree), so jobs don't overwrite each other:
+   `git worktree add -b zoha-deck ../bpj-zoha-deck origin/omar/m1-integration`
+3. **Run it with write access and closed stdin** (the two things that make it look "broken"):
+   `codex exec -C ../bpj-zoha-deck -s workspace-write -o /tmp/codex-out.txt "TASK..." < /dev/null`
+   - `-s workspace-write` lets it edit files and run commands (the default for `exec` is read-only).
+   - `< /dev/null` stops it hanging forever waiting for input.
+   - If it needs internet (npm, pip, gh), add `-c sandbox_workspace_write.network_access=true`. If shell commands still fail inside the macOS sandbox, use `-s danger-full-access`, but only inside that worktree folder.
+4. **Smoke test first:** `codex exec -s workspace-write "run git status and ls docs/pitch, then stop" < /dev/null`. If that prints files, it works.
+5. **Tell your Claude:** "Delegate to Codex with `codex exec -C <worktree> -s workspace-write -o <file> "<task>" < /dev/null`, run it in the background, read the -o file when done, then review and commit with the trailers `Co-Authored-By: OpenAI Codex <codex@openai.com>` and `Co-Authored-By: Claude <noreply@anthropic.com>`." (Codex co-author trailers help the Codex prize.)
