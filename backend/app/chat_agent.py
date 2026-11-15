@@ -45,6 +45,7 @@ def _decl(name: str, description: str, properties: dict | None = None, required:
 TOOLS = [{"functionDeclarations": [
     _decl("search_products", "Read-only product/price/availability lookup. Use only when the chef asks what exists or asks to compare; for any request with an amount or order intent, call propose_order instead. This never orders.", {
         "query": {"type": "STRING"}, "limit": {"type": "INTEGER"},
+        "amount": {"type": "NUMBER"}, "unit": {"type": "STRING"},
         "claims": {"type": "ARRAY", "items": {"type": "STRING"}},
         "exclude_allergens": {"type": "ARRAY", "items": {"type": "STRING"}}}, ["query"]),
     _decl("propose_order", "Use immediately for an order request, even when the product needs matching. Omit delivery_date when the chef gave no date: the tool selects the next safe delivery day and holds that assumption for the chef. Only ask for a date when the chef's wording is genuinely ambiguous (for example, 'next week sometime'). Run the existing order engine for these items. It may place or hold an order; it never approves one.", {
@@ -75,6 +76,8 @@ APPROVAL_REQUEST = re.compile(r"\b(?:approve\s+(?:this|it|everything|all)|can\s+
 UNVERIFIED_ORDER_CLAIM = re.compile(r"\b(?:ordered|order\s+(?:is|was)\s+confirmed|order\s+has\s+been\s+placed|placed\s+the\s+order)\b", re.I)
 DELEGATION = re.compile(r"^\s*(?:assume|you decide|whatever is normal|sama kuin yleensä|just do it)\s*[.!]*\s*$", re.I)
 ORDINAL_CHOICE = re.compile(r"^\s*(?:the\s+)?(first|second|third|1|2|3)\s*(?:one|option)?\s*[.!]*\s*$", re.I)
+CONFIRMATION = re.compile(r"^\s*(?:yes|yeah|yep|sure|ok|okay|go ahead|do it|kyllä|joo|juu)\b", re.I)
+NON_FOOD = re.compile(r"\b(?:lego(?:\s+sets?)?|macbook(?:\s+pro|\s+air)?|iphone|laptop|flights?|weather|poem|toy)\b", re.I)
 
 
 def _choice_label(choice: Any) -> str:
@@ -206,7 +209,9 @@ Available tools are the only actions you can take. Use propose_order immediately
 the product needs matching; do not search_products first. If the chef gives no delivery date, call propose_order with
 delivery_date omitted: it will choose the kitchen's next safe delivery day and hold that assumption for the chef. Only
 ask about the date when the chef's words are genuinely ambiguous, such as "next week sometime". Use search_products for a read-only product/price/stock
-question or when the chef explicitly asks to compare options. After one search result, answer or propose; never repeat
+question or when the chef explicitly asks to compare options. Search results are pre-ranked by fit for the chef's
+request, amount/availability, then price; present them in exactly that order and never reorder them cheapest-first.
+After one search result, answer or propose; never repeat
 the same search with a new query just to fill space. For a follow-up such as "yes", use the current cart card and ask
 one precise clarification if the choice is still ambiguous. If the chef changes or removes a line from a current order,
 call change_order with the quoted order_id and the exact change; do not search the catalogue first. Use plan_menu for a menu.
@@ -314,16 +319,82 @@ def _owned_order(order_id: str, buyer_id: str) -> tuple[str, dict | None]:
     return matches[0] if len(matches) == 1 else (order_id, None)
 
 
+def _search_request(args: dict, query: str) -> tuple[str, str, float | None, str | None, list[str], list[str]]:
+    turn = _TURN.get() or {}
+    request = str(turn.get("request_text") or turn.get("original") or query).strip()
+    parsed = agent.fallback_parse(request) if request else []
+    item = parsed[0] if parsed else {}
+    request_query = str(item.get("query") or query).strip()
+    product_words = re.search(r"\b(?:(?:lactose|gluten)[ -]free\s+)?(?:milk|cream|butter|flour|sugar|pasta|bread|eggs?)\b",
+                              request, re.I)
+    if product_words:
+        request_query = product_words[0]
+    amount = args.get("amount") if args.get("amount") is not None else item.get("amount")
+    unit = str(args.get("unit") or item.get("unit") or "").strip() or None
+    if amount is None:
+        quantity_match = re.search(r"(\d[\d, ]*)\s*(litres?|liters?|l)\b", request, re.I)
+        if quantity_match:
+            amount = float(quantity_match[1].replace(",", "").replace(" ", ""))
+            unit = "L"
+    claims = [str(value).strip().upper() for value in args.get("claims") or [] if str(value).strip()][:20]
+    claims = list(dict.fromkeys(claims + [str(value).strip().upper() for value in item.get("claims") or []
+                                          if str(value).strip()]))[:20]
+    if re.search(r"\blactose[ -]free\b", request, re.I) and "FREE_FROM_LACTOSE" not in claims:
+        claims.append("FREE_FROM_LACTOSE")
+    excludes = [str(value).strip().upper() for value in item.get("exclude_allergens") or [] if str(value).strip()][:20]
+    return request, request_query, amount, unit, claims, excludes
+
+
+def _search_sort_key(product: dict, quote: dict, request_query: str, claims: list[str], amount, unit) -> tuple:
+    name = " ".join(str(product.get(key) or "") for key in ("name_en", "name_fi", "brand")).lower()
+    name_words = set(re.findall(r"[\wäöå]+", name))
+    terms = [word for word in re.findall(r"[\wäöå]+", request_query.lower())
+             if word not in {"valio", "need", "needs", "want", "order", "buy", "find", "option"}]
+    fit = sum(2 if term in name_words else 1 for term in terms if term in name)
+    if "FREE_FROM_LACTOSE" in claims and "lactose" in name:
+        fit += 3
+    if "FREE_FROM_GLUTEN" in claims and "gluten" in name:
+        fit += 3
+    specific_variant = {"coffee", "sour", "cooking", "whipping", "dessert", "drink", "cream", "chocolate",
+                        "yogurt", "curd"}
+    fit -= 3 * len((name_words & specific_variant) - set(terms))
+
+    amount_rank = 0
+    if amount is not None and unit and quote:
+        try:
+            converted = agent.quantity.resolve(product, float(amount), unit)
+            if converted.get("quantity") is None or not quote.get("orderable"):
+                amount_rank = 2
+            elif quote.get("available_amount") is not None and converted["quantity"] > quote["available_amount"]:
+                amount_rank = 2
+        except (KeyError, TypeError, ValueError):
+            amount_rank = 1
+    availability_rank = 0 if quote.get("orderable") else 1
+    price = quote.get("price")
+    return (-fit, amount_rank, availability_rank, price if isinstance(price, (int, float)) else float("inf"),
+            str(product.get("id") or ""))
+
+
 async def _search_products(args: dict, _buyer_id: str, _requested_date: date | None, **_kwargs) -> dict:
     query = " ".join(str(args.get("query") or "").split())[:200]
     limit = min(max(int(args.get("limit") or 5), 1), 5)
     if not query:
         return {"query": query, "products": [], "message": "Tell me which product to search for."}
-    claims = [str(value).strip().upper() for value in args.get("claims") or [] if str(value).strip()][:20]
-    exclude_allergens = [str(value).strip().upper() for value in args.get("exclude_allergens") or [] if str(value).strip()][:20]
-    hits = catalogue.search(query, claims, exclude_allergens, False, None, limit)
+    request, request_query, amount, unit, claims, request_excludes = _search_request(args, query)
+    turn = _TURN.get() or {}
+    has_original_request = bool(turn.get("request_text") or turn.get("original"))
+    exclude_allergens = request_excludes if has_original_request else [str(value).strip().upper()
+                                                                       for value in args.get("exclude_allergens") or []
+                                                                       if str(value).strip()][:20]
+    search_query = request_query if has_original_request else query
+    hits = catalogue.search(search_query, claims, exclude_allergens, False, None, max(limit, 12) if has_original_request else limit)
+    if has_original_request and query.casefold() != search_query.casefold():
+        extra = catalogue.search(query, claims, exclude_allergens, False, None, limit)
+        hits = list({p["id"]: p for p in [*hits, *extra]}.values())
     requested = _requested_date or (datetime.now(HELSINKI).date() + timedelta(days=1))
     quotes = {q["product_id"]: q for q in await valio.get_quotes([p["id"] for p in hits], requested.isoformat())} if hits else {}
+    hits = sorted(hits, key=lambda product: _search_sort_key(product, quotes.get(product["id"]) or {},
+                                                               request_query, claims, amount, unit))[:limit]
     products = []
     for product in hits:
         quote = quotes.get(product["id"]) or {}
@@ -335,7 +406,10 @@ async def _search_products(args: dict, _buyer_id: str, _requested_date: date | N
                          "comparison_unit": quote.get("comparison_unit"), "allergens": {"contains": words, "may_contain": may},
                          "diet_level": product.get("claims") or [], "orderable": quote.get("orderable"),
                          "next_delivery": quote.get("available_date")})
-    return {"query": query, "products": products}
+    return {"query": query, "products": products, "requested_amount": amount, "requested_unit": unit,
+            "requested_date": requested.isoformat(),
+            "ranking": "Products are ranked by fit for the chef's request, amount/availability, then price. "
+                       "Present them in this order; do not reorder them by price."}
 
 
 def _tool_items(items: list[dict]) -> tuple[str, dict]:
@@ -353,6 +427,23 @@ def _tool_items(items: list[dict]) -> tuple[str, dict]:
         rows.append(row)
         phrases.append(" ".join(str(x) for x in (amount, unit, text) if x is not None))
     return "; ".join(phrases), {"summary": "; ".join(phrases), "items": rows}
+
+
+def _shown_suggestion(items: list[dict], shown_text: str) -> bool:
+    if not shown_text:
+        return False
+    shown = shown_text.casefold()
+    for raw in items[:50]:
+        if not isinstance(raw, dict):
+            continue
+        product = catalogue.get(str(raw.get("product_id"))) if raw.get("product_id") else None
+        name = _name(product) if product else str(raw.get("text") or "")
+        words = [word for word in re.findall(r"[\wäöå]+", name.casefold())
+                 if word not in {"valio", "the", "milk", "l", "litre", "litres", "1"}]
+        if name.casefold() in shown or (len(words) >= 2 and all(word in shown for word in words)):
+            continue
+        return False
+    return True
 
 
 def _reason_text(card: dict) -> list[str]:
@@ -479,11 +570,19 @@ async def _propose_order(args: dict, buyer_id: str, requested_date: date | None,
     token = ask._DUPLICATE_GUARD_BYPASS.set(follow_up)
     try:
         guard = await _turn_guard(text)
-        request_note = guard.get("note") or (VOICE_HOLD_NOTE if via == "voice" else None) or delivery_note
+        base_note = guard.get("note") or (VOICE_HOLD_NOTE if via == "voice" else None)
+        turn = _TURN.get() or {}
+        request_text = str(turn.get("request_text") or turn.get("original") or text)
+        confirmed_suggestion = bool(turn.get("confirmation") and _shown_suggestion(
+            args.get("items") or [], str(turn.get("shown_text") or "")))
+        if turn.get("confirmation") and not confirmed_suggestion and not base_note:
+            base_note = "The suggestion did not show a named product, so nothing is ordered."
+        request_note = base_note or delivery_note
         pre = {"parsed": (parsed, True), "steer": guard.get("steer"), "steer_checked": True,
-               "meant": 1.0, "meant_checked": True,
+               "decision_text": request_text, "allow_product_assumption": True,
+               "confirmed_suggestion": confirmed_suggestion,
                "request_note": request_note, "request_hold": bool(request_note)}
-        body = await agent.run(ask._duplicate_safe_text(text), delivery, buyer_id, pre=pre)
+        body = await agent.run(request_text, delivery, buyer_id, pre=pre)
         if date_assumed:
             available_dates = []
             for line in body.get("lines") or []:
@@ -502,9 +601,8 @@ async def _propose_order(args: dict, buyer_id: str, requested_date: date | None,
                     delivery = next_delivery
                     delivery_note = (f"Delivery: {delivery:%a} {delivery.day} {delivery:%b} "
                                      "(assumed: next delivery day; change it if needed)")
-                    pre = dict(pre, request_note=guard.get("note") or (VOICE_HOLD_NOTE if via == "voice" else None)
-                               or delivery_note, request_hold=True)
-                    body = await agent.run(ask._duplicate_safe_text(text), delivery, buyer_id, pre=pre)
+                    pre = dict(pre, request_note=base_note or delivery_note, request_hold=True)
+                    body = await agent.run(request_text, delivery, buyer_id, pre=pre)
     finally:
         ask._DUPLICATE_GUARD_BYPASS.reset(token)
     if date_assumed:
@@ -699,6 +797,54 @@ def _plain(text: str) -> str:
     return re.sub(r"^#{1,6}\s+", "", text, flags=re.M)
 
 
+def _timeout_reply(cards: list[dict]) -> str:
+    card = cards[-1] if cards else {}
+    order = card.get("order") if isinstance(card.get("order"), dict) else {}
+    status = order.get("status") or card.get("status")
+    reasons = _reason_text(card)
+    reason = (reasons[0] if reasons else "The proposal is ready on screen").rstrip(" .")
+    if status == "pending_approval":
+        return f"Held: {reason}; approve it on screen"
+    if status == "confirmed":
+        return f"Confirmed: {reason}."
+    return f"Proposal ready on screen: {reason}."
+
+
+def _search_result_reply(result: dict) -> str:
+    products = [product for product in result.get("products") or [] if isinstance(product, dict)]
+    lines = ["Options in ranked order (fit, amount/availability, then price):"]
+    for index, product in enumerate(products[:5], 1):
+        price = product.get("unit_price")
+        price_text = f" — €{price:.2f}/L" if isinstance(price, (int, float)) else ""
+        availability = "orderable" if product.get("orderable") else "not currently orderable"
+        lines.append(f"{index}. {product.get('name') or product.get('product_id')}{price_text} ({availability})")
+    return "\n".join(lines)
+
+
+def _search_card(result: dict) -> dict | None:
+    product = next((item for item in result.get("products") or [] if isinstance(item, dict)), None)
+    if not product:
+        return None
+    amount, unit = result.get("requested_amount"), result.get("requested_unit")
+    quantity = {"requested": {"amount": amount, "unit": unit}} if amount is not None and unit else {}
+    return {"lines": [{"name": product.get("name") or product.get("product_id"), "quantity": quantity}],
+            "requested_date": result.get("requested_date")}
+
+
+def _search_followup_args(card: dict | None) -> dict | None:
+    if not isinstance(card, dict) or card.get("order_status") or not card.get("lines"):
+        return None
+    line = card["lines"][0] if isinstance(card["lines"][0], dict) else {}
+    name = str(line.get("name") or "").strip()
+    quantity = line.get("quantity") if isinstance(line.get("quantity"), dict) else {}
+    requested = quantity.get("requested") if isinstance(quantity.get("requested"), dict) else quantity
+    amount, unit = requested.get("amount"), requested.get("unit")
+    delivery = card.get("requested_date")
+    if not name or amount is None or not unit or not delivery:
+        return None
+    return {"items": [{"text": name, "amount": amount, "unit": unit}], "delivery_date": delivery}
+
+
 async def chat(text: str, buyer_id: str, requested_date: date | None = None, follow_up: dict | None = None,
                have: list[str] | None = None, conversation_id: str | None = None) -> dict:
     """Run one bounded text turn. Any Gemini/loop failure is intentionally routed through the old /ask path."""
@@ -706,16 +852,43 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
     if conversation.is_stale(buyer_id, conversation_id):
         conversation_id = uuid4().hex
     original_text = str(follow_up.get("answer") if follow_up else text).strip()
+    if NON_FOOD.search(original_text):
+        reply = "I can only order from Valio's food-service range."
+        conversation.record_turn(buyer_id, "user", original_text, conversation_id=conversation_id)
+        conversation.record_turn(buyer_id, "assistant", reply, conversation_id=conversation_id)
+        return {"reply": reply, "cards": [], "conversation_id": conversation_id,
+                "tools_used": [], "question": None, "provider_call_ok": True}
     pending = conversation.pending_state(buyer_id, conversation_id)
     text, pending_resolved = _resolve_pending_input(original_text, pending)
+    history = conversation.turns(buyer_id, conversation_id)
+    last_card = conversation.last_card(buyer_id, conversation_id)
+    request_text = original_text
+    if follow_up or CONFIRMATION.match(original_text):
+        request_text = next((str(row.get("text") or "") for row in reversed(history)
+                             if row.get("role") == "user" and row.get("text")), original_text)
+    shown_text = next((str(row.get("text") or "") for row in reversed(history)
+                       if row.get("role") == "assistant" and row.get("text")), "")
     _, _note = agent.strip_auto_approval(original_text)
-    _TURN.set({"steer": await agent.steering(original_text), "note": _note, "text": original_text})
+    _TURN.set({"steer": await agent.steering(original_text), "note": _note, "text": original_text,
+               "original": original_text, "request_text": request_text, "shown_text": shown_text,
+               "confirmation": bool(CONFIRMATION.match(original_text) and history)})
     if APPROVAL_REQUEST.search(text):
         reply = "I can't approve orders for you; please approve the order on screen."
         conversation.record_turn(buyer_id, "user", original_text, conversation_id=conversation_id)
         conversation.record_turn(buyer_id, "assistant", reply, conversation_id=conversation_id)
         return {"reply": reply, "cards": [], "conversation_id": conversation_id,
                 "tools_used": [], "question": None}
+    if CONFIRMATION.match(original_text) and (search_args := _search_followup_args(last_card)):
+        result = await _dispatch_tool("propose_order", search_args, buyer_id, requested_date, True, have)
+        card = result.get("card") if isinstance(result, dict) else None
+        reply = conversation.speak(card, "en") if isinstance(card, dict) else (
+            (result.get("hold_reasons") or ["The proposal is held for your approval."])[0]
+            if isinstance(result, dict) else "The proposal is held for your approval.")
+        conversation.record_turn(buyer_id, "user", original_text, conversation_id=conversation_id)
+        conversation.record_turn(buyer_id, "assistant", reply, card=card, conversation_id=conversation_id)
+        return {"reply": _plain(reply), "cards": [card] if card else [], "conversation_id": conversation_id,
+                "tools_used": ["propose_order"], "question": None, "awaiting_user": False,
+                "provider_call_ok": True}
     today = datetime.now(HELSINKI).date()
     deadline = asyncio.get_running_loop().time() + GEMINI_TIMEOUT_S
     current_user = {"role": "user", "parts": [{"text": text}]}
@@ -729,6 +902,7 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
     threshold = mandates.confidence_threshold(buyer_id)
     search_calls = 0
     seen_searches = set()
+    last_search_result = None
     try:
         async with asyncio.timeout(GEMINI_TIMEOUT_S):
             if pending_resolved and str((pending or {}).get("pending_slot") or "").startswith("assumption:"):
@@ -766,6 +940,8 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
                             if name in {"propose_order", "change_order"}:
                                 args = _correct_explicit_portion(text, request_context, args)
                             result = await _dispatch_tool(name, args, buyer_id, requested_date, bool(follow_up), have)
+                        if name == "search_products" and isinstance(result, dict) and result.get("products"):
+                            last_search_result = result
                         tools_used.append(name)
                         if name == "check_assumptions":
                             assumption_rows = result if isinstance(result, list) else []
@@ -806,6 +982,8 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
                     continue
                 if not reply:
                     raise RuntimeError("Gemini returned neither text nor a tool call")
+                if last_search_result:
+                    reply = _search_result_reply(last_search_result)
                 if not cards and UNVERIFIED_ORDER_CLAIM.search(reply) \
                         and not re.search(r"\b(?:not|no|haven't|hasn't|couldn't|can't)\b", reply, re.I):
                     reply = "I haven't placed or confirmed an order. I can only say that after the order tool reports it."
@@ -833,7 +1011,8 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
         for summary in tool_summaries:
             conversation.record_turn(buyer_id, "assistant", json.dumps(summary, ensure_ascii=False),
                                      conversation_id=conversation_id)
-        conversation.record_turn(buyer_id, "assistant", reply, card=cards[-1] if cards else None,
+        stored_card = cards[-1] if cards else _search_card(last_search_result) if last_search_result else None
+        conversation.record_turn(buyer_id, "assistant", reply, card=stored_card,
                                  pending={"pending_slot": pending_slot, "choices": pending_choices,
                                           "question": pending_question, "default": pending_default}
                                  if pending_slot else {}, conversation_id=conversation_id)
@@ -846,9 +1025,11 @@ async def chat(text: str, buyer_id: str, requested_date: date | None = None, fol
     except ProviderCallError as exc:
         return _provider_failure(exc, conversation_id)
     except asyncio.TimeoutError:
-        reply = "I have the request and the checks completed so far; say ‘continue’ and I’ll finish the kitchen check."
+        reply = _timeout_reply(cards) if cards else (
+            "I have the request and the checks completed so far; say ‘continue’ and I’ll finish the kitchen check.")
         conversation.record_turn(buyer_id, "user", original_text, conversation_id=conversation_id)
-        conversation.record_turn(buyer_id, "assistant", reply, card=cards[-1] if cards else None,
+        stored_card = cards[-1] if cards else _search_card(last_search_result) if last_search_result else None
+        conversation.record_turn(buyer_id, "assistant", reply, card=stored_card,
                                  pending={"pending_slot": pending_slot, "choices": pending_choices,
                                           "question": pending_question, "default": pending_default}
                                  if pending_slot else {}, conversation_id=conversation_id)

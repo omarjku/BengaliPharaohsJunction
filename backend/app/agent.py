@@ -1269,7 +1269,8 @@ def _dietary_line_reason(product: dict, checks: list[dict]) -> str:
 
 
 async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str, m: Mandate, excluded: set[str],
-                    now: datetime, reasons: list[Reason], parsed_by_gemini: bool) -> dict:
+                    now: datetime, reasons: list[Reason], parsed_by_gemini: bool,
+                    decision_text: str | None = None) -> dict:
     """Per-item core shared by the request and menu flows: catalogue search, Gemini rank, live Valio quotes, quantity,
     gate checks, Gemini Decisions confidence, the choice (safety, confidence, limits, concerns, Finnish preference,
     price), substitutes. Appends the problems it finds to `reasons`. The Decisions judge reads `canonical(item)`
@@ -1387,9 +1388,10 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
     progress.phase("judging")
     kitchen_facts = mandates.kitchen(buyer_id)
     judged, sizes = await asyncio.gather(
-        asyncio.gather(*(judge_line(canonical(items[ln["item"]]), ln["product"], ln["quantity"]["explanation"])
+        asyncio.gather(*(judge_line(decision_text or canonical(items[ln["item"]]), ln["product"],
+                                    ln["quantity"]["explanation"])
                          for ln in viable)),
-        asyncio.gather(*(plausible(kitchen_facts, canonical(items[ln["item"]]), ln["product"],
+        asyncio.gather(*(plausible(kitchen_facts, decision_text or canonical(items[ln["item"]]), ln["product"],
                                    ln["quantity"]["explanation"], ln["line_total_cents"]) for ln in viable)))
     for line, (conf, why, weakest), p_ok in zip(viable, judged, sizes):
         line["confidence"], line["confidence_reason"], line["_weakest"] = conf, why, weakest
@@ -1788,9 +1790,13 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
         if what and ungrounded(text, anchored(text, it)) is None:  # found by the chef's own words (e.g. Finnish)
             via_source.append(it)
         elif what:
-            reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The parsed item '{it['query']}' doesn't match the request: "
-                                   f"{what} isn't in the buyer's text. Nothing was ordered.", None,
-                                   "Check the request and the parsed items, then retry with the exact wording."))
+            if pre.get("allow_product_assumption") and not pre.get("confirmed_suggestion") and what.startswith("the product"):
+                it["product_assumed"] = True
+                it["product_assumption"] = f"the agent suggested {it['query']}, which the chef did not name"
+            else:
+                reasons.append(gate._r(C.LOW_CONFIDENCE, ASK, f"The parsed item '{it['query']}' doesn't match the request: "
+                                       f"{what} isn't in the buyer's text. Nothing was ordered.", None,
+                                       "Check the request and the parsed items, then retry with the exact wording."))
     threshold = mandates.confidence_threshold(buyer_id)
     # compared with the whole English item ("milk (lactose-free)"), since the chef's words carry the dietary need too
     english = [canonical(dict(i, amount=None, purpose=None)) for i in via_source]
@@ -1825,7 +1831,8 @@ async def run(text: str, requested: date, buyer_id: str, pre: dict | None = None
         reasons.append(gate._r(C.QTY_AMBIGUOUS, ASK, "No product could be read from the request.", None,
                                "Say what to order and how much, e.g. '1000 L lactose-free milk'."))
 
-    res = await _pipeline(text, request["items"], requested, buyer_id, m, excluded, now, reasons, parsed_by_gemini)
+    res = await _pipeline(text, request["items"], requested, buyer_id, m, excluded, now, reasons, parsed_by_gemini,
+                          pre.get("decision_text"))
     lines, chosen, alternatives, rejected, quotes, assumptions, approval_reasons = (res[k] for k in (
         "lines", "chosen", "alternatives", "rejected", "quotes", "assumptions", "approval_reasons"))
     if request_hold and request_note and chosen:
