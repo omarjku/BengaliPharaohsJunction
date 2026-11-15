@@ -1,0 +1,1 @@
+{"name":"frontdoor-voiceover","private":true,"type":"module","scripts":{"make":"node --env-file=/Users/omar/Code/BengaliPharaohsJunction/.env.local make.mjs"},"dependencies":{"@elevenlabs/elevenlabs-js":"^2.78.0"}}

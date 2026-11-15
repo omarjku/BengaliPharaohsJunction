@@ -1,0 +1,86 @@
+[
+ {
+  "s": 0.4,
+  "e": 3.9,
+  "who": "Zoha",
+  "text": "Six in the morning. Five hundred guests on Monday."
+ },
+ {
+  "s": 4.2,
+  "e": 7.4,
+  "who": "Zoha",
+  "text": "Valio's cut-off is at ten, and nothing is ordered yet."
+ },
+ {
+  "s": 11.4,
+  "e": 14.3,
+  "who": "Omar",
+  "text": "Front Door lets an AI agent prepare Valio orders"
+ },
+ {
+  "s": 14.3,
+  "e": 17.3,
+  "who": "Omar",
+  "text": "and the chef approves every single one."
+ },
+ {
+  "s": 18.0,
+  "e": 22.0,
+  "who": "Zoha",
+  "text": "A real list in Finnish, with a note telling the AI to ignore the limit."
+ },
+ {
+  "s": 22.3,
+  "e": 26.5,
+  "who": "Omar",
+  "text": "Gemini reads the list. The planted note is flagged and ignored."
+ },
+ {
+  "s": 27.0,
+  "e": 32.5,
+  "who": "Omar",
+  "text": "Each line becomes a real Valio product, with live price and delivery day."
+ },
+ {
+  "s": 33.0,
+  "e": 37.8,
+  "who": "Zoha",
+  "text": "It isn't sure which item lactose-free means, so it asks. Nothing is ordered."
+ },
+ {
+  "s": 38.3,
+  "e": 44.0,
+  "who": "Omar",
+  "text": "I answer in plain words. The door re-checks every amount against what I wrote."
+ },
+ {
+  "s": 44.5,
+  "e": 54.8,
+  "who": "Zoha",
+  "text": "It would rather hold than guess. It's your money: reliable beats fast."
+ },
+ {
+  "s": 80.0,
+  "e": 87.5,
+  "who": "Zoha",
+  "text": "Gemini scores its own doubt. Below 0.70 it asks instead of guessing, and the chef still approves."
+ },
+ {
+  "s": 88.5,
+  "e": 95.8,
+  "who": "Omar",
+  "text": "Codex built the engine and attacked it. Forty-seven commits on main."
+ },
+ {
+  "s": 97.0,
+  "e": 104.5,
+  "who": "Zoha",
+  "text": "CRACI runs our CI, so every order knows which build signed it."
+ },
+ {
+  "s": 105.5,
+  "e": 109.5,
+  "who": "Omar",
+  "text": "Nothing reaches Valio without the chef."
+ }
+]
