@@ -29,7 +29,7 @@ from trade_contracts import (Alternative, AuditEntry, AuditInput, Decision, Mand
 from trade_contracts import ReasonCode as C
 from trade_contracts.common import RuleKind
 
-from . import catalogue, config, conversation, diet, expand, gate, mandates, orders, profile, progress, quantity, valio
+from . import catalogue, config, conversation, diet, expand, facets, gate, mandates, orders, profile, progress, quantity, valio
 
 RULES_VERSION = "m1-buyer-agent-0.1"
 ACTOR = "buyer_agent"
@@ -830,6 +830,21 @@ def anchored(text: str, item: dict) -> dict:
     return dict(item, query=item["source"])
 
 
+def chef_words(text: str, item: dict, many: bool) -> str:
+    """The chef's OWN words about this item: the clause(s) of the original text that ground it, plus the item's
+    source/query. For one item that is the whole request. Hard attributes (unsalted, organic, fat %) are read from
+    here, not from the agent's rewrite, which may have dropped them."""
+    if item.get("dishes"):  # a menu ingredient: its dishes and the menu's own dietary logic decide, not the menu text
+        return " ".join(str(item.get(k) or "") for k in ("source", "query"))
+    try:
+        _, idx = grounding(text, anchored(text, item))
+    except Exception:  # noqa: BLE001 - an odd parse must not break the order, the whole text is the safe fallback
+        idx = set()
+    parts = re.split(_SPLIT, conversation.spoken_to_digits(text))
+    clause = " ".join(parts[i] for i in sorted(idx) if i < len(parts)) or ("" if many else text)
+    return " ".join(x for x in (clause, str(item.get("source") or ""), str(item.get("query") or "")) if x)
+
+
 _QTY_LIKE = re.compile(r"\d[\d,. ]*\s*(l|dl|cl|ml|kg|g|pcs|kpl|x|litra\w*|kilo\w*|grams?)\b", re.I)
 
 
@@ -956,9 +971,11 @@ EVERYDAY = {"cream": ["whipping cream", "cooking cream"], "kerma": ["kuohukerma"
 
 
 async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str, set[str]] | None = None,
-                     diets: list[str] | None = None, profile_diets: list[str] | None = None) -> tuple[list[str], bool]:
+                     diets: list[str] | None = None, profile_diets: list[str] | None = None,
+                     chef: str | None = None) -> tuple[list[str], bool]:
     """Catalogue hits with claims required only for at-risk ingredients, then narrowed by Gemini."""
     requested_product_id = str(item.get("product_id") or "").strip()
+    wanted = facets.request_facets(chef if chef is not None else f"{item.get('source') or ''} {item['query']}")
     tags = _diet_tags(item, diets)
     if risks is None:
         risks = await diet.at_risk([item["query"]], tags)
@@ -983,8 +1000,15 @@ async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str,
         hits_allergen = set(excl) & (set(allergens.get("contains") or []) | set(allergens.get("inferred") or []))
         if (not any(diet.contradicts(forced, tag) for tag in tags) and not hits_allergen
                 and not diet_excluded & set(allergens.get("may_contain") or [])
-                and not set(required_claims) - set(forced.get("claims") or [])):
-            return [requested_product_id], True
+                and not set(required_claims) - set(forced.get("claims") or [])
+                and not facets.check(wanted, forced)):
+            # A product id the model supplied is a hint, not an override: it must still be the product the CHEF's
+            # words describe (coffee milk pinned for "lactose-free milk" passed every filter above). Otherwise, or
+            # when Decisions can't answer, the normal search runs and the pin competes like any other hit.
+            meets = (await _judge_one(_AMOUNTS.sub(" ", chef if chef is not None else canonical(item)), forced,
+                                      ["meets"]))[0]
+            if meets is not None and meets >= MATCH_STRONG:
+                return [requested_product_id], True
         item.pop("product_id", None)
     words = item["query"].split()
     singular = " ".join(map(_singular, words))
@@ -1008,6 +1032,11 @@ async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str,
         expanded = await expand.queries(item["query"])
         queries = list(dict.fromkeys([item["query"], *expanded, *tries]))
         rows = []
+        # the chef's hard attributes (unsalted, organic...) as extra catalogue words, so the matching products are in
+        # the pool even when the plain product word alone lists dozens of others first
+        for extra in facets.search_terms(wanted):
+            for query in queries[:3]:
+                rows.extend(safe_search(f"{query} {extra}", claims, MATCH_HITS))
         for query in queries:
             rows.extend(safe_search(query, claims, SEARCH_LIMIT))
         everyday_rows = []
@@ -1016,7 +1045,10 @@ async def candidates(text: str, item: dict, excluded: set[str], risks: dict[str,
                 everyday_rows.extend(safe_search(query, claims, MATCH_HITS))
         # Everyday aliases keep their established priority ("cream" means whipping/cooking cream); the expansion
         # queries themselves were still searched in original-first order above.
-        hits = list({p["id"]: p for p in safe_hits(everyday_rows + rows)}.values())[:SEARCH_LIMIT]
+        hits = list({p["id"]: p for p in safe_hits(everyday_rows + rows)}.values())
+        if facets.has_any(wanted):  # stable: products that agree with every written attribute are judged first
+            hits.sort(key=lambda p: facets.penalty(wanted, p))
+        hits = hits[:SEARCH_LIMIT]
         if not hits and len(words) > 1:
             found: dict[str, list] = {}
             for word in {_singular(x) for x in words if len(x) > 2}:
@@ -1469,10 +1501,12 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
     preferred, past_orders = _selection_preferences(buyer_id)
     progress.phase("searching")
     done = [0]
+    item_chef = {id(it): chef_words(text, it, len(items) > 1) for it in items}
+    item_facets = {key: facets.request_facets(words) for key, words in item_chef.items()}
 
     async def search(it: dict):  # one event per ingredient as it finishes, so a long menu shows it is moving
         out = await candidates(text, it, excluded, risk, item_diets[id(it)],
-                               item_profile_diets[id(it)])
+                               item_profile_diets[id(it)], chef_words(text, it, len(items) > 1))
         done[0] += 1
         if len(items) > 1:
             progress.phase("searching", f"Checking {it['query']}… {done[0]} of {len(items)}")
@@ -1526,6 +1560,9 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             p, q = catalogue.get(pid), quotes.get(pid)
             qty = resolve(p, it["amount"], it["unit"]) if amount_ok else None
             rs, info = gate.check_line(pid, qty and qty["quantity"], q, requested, m, excluded, now)
+            if p and (fx := facets.check(item_facets[id(it)], p)):  # the chef's own hard attributes, product by product
+                rs = [*rs, gate._r(C.LOW_CONFIDENCE, ASK, facets.question(fx, _name(p)), pid,
+                                   "Confirm this product, or name another one.", facet_check=", ".join(f[1] for f in fx))]
             line = {"item": n, "product": p, "quote": q, "quantity": qty, "line_total_cents": info["line_total_cents"],
                     "why": "", "chosen": False, "confidence": None, "confidence_reason": None,
                     "facts": {k: ((p or {}).get(k) or [] if k == "labels" else (p or {}).get(k)) for k in FACTS},
@@ -1553,11 +1590,17 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
     # it used to run after the choice, adding a serial round trip).
     progress.phase("judging")
     kitchen_facts = mandates.kitchen(buyer_id)
+
+    def judged_text(n: int) -> str:
+        """What Decisions reads as 'the request': the chef's original words (never the agent's rewrite). With several
+        items, only this item's own clause, so a neighbour's product can't make the right one look wrong."""
+        if not decision_text:
+            return canonical(items[n])
+        return item_chef[id(items[n])] if len(items) > 1 and item_chef[id(items[n])] != decision_text else decision_text
     judged, sizes = await asyncio.gather(
-        asyncio.gather(*(judge_line(decision_text or canonical(items[ln["item"]]), ln["product"],
-                                    ln["quantity"]["explanation"])
+        asyncio.gather(*(judge_line(judged_text(ln["item"]), ln["product"], ln["quantity"]["explanation"])
                          for ln in viable)),
-        asyncio.gather(*(plausible(kitchen_facts, decision_text or canonical(items[ln["item"]]), ln["product"],
+        asyncio.gather(*(plausible(kitchen_facts, judged_text(ln["item"]), ln["product"],
                                    ln["quantity"]["explanation"], ln["line_total_cents"]) for ln in viable)))
     for line, (conf, why, weakest), p_ok in zip(viable, judged, sizes):
         line["confidence"], line["confidence_reason"], line["_weakest"] = conf, why, weakest
@@ -1573,7 +1616,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             log.exception("substitute search failed")
             subs = []
         substitutes.extend({"product_id": candidate.product_id, "replaces": replaced[0]} for candidate in subs)
-        judged = await judge(canonical(it),
+        judged = await judge(item_chef[id(it)],  # the chef's own words, not the rewrite
                              [(catalogue.get(a.product_id) or {"id": a.product_id}, ["sub"]) for a in subs])
         ranked = sorted(zip(subs, judged), key=lambda x: -(x[1][0] or 0))  # most acceptable first
 
@@ -1677,6 +1720,7 @@ async def _pipeline(text: str, items: list[dict], requested: date, buyer_id: str
             reasons += _label_reasons(it, best)
             if any(r.code is C.LOW_RELIABILITY for r in best_asks):  # held for the chef: offer a more reliable one too
                 await offer_substitutes(n, it, [best["product"]["id"]])
+            reasons += [r for r in best_asks if r.facts.get("facet_check")]
             if best["usual"] and best["confidence"] is not None and best["confidence"] < threshold:
                 it["product_assumed"] = True
                 it["product_assumption"] = "your usual product"

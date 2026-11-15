@@ -876,6 +876,10 @@ def test_pinned_product_must_pass_the_same_allergen_filter_as_search(monkeypatch
     monkeypatch.setattr(agent.expand, "queries", no_expand)
     monkeypatch.setattr(catalogue, "search", lambda *a, **k: [])
     monkeypatch.setattr(catalogue, "synonym_queries", lambda q: [], raising=False)
+
+    async def fine(_input, questions):  # a pin must also be the product the chef's words describe (Decisions)
+        return {key: {"type": "noul", "noul": 0.95} for key in questions}
+    monkeypatch.setattr(agent, "_decisions", fine)
     item = {"query": "rainbow trout", "amount": 5, "unit": "kg", "product_id": "trout-pin", "claims": [],
             "exclude_allergens": []}
     ids, _ = asyncio.run(agent.candidates("5 kg rainbow trout", dict(item), {"AF"}, {}, [], []))

@@ -364,8 +364,8 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
         old_rel = cat.get("delivery_reliability")
         unreliable = old_rel is not None and old_rel < floor  # then only a KNOWN more reliable product is worth quoting
         claims = sorted((set(cat["claims"]) & DIETARY_CLAIMS) | need)
-        hits = cat["substitutes"] + [p["id"] for p in catalogue.search(
-            "", claims, sorted(excluded), True, cat["category"], 300 if unreliable else 8)]
+        hits = (cat["substitutes"] + [p["id"] for p in _family_pool(cat, claims, excluded, 300 if unreliable else 8)]
+                + [p["id"] for p in catalogue.search("", claims, sorted(excluded), True, cat["category"], 300 if unreliable else 8)])
         for c in hits:
             other = catalogue.get(c) or {}
             rel = other.get("delivery_reliability")
@@ -438,6 +438,18 @@ async def _alternatives(rejected: list[str], skip: set[str], requested: date, m:
                 f"{q['order_cutoff']}), {eur(eur_to_cents(q['price']))} per {spoken_unit} net, {amount}."))))
     alts.sort(key=lambda x: _TIER_ORDER[x[0]])  # the contract allows 3: best first across refused lines
     return [a for _, a in alts[:MAX_ALTERNATIVES]], bad, subs, quotes
+
+
+def _family_pool(cat: dict, claims: list[str], excluded: set[str], limit: int) -> list[dict]:
+    """Substitute candidates from the replaced product's own family: same category, allergen-safe, keeping its dietary
+    claims, ranked by how many product words they share with it (then shorter names). The old pool was the first 8
+    products of the category in catalogue order, usually other kinds, which the same-kind check then threw away."""
+    mine = _kind_words(cat)
+    pool = catalogue.search("", claims, sorted(excluded), True, cat["category"], 10**6)
+    scored = [(len(mine & _kind_words(p)) / (len(mine | _kind_words(p)) or 1), p) for p in pool if p["id"] != cat.get("id")]
+    scored = [(j, p) for j, p in scored if j > 0]
+    scored.sort(key=lambda x: (-x[0], len(x[1].get("name_en") or ""), x[1]["id"]))
+    return [p for _, p in scored[:limit]]
 
 
 def _kind_words(cat: dict) -> set[str]:
