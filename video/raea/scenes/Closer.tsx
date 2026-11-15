@@ -106,7 +106,7 @@ function OrderedSigned({ frame }: { frame: number }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "4%", marginTop: "3.2%", padding: "2.2% 3.2%", background: "rgba(7, 24, 24, 0.72)", borderRadius: 10, fontSize: "clamp(14px, 0.95vw, 19px)", lineHeight: 1.15 }}>
           <div>
             <div style={{ fontWeight: 750 }}>Valio · Monday kitchen order</div>
-            <div style={{ marginTop: "3%", color: "#b8e7d0" }}>Signed · build 49730579fece</div>
+            <div style={{ marginTop: "3%", color: "#b8e7d0" }}>Signed · build 0b4f6c4</div>
           </div>
           <div style={{ color: "#c5e11d", fontWeight: 750, whiteSpace: "nowrap" }}>AUDIT SEALED</div>
         </div>
