@@ -1,56 +1,47 @@
-# Front Door video template
+# Front Door submission video
 
-This is the reusable 16:9 Junction 2026 submission template for Front Door: 1920×1080, 30 fps, 1:57 (3510 frames).
-The composition is [`frontdoor.tsx`](frontdoor.tsx); all replaceable timing and demo presentation data live in
-[`timeline.ts`](timeline.ts).
+`frontdoor.tsx` is the 1920×1080, 30 fps Junction 2026 submission cut. The current cut is 1:55 (3450 frames), with a dedicated caption band from y=900 to the bottom edge. Every information-bearing region is authored to end by y=880.
 
-The local brand kit mirrors `frontend/src/index.css`: warm paper, ink, Valio teal, lime action colour, and the system
-UI face. Source footage from `video/media/` is linked into this folder under `media/` so the raea project stays inside
-`video/raea/` without copying or modifying the original media. No raea workspace or nested git repository was created.
+## Timing
 
-## Drop in the real live demo
+| Section | Timeline |
+| --- | ---: |
+| Cold open / notification | 0:00–0:07 |
+| Front Door transition | 0:07–0:10.5 |
+| Explainer | 0:10.5–0:18.5 |
+| Live demo, one continuous take | 0:18.5–1:20.5 |
+| Gemini / Codex / CRACI cards | 1:20.5–1:46 |
+| Closer and end card | 1:46–1:55 |
 
-1. Replace [`media/demo.mp4`](media/demo.mp4) with the real continuous landscape recording. Keep the filename so the
-   composition needs no source edit.
-2. In [`timeline.ts`](timeline.ts), update `sections.demo.duration` and the following section `start` values if the
-   take is not 66 seconds. Update `demo.crop` to the normalized phone-window crop (`x`, `y`, `width`, `height`, each
-   from 0 to 1), `demo.callouts` for the exact relative seconds, and `demo.speedRanges` for each intended ×4 range.
-   The placeholder is normal-speed; the ×4 badge is already driven by those configured ranges.
-3. Keep the `LIVE · one take` badge only for the continuous take. Do not splice result footage into the live take.
+The live slot length is the single `DEMO_DURATION_SECONDS` value in `timeline.ts` (default 62 seconds). All phone keyframes and callouts are relative to that slot. The placeholder is normal-speed and carries no speed badges. The final take should be a portrait iPhone Mirroring recording that shows the Finnish list, Gemini read, Valio price/stock/delivery checks, the voice change, the real hold reason, the approver tap, and the signed result in one uninterrupted take.
 
-## Replace captions and voiceover
+## Drop in the real take
 
-- [`captions.srt`](captions.srt) is the human-editable placeholder subtitle script, with `Omar` / `Zoha` speaker
-  labels and timings adapted from `docs/pitch/video-script.md`.
-- [`words.json`](words.json) is the normalized cue data used by the headless composition. After recording, replace
-  both files with matching timings; keep times in seconds from the start of the final 1:57 cut.
-- Put the recorded voiceover at `media/voiceover.wav`, then set `voiceover.enabled` to `true` in `timeline.ts`. The
-  render works without it while the toggle is `false`.
+1. Replace `media/demo.mp4` with the final portrait recording, keeping the filename.
+2. Keep `DEMO_DURATION_SECONDS` at 62 unless the recording length changes. If it changes, update that one value; section starts and the composition duration derive from it.
+3. Retune only the relative `demo.keyframes` and `demo.callouts` times in `timeline.ts` to the real actions. Keep `LIVE · one take · real time` and do not splice result footage into the slot.
+4. Verify the actual exception reason, price, score, stock, dates, and signed build from the take before recording voiceover.
 
-## Verify and render
+## Captions and voiceover
 
-Run these commands from `video/raea/`:
+`captions.srt` is the uploadable caption file. `words.json` is the matching burn-in data. Both keep `Omar` / `Zoha` speaker tags, max two-line wording, and timings for the 1:55 cut. Captions occupy only y≥900; cards, callouts, the phone, numbers, labels, URLs, and the lockup stay above y=880.
+
+Put the recorded mix at `media/voiceover.wav` and set `voiceover.enabled` to `true` in `timeline.ts`. The composition remains renderable without voiceover while that flag is `false`. The master mix target is -14 LUFS with a -1.5 dBTP ceiling. Door creak, whoosh, notification chime, and stamp hits are local media under `media/`.
+
+## Checks and renders
+
+From this folder:
 
 ```sh
-# Fast composition lint
 raea check --quick frontdoor.tsx
-
-# Key stills for visual inspection
-raea render frontdoor.tsx --at 0,120,239,240,270,330,540,749,750,1020,1350,1800,2340,2729,2730,2910,3090,3269,3270,3390,3509 -o out/frames/
-
-# Draft render
-raea render frontdoor.tsx -o out/frontdoor-draft.mp4 --quality draft --manifest out/frontdoor-draft.json
-raea check out/frontdoor-draft.mp4 --manifest out/frontdoor-draft.json --shape 16:9 -o out/frontdoor-draft.check.json
-
-# Master render
-raea render frontdoor.tsx -o out/frontdoor-master.mp4 --quality master --manifest out/frontdoor-master.json
-raea check out/frontdoor-master.mp4 --manifest out/frontdoor-master.json --shape 16:9 -o out/frontdoor-master.check.json
-
-# Share copy
-ffmpeg -i out/frontdoor-master.mp4 -c:v libx264 -preset slow -crf 23 -maxrate 2600k -bufsize 5200k -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart out/frontdoor-master-share.mp4
+node check-caption-band.mjs
+raea render frontdoor.tsx -o out/frontdoor-draft-v6.mp4 --quality draft --manifest out/frontdoor-draft-v6.json
+raea check out/frontdoor-draft-v6.mp4 --manifest out/frontdoor-draft-v6.json --shape 16:9 -o out/frontdoor-draft-v6-check.json
+ffmpeg -y -i out/frontdoor-draft-v6.mp4 -vf "fps=1/4,scale=384:-2,tile=5x6:padding=6:margin=6" -frames:v 1 -q:v 3 out/sheet-v6.jpg
 ```
 
-`out/` is ignored by the local `.gitignore`; no render output is intended for git. The current placeholder demo is
-made from the existing hook/menu/held/rules/sugar/history/approve/urgent-voice/voice-fi clips and is not the final live
-take.
+`check-caption-band.mjs` asserts the authored layout constants and renders one full-resolution still per second to `out/v6-stills/` (the requested 2-second sweep is therefore covered). Inspect those stills at 1920×1080 for readable text and a clear caption band. The contact sheet is one frame per four seconds.
 
+The generic Raea checker reports safe-area P1s for the captions because its default 120 px bottom UI zone conflicts with this cut's explicit caption band beginning at y=900. The owner rule is enforced by `check-caption-band.mjs`: all information regions end at or above y=880, while captions are the only content in y≥900. The final draft measures -14.8 LUFS / -1.5 dBTP, with no clipped text, dead sound stops, or flashing violations.
+
+The final deliverable should use a new output filename beside this draft, for example `out/frontdoor-final.mp4`.

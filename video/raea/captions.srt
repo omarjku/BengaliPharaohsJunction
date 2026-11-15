@@ -1,64 +1,87 @@
 1
-00:00:00,000 --> 00:00:05,000
-Zoha — It’s 06:00. Five hundred guests arrive today.
+00:00:00,000 --> 00:00:02,600
+At 06:00, five hundred guests are coming.
 
 2
-00:00:05,000 --> 00:00:08,200
-Zoha — The delivery cut-off is closing. One wrong guess could stop service.
+00:00:02,600 --> 00:00:07,000
+The Valio cut-off is 10:00. One wrong guess can stop service.
 
 3
-00:00:08,300 --> 00:00:13,800
-Omar — So the chef takes one photo. Front Door reads it and checks Valio.
+00:00:07,000 --> 00:00:10,500
+The chef decides.
 
 4
-00:00:14,000 --> 00:00:18,600
-Omar — Then it puts the decision back in the chef’s hands.
+00:00:10,500 --> 00:00:13,100
+One photo becomes a checked request.
 
 5
-00:00:19,000 --> 00:00:24,000
-Zoha — Gemini reads the handwriting, finds the seven items, and keeps the exception visible.
+00:00:13,100 --> 00:00:15,800
+Facts, permission, and the chef's hand stay visible.
 
 6
-00:00:25,000 --> 00:00:32,000
-Omar — The agent checks price, stock, delivery date, and pack sizes.
+00:00:15,800 --> 00:00:18,500
+Read, check, hold, approve.
 
 7
-00:00:33,000 --> 00:00:39,000
-Omar — The score is a check on what the chef meant.
+00:00:18,500 --> 00:00:23,500
+This is one continuous take. I photograph a Finnish kitchen list.
 
 8
-00:00:40,000 --> 00:00:47,000
-Zoha — The milk line is above the kitchen’s 1,500 euro limit. The door holds the cart.
+00:00:23,500 --> 00:00:31,000
+Gemini reads the handwritten Finnish list.
 
 9
-00:00:48,000 --> 00:00:55,000
-Omar — A short or uncertain line is not silently replaced. The card explains the safe next choice.
+00:00:31,000 --> 00:00:39,000
+Live Valio price, stock, delivery date, and pack size.
 
 10
-00:00:56,000 --> 00:01:01,000
-Zoha — The agent cannot approve. The chef can.
+00:00:39,000 --> 00:00:47,000
+Voice: change the potatoes to 30 kilograms.
 
 11
-00:01:02,000 --> 00:01:09,000
-Omar — The order is confirmed, signed, and recorded for the kitchen and Valio.
+00:00:47,000 --> 00:00:55,000
+The cart is held over the EUR 1,500 limit.
 
 12
-00:01:31,000 --> 00:01:39,000
-Zoha — The Decisions score sets when the agent may act alone. Code still controls money, stock, dates, and approval.
+00:00:55,000 --> 00:01:02,000
+The chef taps Approve. The agent still cannot approve.
 
 13
-00:01:39,300 --> 00:01:44,500
-Omar — Codex built the core we just used: the engine, the Gemini agent, and the safety paths.
+00:01:02,000 --> 00:01:10,000
+Ordered, signed, and tied to the build.
 
 14
-00:01:44,700 --> 00:01:49,000
-Zoha — CRACI runs the build checks and ties the order to its build evidence.
+00:01:10,000 --> 00:01:20,500
+One take. No speed-ups. The reasoning stays visible.
 
 15
-00:01:49,400 --> 00:01:53,000
-Omar — The order is confirmed.
+00:01:20,500 --> 00:01:24,800
+Gemini returns a yes-probability for every assumption.
 
 16
-00:01:53,000 --> 00:01:57,000
-Zoha — At 06:00, the chef is still in control.
+00:01:24,800 --> 00:01:29,000
+Above 0.70 it acts. Below it asks.
 
+17
+00:01:29,000 --> 00:01:33,200
+Codex built this engine with parallel workers.
+
+18
+00:01:33,200 --> 00:01:37,500
+Forty-two main commits say Built by Codex. 787 tests pass.
+
+19
+00:01:37,500 --> 00:01:42,000
+CRACI runs all seven CI jobs and publishes the build evidence.
+
+20
+00:01:42,000 --> 00:01:46,000
+351 components, 17 destinations. Every order names its build.
+
+21
+00:01:46,000 --> 00:01:49,000
+The order is confirmed.
+
+22
+00:01:49,000 --> 00:01:55,000
+Agents knock. The door checks. The chef decides.

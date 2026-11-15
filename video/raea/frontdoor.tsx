@@ -1,13 +1,12 @@
 /*
- * Front Door / Junction 2026 submission template.
- * 1920x1080, 30 fps, 1:57 (3510 frames). Timing and replaceable live-demo data live in timeline.ts.
+ * Front Door / Junction 2026 submission.
+ * 1920x1080, 30 fps, 1:55. The live-demo slot is one replaceable 62 s take.
  */
 import {
   AbsoluteFill,
   Audio,
   Composition,
   Easing,
-  Img,
   Mix,
   Sequence,
   Video,
@@ -17,17 +16,27 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "raea";
+import { Canvas3D, Entity, Screen, manifold } from "raea/3d";
+import { Camera3d } from "raea/camera";
+import { AmbientLight, DirectionalLight } from "raea/light";
+import { Mesh3d } from "raea/mesh";
+import { StandardMaterial } from "raea/pbr";
+import { Quat, Transform } from "raea/transform";
 import { css } from "./styles.gen";
 import captionData from "./words.json";
-import { FPS, TIMELINE, type CaptionCue, frames } from "./timeline";
+import { CAPTION_BAND_TOP, FPS, TIMELINE, frames, type CaptionCue, type DemoCallout } from "./timeline";
+import { ColdOpen as ColdOpenScene } from "./scenes/ColdOpen";
+import { Closer as CloserScene } from "./scenes/Closer";
+import { DoorTransition as DoorTransitionScene } from "./scenes/DoorTransition";
 
 const OUT = Easing.out(Easing.cubic);
 const CLAMP = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as const;
 const FONT_HEADING = "var(--brand-font-heading)";
 const FONT_BODY = "var(--brand-font-body)";
 const MEDIA = (file: string) => staticFile(file);
-
 const CAPTIONS = captionData as CaptionCue[];
+const PHONE_BODY = manifold.roundedBox(1.68, 3.18, 0.24, 0.18);
+const DYNAMIC_ISLAND = manifold.roundedBox(0.44, 0.13, 0.04, 0.055);
 
 function fadeIn(frame: number, duration = 8) {
   return interpolate(frame, [0, duration], [0, 1], CLAMP);
@@ -35,15 +44,7 @@ function fadeIn(frame: number, duration = 8) {
 
 function Eyebrow({ children, color = "var(--brand-lime)" }: { children: string; color?: string }) {
   return (
-    <div style={{
-      color,
-      fontFamily: FONT_BODY,
-      fontSize: "calc(24px * var(--video-scale))",
-      fontWeight: 700,
-      letterSpacing: "0.08em",
-      lineHeight: 1,
-      textTransform: "uppercase",
-    }}>
+    <div style={{ color, fontFamily: FONT_BODY, fontSize: 24, fontWeight: 750, letterSpacing: "0.08em", lineHeight: 1, textTransform: "uppercase" }}>
       {children}
     </div>
   );
@@ -51,248 +52,206 @@ function Eyebrow({ children, color = "var(--brand-lime)" }: { children: string; 
 
 function CaptionOverlay() {
   const frame = useCurrentFrame();
-  const { fps, width } = useVideoConfig();
+  const { fps } = useVideoConfig();
   const time = frame / fps;
   const cue = CAPTIONS.find((item) => time >= item.start && time < item.end);
-  const endCardStart = TIMELINE.sections.closer.start + 4;
+  const endCardStart = TIMELINE.sections.closer.start + 4.8;
   if (!cue || time >= endCardStart) return null;
-  const u = width / 1920;
-  const bottom = time < TIMELINE.sections.coldOpen.duration ? 330 : 150;
   return (
-    <div style={{
-      position: "absolute",
-      left: 270 * u,
-      right: 270 * u,
-      bottom: bottom * u,
-      padding: `${16 * u}px ${26 * u}px ${18 * u}px`,
-      borderRadius: "var(--brand-radius)",
-      background: "var(--brand-veil)",
-      color: "var(--brand-background)",
-      fontFamily: FONT_BODY,
-      fontSize: `${64 * u}px`,
-      fontWeight: 600,
-      lineHeight: 1.1,
-      textAlign: "center",
-      opacity: fadeIn((time - cue.start) * fps, 5),
-    }}>
-      <span style={{ color: cue.speaker === "Zoha" ? "var(--brand-lime)" : "var(--brand-background)", marginInlineEnd: `${12 * u}px` }}>{cue.speaker}</span>
-      {cue.text}
+    <div aria-label="caption band" style={{ position: "absolute", left: 0, right: 0, top: CAPTION_BAND_TOP, height: 180, zIndex: 20, pointerEvents: "none" }}>
+      <div aria-hidden="true" style={{ position: "absolute", inset: "-70px 0 0", background: "linear-gradient(180deg, rgba(18, 22, 26, 0) 0%, rgba(18, 22, 26, 0.78) 34%, rgba(18, 22, 26, 0.96) 100%)" }} />
+      <div style={{ position: "relative", width: 1640, height: 180, margin: "0 auto", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", textAlign: "center", fontFamily: FONT_BODY, textShadow: "0 3px 18px rgba(0,0,0,0.55)" }}>
+        <div style={{ color: cue.speaker === "Zoha" ? "var(--brand-lime)" : "#4cc3e3", fontSize: 24, fontWeight: 800, letterSpacing: "0.08em", lineHeight: 1, textTransform: "uppercase", opacity: fadeIn((time - cue.start) * fps, 5) }}>{cue.speaker}</div>
+        <div style={{ marginTop: 12, maxWidth: 1600, maxHeight: 112, overflow: "hidden", color: "var(--brand-background)", fontSize: 54, fontWeight: 650, lineHeight: 1.05, opacity: fadeIn((time - cue.start) * fps, 5) }}>{cue.text}</div>
+      </div>
     </div>
   );
 }
 
-/** The cold open keeps the supplied illustration and its original audio intact. */
-function ColdOpen() {
-  const frame = useCurrentFrame();
-  const { width } = useVideoConfig();
-  const u = width / 1920;
-  return (
-    <AbsoluteFill style={{ background: "var(--brand-ink)", opacity: interpolate(frame, [0, 6], [0.4, 1], CLAMP), overflow: "hidden" }}>
-      <Video
-        src={MEDIA("coldopen-b.mp4")}
-        endAt={frames(8)}
-        gainDb={-2}
-        fadeIn={0.012}
-        fadeOut={0.2}
-        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
-      />
-      <div style={{ position: "absolute", inset: 0, background: "var(--brand-veil-soft)" }} />
-      <div style={{ position: "absolute", top: 140 * u, left: 72 * u, padding: `${12 * u}px ${18 * u}px`, border: "1px solid var(--brand-paper-soft)", borderRadius: "var(--brand-radius)", color: "var(--brand-background)", fontFamily: FONT_BODY, fontSize: `${28 * u}px`, fontWeight: 600 }}>
-        Illustration · AI-generated
-      </div>
-      <div style={{ position: "absolute", left: 72 * u, right: 72 * u, bottom: 160 * u, color: "var(--brand-background)", fontFamily: FONT_HEADING, fontSize: `${72 * u}px`, fontWeight: 700, letterSpacing: "-0.03em", lineHeight: 0.98 }}>
-        06:00 · 500 guests · cut-off closing
-      </div>
-    </AbsoluteFill>
-  );
-}
-
-/** Two restrained panels swing apart to reveal the product and its promise. */
-function DoorTransition() {
-  const frame = useCurrentFrame();
-  const { width, height } = useVideoConfig();
-  const u = width / 1920;
-  const progress = interpolate(frame, [0, frames(2.5)], [0, 1], { ...CLAMP, easing: OUT });
-  const leftX = interpolate(progress, [0, 1], [0, -50]);
-  const rightX = interpolate(progress, [0, 1], [0, 50]);
-  const light = interpolate(progress, [0, 1], [0, 1], CLAMP);
-  return (
-    <AbsoluteFill style={{ background: "var(--brand-background)", overflow: "hidden" }}>
-      <div style={{ position: "absolute", inset: 0, background: "var(--brand-background)", opacity: light }} />
-      <div style={{ position: "absolute", left: 72 * u, right: 72 * u, top: 245 * u, textAlign: "center", color: "var(--brand-accent)", opacity: light, transform: `translateY(${interpolate(progress, [0, 1], [24, 0], CLAMP)}px)` }}>
-        <div style={{ fontFamily: FONT_HEADING, fontSize: `${82 * u}px`, fontWeight: 700, letterSpacing: "-0.04em", lineHeight: 0.95 }}>FRONT DOOR</div>
-        <div style={{ marginTop: 26 * u, fontFamily: FONT_BODY, fontSize: `${34 * u}px`, fontWeight: 600 }}>Agents knock. The door checks. The chef decides.</div>
-      </div>
-      <div style={{ position: "absolute", left: 0, top: 0, width: "50%", height: "100%", background: "var(--brand-accent)", transformOrigin: "left center", transform: `translateX(${leftX}%) rotateY(${interpolate(progress, [0, 1], [0, -14], CLAMP)}deg)`, boxShadow: "18px 0 0 var(--brand-lime)" }} />
-      <div style={{ position: "absolute", right: 0, top: 0, width: "50%", height: "100%", background: "var(--brand-accent)", transformOrigin: "right center", transform: `translateX(${rightX}%) rotateY(${interpolate(progress, [0, 1], [0, 14], CLAMP)}deg)`, boxShadow: "-18px 0 0 var(--brand-lime)" }} />
-      <div style={{ position: "absolute", left: "50%", top: 0, width: 6 * u, height, transform: "translateX(-50%)", background: "var(--brand-lime)", opacity: 1 - light }} />
-    </AbsoluteFill>
-  );
-}
-
-/** Type-driven explanation cards establish the problem, the check, and the hand-back. */
 function Explanation() {
   const frame = useCurrentFrame();
-  const { width } = useVideoConfig();
-  const u = width / 1920;
   const cards = TIMELINE.explanation.cards;
-  const cardFrames = frames(TIMELINE.sections.explanation.duration / cards.length);
+  const cardFrames = Math.max(1, Math.floor(frames(TIMELINE.sections.explanation.duration) / cards.length));
   const index = Math.min(cards.length - 1, Math.floor(frame / cardFrames));
   const card = cards[index];
   const local = frame - index * cardFrames;
   return (
-    <AbsoluteFill style={{ background: "var(--brand-background)", color: "var(--brand-text)", padding: `${130 * u}px ${86 * u}px ${130 * u}px` }}>
+    <AbsoluteFill style={{ background: "var(--brand-background)", color: "var(--brand-text)", padding: "100px 86px" }}>
       <Eyebrow color="var(--brand-accent)">The handoff</Eyebrow>
-      <div style={{ marginTop: 68 * u, maxWidth: 1180 * u, fontFamily: FONT_HEADING, fontSize: `${70 * u}px`, fontWeight: 700, letterSpacing: "-0.04em", lineHeight: 0.98, opacity: fadeIn(local, 8), transform: `translateY(${interpolate(local, [0, 8], [28, 0], { ...CLAMP, easing: OUT })}px)` }}>
-        {card.title}
+      <div style={{ position: "absolute", right: 86, top: 100, color: "var(--brand-ink-faint)", fontFamily: FONT_BODY, fontSize: 24, fontWeight: 700 }}>{String(index + 1).padStart(2, "0")} / 03</div>
+      <div style={{ position: "absolute", left: 86, right: 250, top: 212, fontFamily: FONT_HEADING, fontSize: 68, fontWeight: 750, letterSpacing: "-0.04em", lineHeight: 0.98, opacity: fadeIn(local, 8), transform: `translateY(${interpolate(local, [0, 8], [26, 0], { ...CLAMP, easing: OUT })}px)` }}>{card.title}</div>
+      <div style={{ position: "absolute", left: 86, right: 340, top: 332, color: "var(--brand-ink-muted)", fontFamily: FONT_BODY, fontSize: 34, lineHeight: 1.16, opacity: fadeIn(local + 5, 10) }}>{card.body}</div>
+      <div style={{ position: "absolute", left: 86, right: 86, top: 560, display: "flex", gap: 18 }}>
+        {card.steps.map((step, stepIndex) => {
+          const stepLocal = local - stepIndex * 6;
+          return <div key={step} style={{ flex: 1, minHeight: 116, boxSizing: "border-box", padding: "22px 26px", border: "1px solid var(--brand-line)", borderRadius: "var(--brand-radius)", background: stepIndex === 1 ? "var(--brand-teal-soft)" : "var(--brand-surface)", color: stepIndex === 1 ? "var(--brand-accent)" : "var(--brand-text)", fontFamily: FONT_BODY, fontSize: 28, fontWeight: 750, opacity: fadeIn(stepLocal, 8), transform: `translateY(${interpolate(stepLocal, [0, 8], [16, 0], { ...CLAMP, easing: OUT })}px)` }}>{step}</div>;
+        })}
       </div>
-      <div style={{ marginTop: 34 * u, maxWidth: 980 * u, fontFamily: FONT_BODY, fontSize: `${34 * u}px`, lineHeight: 1.15, color: "var(--brand-ink-muted)", opacity: fadeIn(local, 12) }}>
-        {card.body}
-      </div>
-      <div style={{ position: "absolute", left: 86 * u, right: 86 * u, bottom: 180 * u, display: "flex", gap: 18 * u }}>
-        {card.steps.map((step, stepIndex) => (
-          <div key={step} style={{ flex: 1, minHeight: 100 * u, padding: `${22 * u}px ${26 * u}px`, border: "1px solid var(--brand-line)", borderRadius: "var(--brand-radius)", background: stepIndex === 1 ? "var(--brand-teal-soft)" : "var(--brand-surface)", color: stepIndex === 1 ? "var(--brand-accent)" : "var(--brand-text)", fontFamily: FONT_BODY, fontSize: `${28 * u}px`, fontWeight: 650, opacity: fadeIn(local - stepIndex * 6, 8), transform: `translateY(${interpolate(local - stepIndex * 6, [0, 8], [18, 0], { ...CLAMP, easing: OUT })}px)` }}>
-            {step}
-          </div>
-        ))}
-      </div>
-      <div style={{ position: "absolute", right: 86 * u, top: 130 * u, fontFamily: FONT_BODY, fontSize: `${28 * u}px`, fontWeight: 600, color: "var(--brand-ink-faint)" }}>{String(index + 1).padStart(2, "0")} / 03</div>
     </AbsoluteFill>
   );
 }
 
-function DemoVideo() {
-  const { width, height } = useVideoConfig();
-  const u = width / 1920;
-  const crop = TIMELINE.demo.crop;
-  const cropWidth = `${100 / crop.width}%`;
-  const cropHeight = `${100 / crop.height}%`;
-  const cropLeft = `${(-crop.x / crop.width) * 100}%`;
-  const cropTop = `${(-crop.y / crop.height) * 100}%`;
+function keyframeValue(field: "scale" | "rotate", seconds: number) {
+  const keyframes = TIMELINE.demo.keyframes;
+  return interpolate(seconds, keyframes.map((item) => item.at), keyframes.map((item) => item[field]), CLAMP);
+}
+
+function DemoPhone({ frame }: { frame: number }) {
+  const seconds = frame / FPS;
+  const scale = keyframeValue("scale", seconds);
+  const rotation = keyframeValue("rotate", seconds) * Math.PI / 180;
+  const cameraZ = interpolate(scale, [0.94, 1.1], [6.5, 5.9], CLAMP);
   return (
-    <div style={{ position: "absolute", left: 74 * u, top: 228 * u, width: 1110 * u, height: 624 * u, border: "1px solid var(--brand-ink-faint)", borderRadius: "var(--brand-radius)", background: "var(--brand-ink)", overflow: "hidden", boxShadow: "0 18px 42px rgb(0 0 0 / 0.22)" }}>
-      <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
-        <Video src={MEDIA(TIMELINE.demo.file)} muted style={{ position: "absolute", left: cropLeft, top: cropTop, width: cropWidth, height: cropHeight, objectFit: "cover" }} />
-      </div>
-      <div style={{ position: "absolute", inset: 0, border: "10px solid var(--brand-ink)", borderRadius: "var(--brand-radius)", pointerEvents: "none" }} />
+    <div style={{ position: "absolute", left: 360, top: 104, width: 800, height: 760 }}>
+      <Canvas3D layered>
+        <Camera3d transform={Transform.fromXyz(0, 0.08, cameraZ).lookingAt([0, 0, 0])} projection={{ Perspective: { fov: (38 * Math.PI) / 180 } }} />
+        <AmbientLight brightness={115} />
+        <DirectionalLight transform={Transform.fromXyz(-3, 5, 4).lookingAt([0, 0, 0])} illuminance={10800} shadow_maps_enabled />
+        <Entity transform={Transform.IDENTITY.withRotation(Quat.fromEuler("XYZ", 0, rotation, rotation * 0.2)).withScale([scale, scale, scale])}>
+          <Mesh3d name="titanium-body" shape={PHONE_BODY}>
+            <StandardMaterial base_color="#7c858d" metallic={0.82} perceptual_roughness={0.22} />
+          </Mesh3d>
+          <Mesh3d name="dynamic-island" transform={Transform.fromXyz(0, 1.39, 0.15)} shape={DYNAMIC_ISLAND}>
+            <StandardMaterial base_color="#050609" perceptual_roughness={0.3} />
+          </Mesh3d>
+          <Screen name="live-demo-screen" position={[0, 0, 0.14]} resolution={[1080, 1920]} size={[1.43, 2.82]} crt={false} background="#080b0f" brightness={1.06}>
+            <Video src={MEDIA(TIMELINE.demo.file)} endAt={frames(TIMELINE.demo.duration)} muted style={{ width: 1080, height: 1920, objectFit: "cover", backgroundColor: "#080b0f" }} />
+          </Screen>
+        </Entity>
+      </Canvas3D>
     </div>
   );
 }
 
-/** The live take frame keeps the replaceable demo central and the narrative labels stable. */
+function Callout({ item }: { item: DemoCallout }) {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const seconds = frame / fps;
+  const local = (seconds - item.start) * fps;
+  const accent = item.accent === "lime" ? "var(--brand-lime)" : item.accent === "warm" ? "#f1b36c" : "#4cc3e3";
+  const isLeft = item.side === "left";
+  const visible = interpolate(local, [0, 8, Math.max(9, (item.end - item.start) * fps - 8), (item.end - item.start) * fps], [0, 1, 1, 0], CLAMP);
+  return (
+    <div style={{ position: "absolute", left: isLeft ? item.labelX : undefined, right: isLeft ? undefined : 76, top: item.labelY, width: 500, opacity: visible, transform: `translateX(${interpolate(local, [0, 8], [isLeft ? -24 : 24, 0], { ...CLAMP, easing: OUT })}px)` }}>
+      <div style={{ borderInlineStart: isLeft ? undefined : "5px solid " + accent, borderInlineEnd: isLeft ? "5px solid " + accent : undefined, paddingInlineStart: isLeft ? 0 : 22, paddingInlineEnd: isLeft ? 22 : 0, textAlign: isLeft ? "right" : "left", fontFamily: FONT_BODY }}>
+        <div style={{ color: accent, fontSize: 24, fontWeight: 800, letterSpacing: "0.08em", lineHeight: 1 }}>{item.text}</div>
+        <div style={{ marginTop: 12, color: "var(--brand-background)", fontSize: 31, fontWeight: 650, lineHeight: 1.12 }}>{item.detail}</div>
+      </div>
+    </div>
+  );
+}
+
 function DemoSlot() {
   const frame = useCurrentFrame();
-  const { fps, width } = useVideoConfig();
-  const u = width / 1920;
+  const { fps } = useVideoConfig();
   const seconds = frame / fps;
   const active = TIMELINE.demo.callouts.find((item) => seconds >= item.start && seconds < item.end);
-  const speed = TIMELINE.demo.speedRanges.find((item) => seconds >= item.start && seconds < item.end);
   return (
-    <AbsoluteFill style={{ background: "var(--brand-ink)", color: "var(--brand-background)" }}>
-      <div style={{ position: "absolute", left: 74 * u, top: 132 * u }}><Eyebrow>Live demo</Eyebrow></div>
-      <div style={{ position: "absolute", left: 74 * u, top: 172 * u, fontFamily: FONT_HEADING, fontSize: `${32 * u}px`, fontWeight: 650, letterSpacing: "-0.02em" }}>one continuous take · placeholder</div>
-      <DemoVideo />
-      <div style={{ position: "absolute", left: 100 * u, top: 258 * u, padding: `${12 * u}px ${18 * u}px`, borderRadius: 999, background: "var(--brand-lime)", color: "var(--brand-lime-ink)", fontFamily: FONT_BODY, fontSize: `${28 * u}px`, fontWeight: 800, letterSpacing: "0.08em" }}>LIVE · one take</div>
-      {speed ? <div style={{ position: "absolute", left: 100 * u, top: 708 * u, padding: `${10 * u}px ${16 * u}px`, borderRadius: 999, background: "var(--brand-lime)", color: "var(--brand-lime-ink)", fontFamily: FONT_BODY, fontSize: `${26 * u}px`, fontWeight: 800 }}>{`×${speed.rate}`}</div> : null}
-      {active ? (
-        <div style={{ position: "absolute", left: 1260 * u, right: 78 * u, top: 330 * u, padding: `${28 * u}px ${32 * u}px`, borderInlineStart: `${6 * u}px solid var(--brand-lime)`, background: "var(--brand-veil-soft)", color: "var(--brand-background)", fontFamily: FONT_BODY, fontSize: `${34 * u}px`, fontWeight: 650, lineHeight: 1.08, opacity: fadeIn((seconds - active.start) * fps, 8), transform: `translateX(${interpolate((seconds - active.start) * fps, [0, 8], [28, 0], { ...CLAMP, easing: OUT })}px)` }}>
-          {active.text}
-        </div>
-      ) : null}
-      <div style={{ position: "absolute", left: 1260 * u, right: 78 * u, bottom: 190 * u, color: "var(--brand-background)", fontFamily: FONT_BODY, fontSize: `${26 * u}px`, lineHeight: 1.25 }}>
-        Gemini reads the list.<br />
-        Valio answers with facts.<br />
-        The chef decides.
-      </div>
+    <AbsoluteFill style={{ background: "var(--brand-ink)", color: "var(--brand-background)", overflow: "hidden" }}>
+      <div style={{ position: "absolute", left: 74, top: 72 }}><Eyebrow>Live demo</Eyebrow><div style={{ marginTop: 12, fontFamily: FONT_HEADING, fontSize: 27, fontWeight: 650 }}>one continuous take · real time</div></div>
+      <div style={{ position: "absolute", left: 74, top: 184, padding: "12px 18px", borderRadius: 999, background: "var(--brand-lime)", color: "var(--brand-lime-ink)", fontFamily: FONT_BODY, fontSize: 26, fontWeight: 850, letterSpacing: "0.06em" }}>LIVE · one take · real time</div>
+      <div aria-hidden="true" style={{ position: "absolute", left: 0, right: 0, top: 866, height: 14, background: "linear-gradient(90deg, transparent, var(--brand-lime), transparent)", opacity: 0.45 }} />
+      <DemoPhone frame={frame} />
+      {active ? <Callout item={active} /> : null}
     </AbsoluteFill>
   );
 }
 
-/** One fact card at a time makes the three proof points easy to read. */
+function GeminiEvidence() {
+  const f = useCurrentFrame();
+  const progress = interpolate(f, [12, 34], [0, 1], CLAMP);
+  return (
+    <div style={{ position: "absolute", left: 500, top: 330, right: 92, height: 238, boxSizing: "border-box", padding: "24px 28px", border: "1px solid var(--brand-line)", borderRadius: "var(--brand-radius)", background: "var(--brand-surface)", fontFamily: FONT_BODY }}>
+      <div style={{ display: "flex", justifyContent: "space-between", color: "var(--brand-ink-muted)", fontSize: 24, fontWeight: 700 }}><span>confidence → permission</span><span>threshold 0.70</span></div>
+      <div style={{ position: "relative", height: 12, marginTop: 30, background: "var(--brand-line)" }}><div style={{ width: "70%", height: "100%", background: "var(--brand-ink-faint)" }} /><div style={{ position: "absolute", left: "70%", top: -12, width: 3, height: 36, background: "var(--brand-lime)" }} /></div>
+      <div style={{ display: "flex", gap: 28, marginTop: 26 }}>
+        <div style={{ flex: 1, opacity: interpolate(progress, [0, 1], [0.45, 1], CLAMP) }}><div style={{ color: "var(--brand-ink-muted)", fontSize: 22 }}>coffee milk</div><div style={{ marginTop: 6, color: "#b06f4f", fontSize: 34, fontWeight: 800 }}>0.115 · ASK</div></div>
+        <div style={{ flex: 1, opacity: interpolate(progress, [0, 1], [0.45, 1], CLAMP) }}><div style={{ color: "var(--brand-ink-muted)", fontSize: 22 }}>lactose-free milk</div><div style={{ marginTop: 6, color: "var(--brand-good)", fontSize: 34, fontWeight: 800 }}>0.897 · ACT</div></div>
+      </div>
+    </div>
+  );
+}
+
+function CodexEvidence({ lines }: { lines: readonly string[] }) {
+  const f = useCurrentFrame();
+  const offset = Math.min(lines.length - 1, Math.floor(interpolate(f, [0, 254], [0, lines.length - 4], CLAMP)));
+  return (
+    <div style={{ position: "absolute", left: 500, top: 330, right: 92, height: 238, boxSizing: "border-box", padding: "20px 26px", borderRadius: "var(--brand-radius)", background: "#101419", color: "#c4e7ef", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 22, lineHeight: 1.34, overflow: "hidden" }}>
+      {lines.slice(offset, offset + 4).map((line, index) => <div key={line} style={{ opacity: fadeIn(f - index * 4, 8), whiteSpace: "nowrap" }}>{index === 0 ? <span style={{ color: "#c5e11d" }}>$ </span> : null}{line}</div>)}
+    </div>
+  );
+}
+
+function CraciEvidence({ build }: { build: { status: string; componentCounts: { pip: number; npm: number }; networkDestinations: number; sbomSha256: string } }) {
+  const f = useCurrentFrame();
+  const opacity = fadeIn(f, 12);
+  return (
+    <div style={{ position: "absolute", left: 500, top: 330, right: 92, height: 238, boxSizing: "border-box", padding: "20px 26px", border: "1px solid #1f4b58", borderRadius: "var(--brand-radius)", background: "#0f1e24", color: "#d8f7f5", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 22, lineHeight: 1.42, opacity }}>
+      <div style={{ color: "#c5e11d", fontWeight: 800 }}>{"{\"status\":\""}{build.status}{"\","}</div>
+      <div>{"  \"component_counts\": { \"pip\": "}{build.componentCounts.pip}{", \"npm\": "}{build.componentCounts.npm}{" },"}</div>
+      <div>{"  \"network_destinations\": "}{build.networkDestinations}{","}</div>
+      <div>{"  \"sbom_sha256\": \""}{build.sbomSha256}{"…\","}</div>
+      <div style={{ marginTop: 8, color: "#8ebec8", fontSize: 19 }}>{"/.well-known/front-door-build.json  ·  curl  ·  signed order → build"}</div>
+    </div>
+  );
+}
+
 function Facts() {
   const frame = useCurrentFrame();
-  const { width } = useVideoConfig();
-  const u = width / 1920;
-  const cardFrames = frames(TIMELINE.sections.facts.duration / TIMELINE.facts.length);
+  const cardFrames = Math.max(1, Math.floor(frames(TIMELINE.sections.facts.duration) / TIMELINE.facts.length));
   const index = Math.min(TIMELINE.facts.length - 1, Math.floor(frame / cardFrames));
   const local = frame - index * cardFrames;
   const fact = TIMELINE.facts[index];
   return (
-    <AbsoluteFill style={{ background: "var(--brand-background)", color: "var(--brand-text)", padding: `${130 * u}px ${92 * u}px` }}>
+    <AbsoluteFill style={{ background: "var(--brand-background)", color: "var(--brand-text)", padding: "92px 92px" }}>
       <Eyebrow color="var(--brand-accent)">Track fact {String(index + 1).padStart(2, "0")} / 03</Eyebrow>
-      <div style={{ position: "absolute", left: 92 * u, top: 290 * u, width: 430 * u, fontFamily: FONT_HEADING, fontSize: `${78 * u}px`, fontWeight: 700, letterSpacing: "-0.04em", color: "var(--brand-accent)", opacity: fadeIn(local, 8), transform: `translateY(${interpolate(local, [0, 8], [24, 0], { ...CLAMP, easing: OUT })}px)` }}>{fact.label}</div>
-      <div style={{ position: "absolute", left: 585 * u, top: 250 * u, right: 120 * u, fontFamily: FONT_HEADING, fontSize: `${56 * u}px`, fontWeight: 700, letterSpacing: "-0.035em", lineHeight: 1, opacity: fadeIn(local + 4, 10) }}>{fact.headline}</div>
-      <div style={{ position: "absolute", left: 585 * u, top: 486 * u, right: 180 * u, fontFamily: FONT_BODY, fontSize: `${34 * u}px`, lineHeight: 1.18, color: "var(--brand-ink-muted)", opacity: fadeIn(local + 8, 12) }}>{fact.body}</div>
-      <div style={{ position: "absolute", left: 92 * u, right: 92 * u, bottom: 168 * u, height: 8 * u, background: "var(--brand-line)" }}>
-        <div style={{ width: `${interpolate(local, [0, cardFrames], [0, 100], CLAMP)}%`, height: "100%", background: "var(--brand-lime)" }} />
+      <div style={{ position: "absolute", left: 92, top: 160, width: 330, color: "var(--brand-accent)", fontFamily: FONT_HEADING, fontSize: 118, fontWeight: 800, letterSpacing: "-0.06em", lineHeight: 0.82, opacity: fadeIn(local, 8), transform: `translateY(${interpolate(local, [0, 8], [22, 0], { ...CLAMP, easing: OUT })}px)` }}>{fact.number}</div>
+      <div style={{ position: "absolute", left: 92, top: 294, color: "var(--brand-text)", fontFamily: FONT_BODY, fontSize: 32, fontWeight: 800, letterSpacing: "0.08em" }}>{fact.label}</div>
+      <div style={{ position: "absolute", left: 500, top: 146, right: 100, fontFamily: FONT_HEADING, fontSize: 48, fontWeight: 750, letterSpacing: "-0.035em", lineHeight: 1.02, opacity: fadeIn(local + 4, 10) }}>{fact.headline}</div>
+      <div style={{ position: "absolute", left: 500, top: 230, right: 130, color: "var(--brand-ink-muted)", fontFamily: FONT_BODY, fontSize: 28, lineHeight: 1.12, opacity: fadeIn(local + 8, 10) }}>{fact.line}</div>
+      {fact.id === "gemini" ? <GeminiEvidence /> : null}
+      {fact.id === "codex" ? <CodexEvidence lines={fact.gitLog} /> : null}
+      {fact.id === "craci" ? <CraciEvidence build={fact.build} /> : null}
+      <div style={{ position: "absolute", left: 92, right: 92, top: 610, display: "flex", flexDirection: "column", gap: 12 }}>
+        {fact.facts.map((item, itemIndex) => {
+          const itemLocal = local - 18 - itemIndex * 8;
+          return <div key={item} style={{ display: "flex", alignItems: "flex-start", gap: 18, minHeight: 66, color: "var(--brand-text)", fontFamily: FONT_BODY, fontSize: 24, lineHeight: 1.16, opacity: fadeIn(itemLocal, 10), transform: `translateY(${interpolate(itemLocal, [0, 10], [14, 0], { ...CLAMP, easing: OUT })}px)` }}><span style={{ flex: "0 0 12px", width: 12, height: 12, marginTop: 7, borderRadius: "50%", background: itemIndex === 1 ? "var(--brand-accent)" : "var(--brand-lime)" }} /><span>{item}</span></div>;
+        })}
       </div>
     </AbsoluteFill>
   );
 }
 
-/** The closer returns to the hand, then leaves the URLs and the non-payment disclaimer. */
-function Closer() {
-  const frame = useCurrentFrame();
-  const { width } = useVideoConfig();
-  const u = width / 1920;
-  const endShotFrames = frames(4);
-  if (frame < endShotFrames) {
-    return (
-      <AbsoluteFill style={{ background: "var(--brand-ink)", overflow: "hidden" }}>
-        <Video src={MEDIA("coldopen-b.mp4")} startFrom={frames(TIMELINE.closer.coldOpenStart)} endAt={frames(8)} gainDb={-4} fadeOut={0.2} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", transform: `scale(${interpolate(frame, [0, endShotFrames], [1, 1.05], CLAMP)})` }} />
-        <div style={{ position: "absolute", inset: 0, background: "var(--brand-veil-soft)" }} />
-        <div style={{ position: "absolute", left: 72 * u, top: 132 * u, color: "var(--brand-background)", fontFamily: FONT_HEADING, fontSize: `${66 * u}px`, fontWeight: 700 }}>The chef is still in control.</div>
-      </AbsoluteFill>
-    );
-  }
-  const local = frame - endShotFrames;
-  return (
-    <AbsoluteFill style={{ background: "var(--brand-accent)", color: "var(--brand-background)", padding: `${132 * u}px ${84 * u}px`, opacity: fadeIn(local, 8) }}>
-      <Eyebrow>Front Door · Valio challenge mock</Eyebrow>
-      <div style={{ marginTop: 82 * u, maxWidth: 1340 * u, fontFamily: FONT_HEADING, fontSize: `${86 * u}px`, fontWeight: 700, letterSpacing: "-0.045em", lineHeight: 0.94 }}>Agents knock.<br />The door checks.<br />The chef decides.</div>
-      <div style={{ position: "absolute", left: 84 * u, right: 84 * u, bottom: 160 * u, display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 36 * u, fontFamily: FONT_BODY, fontSize: `${24 * u}px`, lineHeight: 1.25, color: "var(--brand-background)" }}>
-        <div>
-          <div>{TIMELINE.closer.repo}</div>
-          <div>{TIMELINE.closer.site}</div>
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <div>{TIMELINE.closer.disclaimer}</div>
-          <div>{TIMELINE.closer.team}</div>
-        </div>
-      </div>
-    </AbsoluteFill>
-  );
+function SoundDesign() {
+  return <>
+    <Sequence from={frames(TIMELINE.sections.door.start)} durationInFrames={frames(1.4)} layout="none" name="door-creak"><Audio src={MEDIA("sfx/door-creak.wav")} gainDb={-18} fadeIn={0.01} fadeOut={0.4} /></Sequence>
+    <Sequence from={frames(TIMELINE.sections.door.start + 1.1)} durationInFrames={frames(1.8)} layout="none" name="door-whoosh"><Audio src={MEDIA("sfx/door-whoosh.wav")} gainDb={-16} fadeIn={0.03} fadeOut={0.5} /></Sequence>
+    <Sequence from={frames(TIMELINE.sections.demo.start + 25.5)} durationInFrames={frames(0.8)} layout="none" name="held-stamp"><Audio src={MEDIA("sfx/stamp-hit.wav")} gainDb={-20} fadeIn={0.01} fadeOut={0.3} /></Sequence>
+    <Sequence from={frames(TIMELINE.sections.demo.start + 51)} durationInFrames={frames(0.8)} layout="none" name="ordered-stamp"><Audio src={MEDIA("sfx/stamp-hit.wav")} gainDb={-19} fadeIn={0.01} fadeOut={0.3} /></Sequence>
+  </>;
 }
 
 function Voiceover() {
   if (!TIMELINE.voiceover.enabled) return null;
-  return (
-    <Sequence from={0} durationInFrames={frames(TIMELINE.totalSeconds)} layout="none" name="voiceover">
-      <Audio src={MEDIA(TIMELINE.voiceover.file)} bus="voice" gainDb={0} fadeIn={0.012} fadeOut={1.2} />
-    </Sequence>
-  );
+  return <Sequence from={0} durationInFrames={frames(TIMELINE.totalSeconds)} layout="none" name="voiceover"><Audio src={MEDIA(TIMELINE.voiceover.file)} bus="voice" gainDb={0} fadeIn={0.012} fadeOut={1.2} /></Sequence>;
 }
 
 function FrontDoor() {
-  const { width } = useVideoConfig();
-  const scale = width / 1920;
   return (
     <AbsoluteFill style={{ background: "var(--brand-background)" }}>
       <style>{css}</style>
-      <div style={{ position: "absolute", inset: 0, ["--video-scale" as string]: `${scale}` }}>
-        <Sequence from={frames(TIMELINE.sections.coldOpen.start)} durationInFrames={frames(TIMELINE.sections.coldOpen.duration)} name="cold open"><ColdOpen /></Sequence>
-        <Sequence from={frames(TIMELINE.sections.door.start)} durationInFrames={frames(TIMELINE.sections.door.duration)} name="door transition"><DoorTransition /></Sequence>
-        <Sequence from={frames(TIMELINE.sections.explanation.start)} durationInFrames={frames(TIMELINE.sections.explanation.duration)} name="explanation"><Explanation /></Sequence>
-        <Sequence from={frames(TIMELINE.sections.demo.start)} durationInFrames={frames(TIMELINE.sections.demo.duration)} name="live demo slot"><DemoSlot /></Sequence>
-        <Sequence from={frames(TIMELINE.sections.facts.start)} durationInFrames={frames(TIMELINE.sections.facts.duration)} name="track facts"><Facts /></Sequence>
-        <Sequence from={frames(TIMELINE.sections.closer.start)} durationInFrames={frames(TIMELINE.sections.closer.duration)} name="closer"><Closer /></Sequence>
-        <Voiceover />
-        <CaptionOverlay />
-      </div>
+      <Sequence from={frames(TIMELINE.sections.coldOpen.start)} durationInFrames={frames(TIMELINE.sections.coldOpen.duration)} name="cold open"><ColdOpenScene durationInFrames={frames(TIMELINE.sections.coldOpen.duration)} /></Sequence>
+      <Sequence from={frames(TIMELINE.sections.door.start)} durationInFrames={frames(TIMELINE.sections.door.duration)} name="door transition"><DoorTransitionScene durationInFrames={frames(TIMELINE.sections.door.duration)} /></Sequence>
+      <Sequence from={frames(TIMELINE.sections.explanation.start)} durationInFrames={frames(TIMELINE.sections.explanation.duration)} name="explanation"><Explanation /></Sequence>
+      <Sequence from={frames(TIMELINE.sections.demo.start)} durationInFrames={frames(TIMELINE.sections.demo.duration)} name="live demo slot"><DemoSlot /></Sequence>
+      <Sequence from={frames(TIMELINE.sections.facts.start)} durationInFrames={frames(TIMELINE.sections.facts.duration)} name="track facts"><Facts /></Sequence>
+      <Sequence from={frames(TIMELINE.sections.closer.start)} durationInFrames={frames(TIMELINE.sections.closer.duration)} name="closer"><CloserScene durationInFrames={frames(TIMELINE.sections.closer.duration)} /></Sequence>
+      <SoundDesign />
+      <Voiceover />
+      <CaptionOverlay />
       <Mix lufs={-14} ceiling={-1.5} />
     </AbsoluteFill>
   );
 }
 
 registerRoot(() => <Composition id="front-door" component={FrontDoor} width={1920} height={1080} fps={FPS} durationInFrames={frames(TIMELINE.totalSeconds)} />);
-
