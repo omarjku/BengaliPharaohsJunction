@@ -245,15 +245,82 @@ def synonym_queries(query: str) -> list[str]:
     return list(KITCHEN_SYNONYMS.get(key, []))
 
 
+_VOCAB: dict[str, int] | None = None
+_VOCAB_KEY: tuple | None = None
+_CLOSE_CACHE: dict[str, tuple[str, ...]] = {}
+
+
+def _vocab() -> dict[str, int]:
+    """Every word of every product name (English, Finnish, brand) with its frequency: what a typo is matched against."""
+    global _VOCAB, _VOCAB_KEY
+    key = (id(_products), len(_products))
+    if _VOCAB is None or key != _VOCAB_KEY:
+        _CLOSE_CACHE.clear()
+        _VOCAB_KEY = key
+        vocab: dict[str, int] = {}
+        for p in _products.values():
+            for w in set(_WORD.findall(" ".join(filter(None, [p["name_en"], p["name_fi"], p["brand"]])).lower())):
+                vocab[w] = vocab.get(w, 0) + 1
+        _VOCAB = vocab
+    return _VOCAB
+
+
+def _within(a: str, b: str, limit: int) -> bool:
+    """Optimal-string-alignment distance <= limit (a transposition counts once)."""
+    if abs(len(a) - len(b)) > limit:
+        return False
+    prev2, prev = None, list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cost = 0 if ca == cb else 1
+            v = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+            if prev2 is not None and i > 1 and j > 1 and ca == b[j - 2] and a[i - 2] == cb:
+                v = min(v, prev2[j - 2] + 1)
+            cur.append(v)
+        if min(cur) > limit:
+            return False
+        prev2, prev = prev, cur
+    return prev[-1] <= limit
+
+
+def close_words(term: str) -> tuple[str, ...]:
+    """Catalogue words a mistyped or inflected query word probably means: edit distance 1 (2 from 8 letters) or a
+    long shared stem (Finnish endings: kananmunii ~ kananmuna). Only words of 4+ letters; digits never fuzz.
+    Most frequent catalogue words first. Generic: no word list, no per-product rule."""
+    if len(term) < 4 or not term.isalpha():
+        return ()
+    if term in _CLOSE_CACHE:
+        return _CLOSE_CACHE[term]
+    limit = 1 if len(term) < 8 else 2
+    found = []
+    for w, n in _vocab().items():
+        if w == term or not w.isalpha() or len(w) < 3:
+            continue
+        stem = 0
+        for x, y in zip(term, w):
+            if x != y:
+                break
+            stem += 1
+        inflected = len(w) >= 3 and term.startswith(w) and len(term) - len(w) <= 3  # voita -> voi, maitoa -> maito
+        if (len(w) >= 4 and _within(term, w, limit)) or inflected or (stem >= max(5, min(len(term), len(w)) - 2) and abs(len(term) - len(w)) <= 3):
+            found.append((not inflected, -n, w))
+    out = tuple(w for *_, w in sorted(found)[:12])
+    _CLOSE_CACHE[term] = out
+    return out
+
+
 def search(query: str = "", claims: list[str] | None = None, exclude_allergens: list[str] | None = None,
            strict_may_contain: bool = False, category: str | None = None, limit: int = 20) -> list[dict]:
     """Keyword search over English + Finnish names and brand, with hard filters.
     - claims: every listed claim must be present (e.g. FREE_FROM_LACTOSE)
     - exclude_allergens: drop products that CONTAIN them (and MAY_CONTAIN them if strict_may_contain)
+    Exact every-term matches come first. Only when they are too few (< 3) are typo / inflection-tolerant matches
+    added after them (close_words), so a mistyped word still finds its family without loosening a good query.
     ponytail: token overlap scoring; switch to embeddings if lexical recall is too low for menu-to-cart."""
     terms = [t.lower() for t in _WORD.findall(query)]
     need, avoid = set(claims or []), set(exclude_allergens or [])
-    hits = []
+    eligible = []
     for p in _products.values():
         if need - set(p["claims"]):
             continue
@@ -262,6 +329,9 @@ def search(query: str = "", claims: list[str] | None = None, exclude_allergens: 
                  (set(allergens.get("may_contain") or []) if strict_may_contain else set()))
         if avoid & risky or (category and p["category"] != category):
             continue
+        eligible.append(p)
+    hits = []
+    for p in eligible:
         hay = " ".join(filter(None, [p["name_en"], p["name_fi"], p["brand"]])).lower()
         words = _WORD.findall(hay)
         matched = [t for t in terms if t in hay]
@@ -269,6 +339,27 @@ def search(query: str = "", claims: list[str] | None = None, exclude_allergens: 
             continue
         score = sum(2 if t in words else 1 for t in matched) if terms else 1  # whole-word hits rank higher
         hits.append((score, p))
+    if terms and len(hits) < 3:
+        seen = {p["id"] for _, p in hits}
+        close = {t: close_words(t) for t in terms}
+        fuzzy = []
+        for p in eligible:
+            if p["id"] in seen:
+                continue
+            hay = " ".join(filter(None, [p["name_en"], p["name_fi"], p["brand"]])).lower()
+            words = set(_WORD.findall(hay))
+            score, ok = 0.0, True
+            for t in terms:
+                if t in hay:
+                    score += 2 if t in words else 1
+                elif any(w in words for w in close[t]):
+                    score += 0.75
+                else:
+                    ok = False
+                    break
+            if ok and score:
+                fuzzy.append((score, p))
+        hits += fuzzy
     # ties → shorter names first: "milk drink 1 l lactose free" beats "12 x Starbucks latte … lactose free"
     hits.sort(key=lambda x: (-x[0], len(x[1]["name_en"] or x[1]["name_fi"] or ""), x[1]["id"]))
     return [dict(p, score=s) for s, p in hits[:limit]]
